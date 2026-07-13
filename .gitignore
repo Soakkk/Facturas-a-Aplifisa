@@ -1,0 +1,21 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+
+# Datos sensibles / de clientes (NUNCA subir)
+cache_*.json
+cache2_*.json
+*.xlsx
+*.pdf
+facturas_muestra/
+PRUEBA_*.xlsx
+
+# Build
+build/
+dist/
+*.spec.bak
+Output/
+
+dist_installer/
+*.output

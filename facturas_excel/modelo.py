@@ -1,0 +1,65 @@
+"""Modelo de una factura: los campos semanticos que luego se vuelcan al Excel
+en la columna que indique la configuracion (XML) del gestor fiscal."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, fields
+from typing import Optional
+
+
+@dataclass
+class Factura:
+    # Identificacion
+    num_factura: Optional[str] = None      # nº factura proveedor (compras) / justificante (ventas)
+    fecha: Optional[str] = None            # fecha factura (dd/mm/aaaa)
+    fecha_operacion: Optional[str] = None
+    fecha_deduccion: Optional[str] = None
+    concepto: Optional[str] = None
+
+    # IVA
+    base_iva: Optional[float] = None
+    pct_iva: Optional[float] = None
+    cuota_iva: Optional[float] = None
+
+    # IRPF (retencion)
+    base_irpf: Optional[float] = None
+    pct_irpf: Optional[float] = None
+    cuota_irpf: Optional[float] = None
+
+    # Recargo de equivalencia
+    base_requiv: Optional[float] = None
+    pct_requiv: Optional[float] = None
+    cuota_requiv: Optional[float] = None
+
+    # Contraparte
+    nif: Optional[str] = None
+    nombre: Optional[str] = None
+
+    # Campos SII / especiales (normalmente vacios)
+    descripcion_sii: Optional[str] = None
+    tipo_factura: Optional[str] = None
+    clave_reg_esp: Optional[str] = None
+    isp: Optional[str] = None
+    base_sujeta_cero: Optional[float] = None
+    recc: Optional[str] = None
+    suplidos: Optional[float] = None
+    no_sujeta: Optional[float] = None
+
+    # --- soporte de revision / control de calidad (no se exporta) ---
+    total_impreso: Optional[float] = None   # total que figura escrito en la factura
+    origen_imagen: Optional[str] = None     # ruta del archivo escaneado del que sale
+
+    def campos_dict(self) -> dict:
+        """Devuelve {nombre_campo: valor} solo de los campos exportables."""
+        excluidos = {"total_impreso", "origen_imagen"}
+        return {f.name: getattr(self, f.name) for f in fields(self)
+                if f.name not in excluidos}
+
+
+# Campos que representan importes en euros (formato 2 decimales).
+CAMPOS_IMPORTE = {
+    "base_iva", "cuota_iva", "base_irpf", "cuota_irpf",
+    "base_requiv", "cuota_requiv", "base_sujeta_cero", "suplidos", "no_sujeta",
+}
+# Campos que representan porcentajes.
+CAMPOS_PORCENTAJE = {"pct_iva", "pct_irpf", "pct_requiv"}
