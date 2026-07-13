@@ -38,8 +38,14 @@ def _tokens_nombre(nombre) -> set:
 
 
 def _mismo_nombre(a, b) -> bool:
+    """Mismo nombre si comparten >=2 palabras Y la mayoria de las del mas corto.
+    Evita confundir 'JOSE ANTONIO MARIN PRIETO' con 'JOSE ANTONIO MAYOR MARCO'
+    (solo comparten el nombre de pila compuesto)."""
     ta, tb = _tokens_nombre(a), _tokens_nombre(b)
-    return len(ta & tb) >= 2  # al menos 2 palabras significativas en comun
+    if not ta or not tb:
+        return False
+    comunes = len(ta & tb)
+    return comunes >= 2 and comunes / min(len(ta), len(tb)) >= 0.6
 
 
 def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
@@ -84,24 +90,28 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     r_nif = normaliza_nif(datos.get("receptor_nif"))
     e_nom, r_nom = datos.get("emisor_nombre"), datos.get("receptor_nombre")
 
-    # El cliente puede identificarse por NIF o por nombre (Gemini a veces omite
-    # o invierte datos). La contraparte es SIEMPRE la parte que no es el cliente.
-    cliente_es_emisor = (bool(e_nif) and e_nif == cliente_nif) or \
-        _mismo_nombre(e_nom, cliente_nombre)
-    cliente_es_receptor = (bool(r_nif) and r_nif == cliente_nif) or \
-        _mismo_nombre(r_nom, cliente_nombre)
-
+    # Identificar al cliente. EL NIF MANDA (no engaña); el nombre solo se usa
+    # cuando falta el NIF. La contraparte es SIEMPRE la parte que no es el cliente.
     aviso = ""
-    if cliente_es_emisor and not cliente_es_receptor:
+    if e_nif == cliente_nif and r_nif != cliente_nif:
+        # NIF del emisor = cliente -> venta (aunque el receptor se llame parecido)
         tipo, nombre, nif = "venta", r_nom, datos.get("receptor_nif")
-        if not e_nif:
-            aviso = "El cliente figura como emisor sin NIF: confirma si es venta o gasto."
-    elif cliente_es_receptor and not cliente_es_emisor:
+    elif r_nif == cliente_nif and e_nif != cliente_nif:
         tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
     else:
-        # No se identifica con claridad (ni por NIF ni por nombre) -> asumir gasto.
-        tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
-        aviso = "Rol emisor/destinatario dudoso: revisa si es gasto o venta."
+        # Sin NIF decisivo -> comparar nombres
+        es_emisor = _mismo_nombre(e_nom, cliente_nombre)
+        es_receptor = _mismo_nombre(r_nom, cliente_nombre)
+        if es_emisor and not es_receptor:
+            tipo, nombre, nif = "venta", r_nom, datos.get("receptor_nif")
+            if not e_nif:
+                aviso = "El cliente figura como emisor sin NIF: confirma si es venta o gasto."
+        elif es_receptor and not es_emisor:
+            tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
+        else:
+            # No se identifica con claridad -> asumir gasto y avisar.
+            tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
+            aviso = "Rol emisor/destinatario dudoso: revisa si es gasto o venta."
 
     # Cuenta contable
     if tipo == "venta":
