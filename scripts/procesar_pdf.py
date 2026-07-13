@@ -28,8 +28,10 @@ ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
 
 def main():
-    ruta = sys.argv[1] if len(sys.argv) > 1 else \
-        os.path.join(ESCRITORIO, "FACTURAS PEDRO BELCHI.pdf")
+    if len(sys.argv) < 2:
+        print("Uso: python scripts/procesar_pdf.py \"ruta_al_pdf_de_facturas.pdf\"")
+        return
+    ruta = sys.argv[1]
 
     api_key = leer_api_key()
     if not api_key:
