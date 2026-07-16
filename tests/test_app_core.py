@@ -30,7 +30,8 @@ def test_arrastre_filtra_archivos_no_compatibles(tmp_path):
     txt.write_text("no")
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(pdf)), QUrl.fromLocalFile(str(txt))])
-    assert rutas_factura_de_mime(mime) == [str(pdf)]
+    rutas = [os.path.normpath(ruta) for ruta in rutas_factura_de_mime(mime)]
+    assert rutas == [os.path.normpath(str(pdf))]
 
 
 def test_insertar_filas_es_atomico_y_marca_duplicados():

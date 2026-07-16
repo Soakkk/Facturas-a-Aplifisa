@@ -4,7 +4,7 @@
 
 #define MyAppName "Facturas a Aplifisa"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.1.1"
 #endif
 #define MyAppPublisher "Asesoria E. Marin"
 #define MyAppExeName "FacturasAplifisa.exe"
