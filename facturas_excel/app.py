@@ -7,15 +7,16 @@ plano -> autodetecta el cliente -> tabla de revision con miniatura y semaforo
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog,
-    QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSplitter,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,13 +24,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from facturas_excel import __version__, updater
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.config_columnas import leer_config
+from facturas_excel.estilo import aplicar_tema
 from facturas_excel.exportar import exportar_excel
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import construir, detectar_cliente
 from facturas_excel.rutas import ruta_config
-from facturas_excel.validacion import ERROR, OK, REVISAR, validar
+from facturas_excel.validacion import ERROR, OK, REVISAR, encontrar_duplicados, validar
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -37,6 +39,7 @@ COLOR_ESTADO = {OK: QColor("#2e7d32"), REVISAR: QColor("#f9a825"), ERROR: QColor
 ICONO_ESTADO = {OK: "OK", REVISAR: "!", ERROR: "X"}
 
 HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
+EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
         "NIF", "Base", "% IVA", "Cuota", "Total"]
@@ -50,11 +53,32 @@ def parse_numero(texto):
     t = str(texto).strip()
     if not t:
         return None
-    t = t.replace(".", "").replace(",", ".") if "," in t else t
+    t = t.replace("€", "").replace(" ", "")
+    if "," in t:
+        # Formato español: 1.234,56
+        t = t.replace(".", "").replace(",", ".")
+    elif t.count(".") > 1 or (
+        t.count(".") == 1 and len(t.rsplit(".", 1)[1]) == 3
+    ):
+        t = t.replace(".", "")
     try:
         return float(t)
     except ValueError:
         return None
+
+
+def rutas_factura_de_mime(mime):
+    """Rutas locales compatibles contenidas en un arrastre."""
+    if not mime.hasUrls():
+        return []
+    rutas = []
+    for url in mime.urls():
+        if not url.isLocalFile():
+            continue
+        ruta = url.toLocalFile()
+        if os.path.splitext(ruta)[1].lower() in EXT_FACTURA:
+            rutas.append(ruta)
+    return rutas
 
 
 def fmt(v):
@@ -79,6 +103,8 @@ class Worker(QThread):
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             imagenes = cargar_imagenes(self.rutas, dpi=150)
+            if not imagenes:
+                raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
             total = len(imagenes)
             registros = [None] * total
@@ -126,63 +152,137 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self, comprobar_updates: bool = True):
         super().__init__()
         self.setWindowTitle(f"Facturas a Aplifisa — v{__version__}")
-        self.resize(1250, 680)
+        self.resize(1420, 820)
+        self.setMinimumSize(1080, 680)
+        self.setAcceptDrops(True)
         self.filas = []  # por fila: dict(png, factura, aviso)
+        self._duplicados = set()
+        self._rutas_actuales = []
         self._hilo_update = None
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
-        central = QWidget()
-        layout = QVBoxLayout(central)
+        self._crear_interfaz()
+        if self._comprobar_updates:
+            self._comprobar_actualizaciones(silencioso=True)
 
-        # --- barra superior ---
-        barra = QHBoxLayout()
-        self.btn_cargar = QPushButton("📂 Cargar facturas")
+    def _crear_interfaz(self):
+        central = QWidget()
+        raiz = QVBoxLayout(central)
+        raiz.setContentsMargins(0, 0, 0, 0)
+        raiz.setSpacing(0)
+
+        cabecera = QFrame()
+        cabecera.setObjectName("cabecera")
+        cabecera.setFixedHeight(92)
+        lc = QHBoxLayout(cabecera)
+        lc.setContentsMargins(24, 14, 24, 14)
+        marca = QVBoxLayout()
+        titulo = QLabel("Facturas a Aplifisa")
+        titulo.setObjectName("marca")
+        subtitulo = QLabel("Preparar, revisar y exportar facturas para captura masiva")
+        subtitulo.setObjectName("marcaSubtitulo")
+        marca.addWidget(titulo)
+        marca.addWidget(subtitulo)
+        lc.addLayout(marca)
+        lc.addStretch()
+        for texto, activo in (("1  Cargar", True), ("2  Revisar", False),
+                              ("3  Exportar", False)):
+            paso = QLabel(texto)
+            paso.setObjectName("pasoActivo" if activo else "pasoInactivo")
+            lc.addWidget(paso)
+        raiz.addWidget(cabecera)
+
+        cuerpo = QVBoxLayout()
+        cuerpo.setContentsMargins(18, 16, 18, 12)
+        cuerpo.setSpacing(12)
+
+        acciones = QFrame()
+        acciones.setObjectName("tarjeta")
+        la = QHBoxLayout(acciones)
+        la.setContentsMargins(16, 12, 16, 12)
+        self.btn_cargar = QPushButton("Abrir PDF o imágenes")
+        self.btn_cargar.setObjectName("primario")
+        self.btn_cargar.setMinimumHeight(40)
         self.btn_cargar.clicked.connect(self._cargar)
-        self.btn_key = QPushButton("🔑 API key")
+        self.btn_key = QPushButton("Configurar Gemini")
         self.btn_key.clicked.connect(self._configurar_key)
-        self.lbl_cliente = QLabel("Cliente: —")
-        self.lbl_cliente.setStyleSheet("font-weight:bold;")
-        barra.addWidget(self.btn_cargar)
-        barra.addWidget(self.btn_key)
-        barra.addSpacing(20)
-        barra.addWidget(self.lbl_cliente)
-        barra.addStretch()
-        self.btn_gastos = QPushButton("💾 Exportar gastos")
+        la.addWidget(self.btn_cargar)
+        la.addWidget(self.btn_key)
+        la.addSpacing(12)
+        bloque_cliente = QVBoxLayout()
+        etiqueta = QLabel("LOTE ACTUAL")
+        etiqueta.setObjectName("textoSuave")
+        self.lbl_cliente = QLabel("Cliente pendiente de detectar")
+        self.lbl_cliente.setObjectName("cliente")
+        bloque_cliente.addWidget(etiqueta)
+        bloque_cliente.addWidget(self.lbl_cliente)
+        la.addLayout(bloque_cliente, 1)
+        self.btn_gastos = QPushButton("Exportar gastos")
+        self.btn_gastos.setObjectName("exito")
+        self.btn_gastos.setEnabled(False)
         self.btn_gastos.clicked.connect(lambda: self._exportar("gasto"))
-        self.btn_ventas = QPushButton("💾 Exportar ventas")
+        self.btn_ventas = QPushButton("Exportar ventas")
+        self.btn_ventas.setEnabled(False)
         self.btn_ventas.clicked.connect(lambda: self._exportar("venta"))
-        barra.addWidget(self.btn_gastos)
-        barra.addWidget(self.btn_ventas)
-        layout.addLayout(barra)
+        la.addWidget(self.btn_gastos)
+        la.addWidget(self.btn_ventas)
+        cuerpo.addWidget(acciones)
 
         self.progreso = QProgressBar()
         self.progreso.setVisible(False)
-        layout.addWidget(self.progreso)
+        cuerpo.addWidget(self.progreso)
 
-        # --- splitter: tabla | miniatura ---
         split = QSplitter(Qt.Horizontal)
+        tabla_card = QFrame()
+        tabla_card.setObjectName("tarjeta")
+        lt = QVBoxLayout(tabla_card)
+        lt.setContentsMargins(12, 12, 12, 12)
+        titulo_tabla = QLabel("Datos extraídos")
+        titulo_tabla.setObjectName("tituloSeccion")
+        ayuda_tabla = QLabel("Revise las celdas en ámbar o rojo antes de exportar")
+        ayuda_tabla.setObjectName("textoSuave")
+        lt.addWidget(titulo_tabla)
+        lt.addWidget(ayuda_tabla)
         self.tabla = QTableWidget(0, len(COLS))
+        self.tabla.setAlternatingRowColors(True)
         self.tabla.setHorizontalHeaderLabels(COLS)
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.tabla.verticalHeader().setVisible(False)
+        self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla.itemChanged.connect(self._on_celda)
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
-        split.addWidget(self.tabla)
+        lt.addWidget(self.tabla, 1)
+        split.addWidget(tabla_card)
 
-        self.lbl_img = QLabel("Selecciona una factura para ver la imagen")
+        visor_card = QFrame()
+        visor_card.setObjectName("tarjeta")
+        lv = QVBoxLayout(visor_card)
+        lv.setContentsMargins(12, 12, 12, 12)
+        titulo_visor = QLabel("Documento original")
+        titulo_visor.setObjectName("tituloSeccion")
+        self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
+        self.lbl_origen.setObjectName("textoSuave")
+        self.lbl_origen.setWordWrap(True)
+        self.lbl_img = QLabel("Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
+        self.lbl_img.setObjectName("visor")
         self.lbl_img.setAlignment(Qt.AlignCenter)
-        self.lbl_img.setMinimumWidth(320)
-        self.lbl_img.setStyleSheet("background:#f4f4f4; color:#666;")
-        split.addWidget(self.lbl_img)
-        split.setSizes([900, 350])
-        layout.addWidget(split, 1)
+        self.lbl_img.setMinimumWidth(330)
+        self.lbl_img.setMinimumHeight(430)
+        lv.addWidget(titulo_visor)
+        lv.addWidget(self.lbl_origen)
+        lv.addWidget(self.lbl_img, 1)
+        split.addWidget(visor_card)
+        split.setSizes([980, 380])
+        cuerpo.addWidget(split, 1)
 
-        self.lbl_estado = QLabel("Carga un PDF o imágenes de facturas para empezar.")
-        layout.addWidget(self.lbl_estado)
-
+        self.lbl_estado = QLabel("Cargue un lote de facturas para empezar.")
+        self.lbl_estado.setObjectName("textoSuave")
+        cuerpo.addWidget(self.lbl_estado)
+        cont = QWidget()
+        cont.setLayout(cuerpo)
+        raiz.addWidget(cont, 1)
         self.setCentralWidget(central)
-        if self._comprobar_updates:
-            self._comprobar_actualizaciones(silencioso=True)
 
     def esperar_hilos(self):
         """Espera a que terminen los hilos vivos (evita abortar al salir)."""
@@ -242,6 +342,18 @@ class VentanaPrincipal(QMainWindow):
         self.esperar_hilos()
         super().closeEvent(ev)
 
+    def dragEnterEvent(self, event):
+        if rutas_factura_de_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        rutas = rutas_factura_de_mime(event.mimeData())
+        if rutas:
+            event.acceptProposedAction()
+            self.procesar_rutas(rutas)
+
     # ---------- API key ----------
     def _configurar_key(self):
         actual = leer_api_key() or ""
@@ -256,17 +368,37 @@ class VentanaPrincipal(QMainWindow):
 
     # ---------- carga ----------
     def _cargar(self):
-        api_key = leer_api_key()
-        if not api_key:
-            QMessageBox.warning(self, "Falta la API key",
-                                "Configura primero tu API key de Gemini (botón 🔑).")
-            return
         rutas, _ = QFileDialog.getOpenFileNames(
             self, "Elige facturas (PDF o imágenes)", ESCRITORIO,
             "Facturas (*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp)")
+        if rutas:
+            self.procesar_rutas(rutas)
+
+    def procesar_rutas(self, rutas):
+        """Procesa rutas recibidas por diálogo, arrastre o Escáner Fotos."""
+        rutas = [os.path.abspath(r) for r in rutas
+                 if os.path.isfile(r) and os.path.splitext(r)[1].lower() in EXT_FACTURA]
         if not rutas:
+            QMessageBox.warning(self, "Archivos no compatibles",
+                                "No se encontraron PDFs o imágenes válidas.")
             return
+        api_key = leer_api_key()
+        if not api_key:
+            QMessageBox.warning(self, "Falta la API key",
+                                "Configura primero tu API key de Gemini.")
+            return
+        if getattr(self, "worker", None) and self.worker.isRunning():
+            QMessageBox.information(self, "Procesando",
+                                    "Espera a que termine el lote actual.")
+            return
+        self._rutas_actuales = rutas
+        self.lbl_origen.setText(
+            f"{len(rutas)} archivo{'s' if len(rutas) != 1 else ''}: "
+            + ", ".join(os.path.basename(r) for r in rutas[:3])
+            + ("…" if len(rutas) > 3 else ""))
         self.btn_cargar.setEnabled(False)
+        self.btn_gastos.setEnabled(False)
+        self.btn_ventas.setEnabled(False)
         self.progreso.setVisible(True)
         self.progreso.setValue(0)
         self.lbl_estado.setText("Leyendo facturas con Gemini…")
@@ -284,12 +416,15 @@ class VentanaPrincipal(QMainWindow):
     def _on_fallo(self, msg):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
+        self.lbl_estado.setText("No se pudo procesar el lote.")
         QMessageBox.critical(self, "Error al procesar", msg)
 
     def _on_terminado(self, procesadas, nombre, nif):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
-        self.lbl_cliente.setText(f"Cliente: {nombre}  ({nif})")
+        self.lbl_cliente.setText(
+            f"{nombre or 'Cliente no identificado'}"
+            + (f"  ·  {nif}" if nif else ""))
         self.tabla.blockSignals(True)
         self.tabla.setRowCount(0)
         self.filas = []
@@ -298,8 +433,15 @@ class VentanaPrincipal(QMainWindow):
                 self._anadir_fila(png, f, pr.tipo, pr.cuenta, pr.gxx, pr.aviso)
         self.tabla.blockSignals(False)
         self._revalidar_todo()
+        hay_datos = self.tabla.rowCount() > 0
+        self.btn_gastos.setEnabled(hay_datos)
+        self.btn_ventas.setEnabled(hay_datos)
+        if hay_datos:
+            self.tabla.selectRow(0)
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso):
+        senales_bloqueadas = self.tabla.signalsBlocked()
+        self.tabla.blockSignals(True)
         r = self.tabla.rowCount()
         self.tabla.insertRow(r)
         self.filas.append({"png": png, "factura": f, "aviso": aviso})
@@ -321,11 +463,17 @@ class VentanaPrincipal(QMainWindow):
             C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva), C_TOTAL: fmt(f.total_impreso),
         }
         for col, val in valores.items():
-            self.tabla.setItem(r, col, QTableWidgetItem("" if val is None else str(val)))
+            item = QTableWidgetItem("" if val is None else str(val))
+            if col == C_GXX:
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setToolTip("Subclave orientativa; Aplifisa la recuerda por proveedor.")
+            self.tabla.setItem(r, col, item)
+        self.tabla.setRowHeight(r, 34)
+        self.tabla.blockSignals(senales_bloqueadas)
 
     # ---------- edicion / validacion ----------
     def _on_celda(self, item):
-        self._revalidar_fila(item.row())
+        self._revalidar_todo()
 
     def _leer_fila(self, r):
         """Actualiza la Factura de la fila con lo que hay en las celdas."""
@@ -357,6 +505,10 @@ class VentanaPrincipal(QMainWindow):
             msgs.append(self.filas[r]["aviso"])
             if estado == OK:
                 estado = REVISAR
+        if r in self._duplicados:
+            msgs.append("Posible duplicado dentro del lote (mismo nº, NIF y base).")
+            if estado == OK:
+                estado = REVISAR
         celda = self.tabla.item(r, C_ESTADO)
         self.tabla.blockSignals(True)
         celda.setText(ICONO_ESTADO[estado])
@@ -367,6 +519,8 @@ class VentanaPrincipal(QMainWindow):
         self._resumen()
 
     def _revalidar_todo(self):
+        self._duplicados = set(encontrar_duplicados(
+            [self._leer_fila(r) for r in range(self.tabla.rowCount())]))
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
 
@@ -376,6 +530,8 @@ class VentanaPrincipal(QMainWindow):
             f = self.filas[r]["factura"]
             e = validar(f).estado
             if self.filas[r]["aviso"] and e == OK:
+                e = REVISAR
+            if r in self._duplicados and e == OK:
                 e = REVISAR
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
@@ -389,11 +545,19 @@ class VentanaPrincipal(QMainWindow):
         if r < 0 or r >= len(self.filas):
             return
         png = self.filas[r]["png"]
+        factura = self.filas[r]["factura"]
+        origen = os.path.basename(factura.origen_imagen or "")
+        self.lbl_origen.setText(origen or "Documento cargado")
         pix = QPixmap()
         pix.loadFromData(png)
         if not pix.isNull():
             self.lbl_img.setPixmap(pix.scaled(
                 self.lbl_img.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.tabla.currentRow() >= 0:
+            self._mostrar_miniatura()
 
     # ---------- exportar ----------
     def _exportar(self, tipo):
@@ -421,11 +585,22 @@ class VentanaPrincipal(QMainWindow):
         QMessageBox.information(self, "Exportado", f"Generado:\n{ruta}")
 
 
+def _argumentos(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--import", dest="importar", nargs="+")
+    args, _ = parser.parse_known_args(argv[1:])
+    return args
+
+
 def main():
-    app = QApplication(sys.argv)
+    args = _argumentos(sys.argv)
+    app = QApplication([sys.argv[0]])
+    aplicar_tema(app)
     v = VentanaPrincipal()
     app.aboutToQuit.connect(v.esperar_hilos)
     v.show()
+    if args.importar:
+        QTimer.singleShot(200, lambda: v.procesar_rutas(args.importar))
     sys.exit(app.exec())
 
 

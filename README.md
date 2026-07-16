@@ -9,6 +9,8 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 ## Flujo
 
 1. **Cargar facturas** (PDF escaneado o imágenes) — se procesan en paralelo.
+   También se pueden arrastrar sobre la ventana o recibir directamente desde
+   Escáner Fotos mediante `FacturasAplifisa.exe --import "lote.pdf"`.
 2. El programa **detecta al cliente** (el NIF que se repite en el lote) y, por
    cada factura, decide si es **gasto** (el cliente recibe) o **venta** (el
    cliente emite) y quién es la contraparte.
@@ -19,6 +21,10 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Con la **imagen de la factura al lado** para corregir al vuelo.
 4. **Exportar** `gastos.xlsx` / `ventas.xlsx` → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
+
+La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
+cabecera azul marino, flujo por pasos, superficies claras y estados de revisión
+visibles sin perder la imagen original.
 
 ## Requisitos
 
