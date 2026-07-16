@@ -7,17 +7,20 @@ y lo lanza. El instalador (Inno Setup, mismo AppId) actualiza in-place.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import subprocess
 import tempfile
 import urllib.request
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
 
 from . import __version__
 
-REPO_RELEASES = "Soakkk/Facturas-a-Aplifisa-releases"
+REPO_RELEASES = "Soakkk/Facturas-a-Aplifisa"
 URL_API = f"https://api.github.com/repos/{REPO_RELEASES}/releases/latest"
 TIMEOUT = 8
 
@@ -26,6 +29,8 @@ TIMEOUT = 8
 class Actualizacion:
     version: str
     url_instalador: str
+    url_sha256: str = ""
+    size: int = 0
     notas: str = ""
 
 
@@ -43,25 +48,72 @@ def comprobar() -> Optional[Actualizacion]:
     tag = (datos.get("tag_name") or "").lstrip("vV")
     if not tag or _tupla(tag) <= _tupla(__version__):
         return None
+    instalador = None
+    sha256 = ""
     for asset in datos.get("assets", []):
         nombre = asset.get("name", "")
-        if nombre.lower().endswith(".exe"):
-            return Actualizacion(version=tag,
-                                 url_instalador=asset["browser_download_url"],
-                                 notas=datos.get("body") or "")
-    return None
+        nombre_min = nombre.lower()
+        if nombre_min.endswith(".exe") and "setup" in nombre_min:
+            instalador = asset
+        elif nombre_min.endswith(".sha256"):
+            sha256 = asset.get("browser_download_url", "")
+    if not instalador:
+        return None
+    return Actualizacion(
+        version=tag,
+        url_instalador=instalador["browser_download_url"],
+        url_sha256=sha256,
+        size=int(instalador.get("size") or 0),
+        notas=datos.get("body") or "",
+    )
 
 
-def descargar_y_lanzar(act: Actualizacion) -> None:
-    """Descarga el instalador a temp y lo ejecuta. El llamador cierra la app."""
-    destino = os.path.join(tempfile.gettempdir(),
-                           f"FacturasAplifisa-Setup-{act.version}.exe")
-    req = urllib.request.Request(act.url_instalador,
-                                 headers={"User-Agent": "FacturasAplifisa"})
+def _hash_esperado(url: str) -> str | None:
+    if not url:
+        return None
+    req = urllib.request.Request(url, headers={"User-Agent": "FacturasAplifisa"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        texto = r.read().decode("utf-8", "replace")
+    encontrado = re.search(r"\b([0-9a-fA-F]{64})\b", texto)
+    return encontrado.group(1).lower() if encontrado else None
+
+
+def descargar(act: Actualizacion,
+              progreso: Callable[[int], None] | None = None) -> str:
+    """Descarga y verifica el instalador, devolviendo su ruta temporal."""
+    destino = Path(tempfile.gettempdir()) / f"FacturasAplifisa-Setup-{act.version}.exe"
+    esperado = _hash_esperado(act.url_sha256)
+    req = urllib.request.Request(
+        act.url_instalador, headers={"User-Agent": "FacturasAplifisa"})
+    bajado = 0
+    digestor = hashlib.sha256()
     with urllib.request.urlopen(req, timeout=60) as r, open(destino, "wb") as f:
+        total = act.size or int(r.headers.get("Content-Length", 0))
         while True:
-            trozo = r.read(65536)
+            trozo = r.read(1024 * 256)
             if not trozo:
                 break
             f.write(trozo)
-    os.startfile(destino)  # noqa: S606 - instalador descargado de nuestro repo
+            digestor.update(trozo)
+            bajado += len(trozo)
+            if progreso and total:
+                progreso(min(100, int(bajado * 100 / total)))
+    if act.size and destino.stat().st_size != act.size:
+        destino.unlink(missing_ok=True)
+        raise ValueError("La descarga del instalador está incompleta")
+    if esperado and digestor.hexdigest() != esperado:
+        destino.unlink(missing_ok=True)
+        raise ValueError("La verificación de integridad SHA-256 no coincide")
+    return str(destino)
+
+
+def lanzar_instalador(ruta: str) -> None:
+    subprocess.Popen(
+        [ruta, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+        close_fds=True,
+    )
+
+
+def descargar_y_lanzar(act: Actualizacion) -> None:
+    """Compatibilidad con el flujo anterior."""
+    lanzar_instalador(descargar(act))

@@ -14,7 +14,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 PY = RAIZ / ".venv" / "Scripts" / "python.exe"
 ISCC = Path(r"C:\Users\ASESORIA\AppData\Local\Programs\Inno Setup 6\ISCC.exe")
-REPO_RELEASES = "Soakkk/Facturas-a-Aplifisa-releases"
+REPO_RELEASES = "Soakkk/Facturas-a-Aplifisa"
 
 
 def version_actual() -> str:

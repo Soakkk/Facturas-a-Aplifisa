@@ -3,7 +3,9 @@
 ; Compilar con: ISCC.exe FacturasAplifisa.iss
 
 #define MyAppName "Facturas a Aplifisa"
-#define MyAppVersion "1.0.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.1.0"
+#endif
 #define MyAppPublisher "Asesoria E. Marin"
 #define MyAppExeName "FacturasAplifisa.exe"
 
@@ -12,7 +14,7 @@ AppId={{7D3C9E51-4B2F-4A86-B1D4-FACTAPLIF15A}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\FacturasAplifisa
+DefaultDirName={localappdata}\Programs\FacturasAplifisa
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist_installer
@@ -22,6 +24,10 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
+RestartApplications=yes
+PrivilegesRequired=lowest
+SetupIconFile=..\assets\app.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -39,3 +45,4 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent

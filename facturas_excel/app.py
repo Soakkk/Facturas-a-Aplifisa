@@ -12,11 +12,12 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QProgressDialog, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,7 +45,14 @@ EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
         "NIF", "Base", "% IVA", "Cuota", "Total"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-    C_BASE, C_PCT, C_CUOTA, C_TOTAL = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_TOTAL = range(len(COLS))
+
+
+def ruta_recurso(nombre):
+    base = getattr(
+        sys, "_MEIPASS",
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base, "assets", nombre)
 
 
 def parse_numero(texto):
@@ -148,10 +156,29 @@ class HiloActualizacion(QThread):
             self.error.emit(str(e))
 
 
+class HiloDescargaActualizacion(QThread):
+    progreso = Signal(int)
+    terminado = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, actualizacion):
+        super().__init__()
+        self.actualizacion = actualizacion
+
+    def run(self):
+        try:
+            ruta = updater.descargar(
+                self.actualizacion, progreso=self.progreso.emit)
+            self.terminado.emit(ruta)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class VentanaPrincipal(QMainWindow):
     def __init__(self, comprobar_updates: bool = True):
         super().__init__()
         self.setWindowTitle(f"Facturas a Aplifisa — v{__version__}")
+        self.setWindowIcon(QIcon(ruta_recurso("app.ico")))
         self.resize(1420, 820)
         self.setMinimumSize(1080, 680)
         self.setAcceptDrops(True)
@@ -159,12 +186,14 @@ class VentanaPrincipal(QMainWindow):
         self._duplicados = set()
         self._rutas_actuales = []
         self._hilo_update = None
+        self._hilo_descarga_update = None
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
         self._crear_interfaz()
         if self._comprobar_updates:
-            self._comprobar_actualizaciones(silencioso=True)
+            QTimer.singleShot(
+                1500, lambda: self._comprobar_actualizaciones(silencioso=True))
 
     def _crear_interfaz(self):
         central = QWidget()
@@ -177,6 +206,12 @@ class VentanaPrincipal(QMainWindow):
         cabecera.setFixedHeight(92)
         lc = QHBoxLayout(cabecera)
         lc.setContentsMargins(24, 14, 24, 14)
+        logo = QLabel()
+        logo.setPixmap(QPixmap(ruta_recurso("app.png")).scaled(
+            52, 52, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+        logo.setFixedSize(56, 56)
+        lc.addWidget(logo)
         marca = QVBoxLayout()
         titulo = QLabel("Facturas a Aplifisa")
         titulo.setObjectName("marca")
@@ -286,7 +321,11 @@ class VentanaPrincipal(QMainWindow):
 
     def esperar_hilos(self):
         """Espera a que terminen los hilos vivos (evita abortar al salir)."""
-        for hilo in (getattr(self, "_hilo_update", None), getattr(self, "worker", None)):
+        for hilo in (
+            getattr(self, "_hilo_update", None),
+            getattr(self, "_hilo_descarga_update", None),
+            getattr(self, "worker", None),
+        ):
             if hilo and hilo.isRunning():
                 hilo.wait(5000)
 
@@ -303,7 +342,7 @@ class VentanaPrincipal(QMainWindow):
             f"<b>Facturas a Aplifisa</b> v{__version__}<br><br>"
             "Lee facturas escaneadas con IA (Gemini), detecta al cliente, "
             "clasifica gastos y ventas y genera el Excel que importa Aplifisa.<br><br>"
-            "Actualizaciones: github.com/Soakkk/Facturas-a-Aplifisa-releases")
+            "Actualizaciones: github.com/Soakkk/Facturas-a-Aplifisa/releases")
 
     def _comprobar_actualizaciones(self, silencioso: bool):
         if self._hilo_update and self._hilo_update.isRunning():
@@ -326,11 +365,42 @@ class VentanaPrincipal(QMainWindow):
             "¿Descargar e instalar ahora? El programa se cerrará para actualizarse.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if r == QMessageBox.Yes:
+            self._descargar_actualizacion(act)
+
+    def _descargar_actualizacion(self, act):
+        dialogo = QProgressDialog(
+            "Descargando actualización…", None, 0, 100, self)
+        dialogo.setWindowTitle("Actualizando")
+        dialogo.setMinimumDuration(0)
+        dialogo.setAutoClose(False)
+        dialogo.setAutoReset(False)
+        dialogo.setValue(0)
+        self._dialogo_update = dialogo
+
+        hilo = HiloDescargaActualizacion(act)
+        self._hilo_descarga_update = hilo
+        hilo.progreso.connect(dialogo.setValue)
+
+        def terminado(ruta):
+            dialogo.close()
             try:
-                updater.descargar_y_lanzar(act)
-                QApplication.quit()
+                updater.lanzar_instalador(ruta)
             except Exception as e:
-                QMessageBox.critical(self, "Error al descargar", str(e))
+                QMessageBox.critical(
+                    self, "Actualización", f"No se pudo abrir el instalador:\n{e}")
+                return
+            QApplication.quit()
+
+        def error(mensaje):
+            dialogo.close()
+            QMessageBox.critical(
+                self, "Actualización",
+                f"No se pudo descargar la actualización:\n{mensaje}")
+
+        hilo.terminado.connect(terminado)
+        hilo.error.connect(error)
+        hilo.start()
+        dialogo.show()
 
     def _on_update_error(self, msg):
         if not getattr(self, "_update_silencioso", True):
@@ -595,6 +665,7 @@ def _argumentos(argv):
 def main():
     args = _argumentos(sys.argv)
     app = QApplication([sys.argv[0]])
+    app.setWindowIcon(QIcon(ruta_recurso("app.ico")))
     aplicar_tema(app)
     v = VentanaPrincipal()
     app.aboutToQuit.connect(v.esperar_hilos)
