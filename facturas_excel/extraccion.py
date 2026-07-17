@@ -91,6 +91,15 @@ a otro (p.ej. "Sustituye al doc.n: 4532023141", "POST-FACTURACION", factura
 rectificativa), pon en "sustituye_a" el numero del documento al que sustituye.
 Si no lo dice, null.
 
+ABONOS Y SIGNO DETRAS DEL NUMERO — CUIDADO, ES FACIL EQUIVOCARSE. Algunos
+proveedores (Coca-Cola) imprimen los numeros negativos con el signo menos
+DETRAS: "15,51-" significa MENOS 15,51, NO 15,51. Se ve en cantidades ("1,00-"),
+importes ("28,20-") y totales ("TOTAL: 15,51- EUROS").
+Si la factura es un ABONO / devolucion / rectificativa (sus importes llevan el
+menos detras), devuelve TODOS los importes en NEGATIVO con el signo delante:
+base, cuota_iva, cuota_requiv y total. NUNCA los pases a positivo: un abono
+registrado en positivo cobra al cliente lo que habia que devolverle.
+
 ANOTACIONES A MANO: pon "hay_anotaciones_manuscritas" a true si ves cualquier
 cosa escrita a mano sobre la factura (aunque la ignores para los importes), para
 que una persona la revise. Las firmas de "RECIBI MERCANCIAS" no cuentan."""
@@ -173,7 +182,22 @@ def _parse_json_tolerante(texto: str):
 def _num(v):
     if v is None or v == "":
         return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    t = str(v).strip().replace("€", "").replace(" ", "")
+    # Signo DETRAS del numero: Coca-Cola imprime asi los abonos ("15,51-" son
+    # MENOS 15,51). Sin esto float() petaba y el importe se perdia entero.
+    negativo = t.endswith("-")
+    if negativo:
+        t = t[:-1]
+    if "," in t and "." in t:      # 1.234,56 -> el punto son los miles
+        t = t.replace(".", "").replace(",", ".")
+    else:
+        t = t.replace(",", ".")
     try:
-        return float(str(v).replace(",", "."))
+        n = float(t)
     except ValueError:
         return None
+    return -n if negativo else n

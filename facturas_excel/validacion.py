@@ -160,6 +160,15 @@ def validar(f: Factura, periodo: Optional[Periodo] = None) -> Resultado:
     # Solo tiene sentido si la fila ES la factura entera: con varios tipos de IVA
     # cada fila es un trozo y nunca cuadraria sola (el cuadre lo hace construir).
     if f.total_impreso is not None and f.base_iva is not None and f.lineas_factura == 1:
+        # Abono leido a medias: los proveedores que ponen el signo detras
+        # ("15,51-" = -15,51) despistan y se pierde el menos por el camino.
+        # Registrar un abono en positivo COBRA lo que habia que devolver.
+        if (f.total_impreso < 0) != (f.base_iva < 0):
+            marcar_error(
+                f"El signo no cuadra: el total es {f.total_impreso} y la base "
+                f"{f.base_iva}. ¿Es un abono/devolución? En un abono TODOS los "
+                f"importes van en negativo."
+            )
         calculado = (f.base_iva or 0) + (f.cuota_iva or 0) \
             + (f.cuota_requiv or 0) - (f.cuota_irpf or 0)
         calculado = round(calculado, 2)
