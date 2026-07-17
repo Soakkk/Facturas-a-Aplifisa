@@ -4,6 +4,8 @@
   facturas del lote (como destinatario en los gastos y emisor en las ventas).
 - Para cada factura decide GASTO/VENTA, elige la CONTRAPARTE (la otra parte) y
   la CUENTA contable, y construye las Factura (una por linea de IVA).
+- Completa los NIF ilegibles copiandolos de otra factura del mismo proveedor
+  (ver propagar_nifs).
 
 Reutilizable desde la UI y desde scripts.
 """
@@ -17,6 +19,7 @@ from typing import Dict, List, Tuple
 from .conceptos import DEFAULT_VENTA, asignar_concepto, subclave_628
 from .extraccion import _num
 from .modelo import Factura
+from .validacion import validar_nif
 
 
 def normaliza_nif(nif) -> str:
@@ -150,3 +153,63 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
 
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
                             gxx=gxx, origen=origen, pagina=pagina, aviso=aviso)
+
+
+def _anadir_aviso(pr: FacturaProcesada, texto: str) -> None:
+    pr.aviso = f"{pr.aviso} {texto}".strip() if pr.aviso else texto
+
+
+def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
+    """Completa el NIF de la contraparte cuando en su factura falta o esta mal
+    leido (va en un margen, impreso flojo...), copiandolo de otra factura del
+    MISMO proveedor en la que si se leyo bien. Devuelve cuantas ha completado.
+
+    Solo copia cuando no cabe duda de que el NIF es el que toca:
+      - El proveedor se identifica por su nombre normalizado EXACTO (mismas
+        palabras); un nombre parecido no vale.
+      - El NIF de origen tiene que pasar el digito de control (validar_nif):
+        un NIF mal leido no puede ser la fuente de nada.
+      - Tiene que haber UN UNICO NIF valido para ese nombre en todo el lote. Si
+        aparecen dos (dos proveedores homonimos, o uno cambio de CIF), no se
+        toca ninguno y se avisa para que se ponga a mano.
+      - NUNCA pisa un NIF que ya es valido de por si.
+    Toda fila tocada queda marcada con un aviso -> sale en ambar para revisarla.
+    """
+    grupos: Dict[frozenset, List[FacturaProcesada]] = defaultdict(list)
+    for pr in procesadas:
+        nombre = pr.facturas[0].nombre if pr.facturas else None
+        clave = frozenset(_tokens_nombre(nombre))
+        if clave:  # sin nombre no hay forma de saber de quien es la factura
+            grupos[clave].append(pr)
+
+    completados = 0
+    for grupo in grupos.values():
+        validos = {normaliza_nif(pr.facturas[0].nif) for pr in grupo
+                   if validar_nif(normaliza_nif(pr.facturas[0].nif))}
+        pendientes = [pr for pr in grupo
+                      if not validar_nif(normaliza_nif(pr.facturas[0].nif))]
+        if not pendientes or not validos:
+            continue
+
+        if len(validos) > 1:
+            for pr in pendientes:
+                _anadir_aviso(pr, "Hay {} NIF distintos para este mismo nombre en "
+                                  "el lote ({}): no se copia ninguno, escríbelo a "
+                                  "mano.".format(len(validos), ", ".join(sorted(validos))))
+            continue
+
+        nif_bueno = next(iter(validos))
+        # Citar el nombre tal y como se leyo en la factura de la que sale el NIF.
+        nombre_prov = next(pr.facturas[0].nombre for pr in grupo
+                           if normaliza_nif(pr.facturas[0].nif) == nif_bueno)
+        for pr in pendientes:
+            leido = (pr.facturas[0].nif or "").strip()
+            for f in pr.facturas:
+                f.nif = nif_bueno
+            motivo = f"se leyó «{leido}», que no es un NIF válido" if leido \
+                else "no se leyó ningún NIF"
+            _anadir_aviso(pr, f"NIF copiado de otra factura de {nombre_prov} "
+                              f"({nif_bueno}): aquí {motivo}. Compruébalo.")
+            completados += 1
+
+    return completados

@@ -25,7 +25,7 @@ class Resultado:
     mensajes: List[str]
 
 
-def _validar_nif(nif: str) -> bool:
+def validar_nif(nif: str) -> bool:
     """Valida DNI, NIE y CIF espanoles por su digito/letra de control."""
     if not nif:
         return False
@@ -89,7 +89,7 @@ def validar(f: Factura) -> Resultado:
     # no bloquea, pero avisa para que se compruebe.
     if not f.nif:
         marcar_revisar("Falta el NIF")
-    elif not _validar_nif(f.nif):
+    elif not validar_nif(f.nif):
         marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): {f.nif}")
 
     # Aritmetica del IVA: cuota = base * % / 100

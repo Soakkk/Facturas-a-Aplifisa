@@ -18,6 +18,34 @@ from .modelo import CAMPOS_IMPORTE, CAMPOS_PORCENTAJE, Factura
 MODO_TEXTO = "texto"
 MODO_NUMERO = "numero"
 
+# Aplifisa rechaza el apunte si el nombre de la cuenta pasa de 40 caracteres
+# ("El tamano del nombre excede el maximo").
+MAX_NOMBRE = 40
+
+
+# Palabras que no deben quedar al final de un nombre recortado.
+_CONECTORES = {"DE", "DEL", "LA", "EL", "LOS", "LAS", "Y", "E"}
+
+
+def _recortar_nombre(nombre: str) -> str:
+    """Recorta a MAX_NOMBRE sin dejar restos feos: corta por palabra entera si
+    apenas cuesta caracteres ('... IBERIA, S' -> '... IBERIA') y si no corta en
+    seco, que conserva mas informacion para identificar la cuenta."""
+    nombre = " ".join(str(nombre).split())
+    if len(nombre) <= MAX_NOMBRE:
+        return nombre
+    corte = nombre[:MAX_NOMBRE]
+    if not nombre[MAX_NOMBRE].isspace():
+        hueco = corte.rfind(" ")
+        # Retroceder solo si se pierden pocas letras; si no, corte seco.
+        if hueco >= MAX_NOMBRE - 6:
+            corte = corte[:hueco]
+    corte = corte.rstrip(" ,.-")
+    palabras = corte.split(" ")
+    if len(palabras) > 1 and palabras[-1].upper() in _CONECTORES:
+        corte = " ".join(palabras[:-1])
+    return corte.rstrip(" ,.-")
+
 
 def _fmt_importe_texto(valor: float) -> str:
     return f"{valor:.2f}".replace(".", ",")
@@ -38,6 +66,9 @@ def _valor_celda(campo: str, valor, modo: str):
     # Aplifisa: el NIF de la cuenta no puede llevar puntos, espacios ni guiones.
     if campo == "nif":
         return str(valor).strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+
+    if campo == "nombre":
+        return _recortar_nombre(valor)
 
     es_numerico = campo in CAMPOS_IMPORTE or campo in CAMPOS_PORCENTAJE
     if not es_numerico:

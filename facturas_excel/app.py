@@ -30,7 +30,7 @@ from facturas_excel.exportar import exportar_excel
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
-from facturas_excel.procesar import construir, detectar_cliente
+from facturas_excel.procesar import construir, detectar_cliente, propagar_nifs
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import ERROR, OK, REVISAR, encontrar_duplicados, validar
 
@@ -140,6 +140,9 @@ class Worker(QThread):
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = [(img, construir(datos, nif, nombre, origen, pag))
                           for img, origen, pag, datos in registros]
+            # Rellenar los NIF ilegibles con los de otras facturas del mismo
+            # proveedor (necesita el lote entero, por eso va aqui al final).
+            propagar_nifs([pr for _, pr in procesadas])
             self.terminado.emit(procesadas, nombre, nif)
         except Exception as e:  # noqa
             self.fallo.emit(str(e))
