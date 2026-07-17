@@ -34,6 +34,40 @@ def test_arrastre_filtra_archivos_no_compatibles(tmp_path):
     assert rutas == [os.path.normpath(str(pdf))]
 
 
+def test_la_rueda_del_raton_no_cambia_gasto_venta_ni_el_trimestre():
+    # Bajando por el listado con la rueda, al pasar por encima del desplegable
+    # se cambiaba gasto<->venta en silencio. Solo debe cambiarse con un clic.
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from facturas_excel.app import C_TIPO
+
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._anadir_fila(b"", Factura(
+        num_factura="F-1", fecha="16/07/2026", nombre="Proveedor",
+        nif="B30048276", concepto="600", base_iva=100, pct_iva=21,
+        cuota_iva=21, total_impreso=121,
+    ), "gasto", "600", None, "")
+
+    def rueda(w):
+        for _ in range(3):
+            _app.sendEvent(w, QWheelEvent(
+                QPointF(5, 5), w.mapToGlobal(QPoint(5, 5)), QPoint(0, -40),
+                QPoint(0, -120), Qt.NoButton, Qt.NoModifier,
+                Qt.ScrollUpdate, False))
+
+    combo = v.tabla.cellWidget(0, C_TIPO)
+    rueda(combo)
+    assert combo.currentText() == "gasto"
+
+    trim, anio = v.combo_trim.currentText(), v.spin_anio.value()
+    rueda(v.combo_trim)
+    rueda(v.spin_anio)
+    assert (v.combo_trim.currentText(), v.spin_anio.value()) == (trim, anio)
+
+    combo.setCurrentText("venta")      # elegirlo a mano si funciona
+    assert combo.currentText() == "venta"
+
+
 def test_insertar_filas_es_atomico_y_marca_duplicados():
     from facturas_excel.validacion import ERROR
     from facturas_excel.app import ICONO_ESTADO

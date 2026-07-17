@@ -60,6 +60,27 @@ C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
 C_BASE, C_PCT, C_CUOTA, C_TOTAL = range(len(COLS))
 
 
+class _SinRueda:
+    """Ignora la rueda del raton para que no cambie el valor sin querer.
+
+    Bajando por el listado con la rueda, al pasar por encima de un desplegable
+    este se tragaba el giro y cambiaba gasto<->venta en silencio (y el año del
+    trimestre igual). El valor solo debe cambiarse haciendo clic; la rueda tiene
+    que seguir moviendo la tabla, asi que el evento se deja pasar al padre.
+    """
+
+    def wheelEvent(self, evento):
+        evento.ignore()
+
+
+class ComboSinRueda(_SinRueda, QComboBox):
+    pass
+
+
+class SpinSinRueda(_SinRueda, QSpinBox):
+    pass
+
+
 def ruta_recurso(nombre):
     base = getattr(
         sys, "_MEIPASS",
@@ -283,10 +304,10 @@ class VentanaPrincipal(QMainWindow):
         etiqueta_per.setObjectName("textoSuave")
         fila_per = QHBoxLayout()
         fila_per.setSpacing(4)
-        self.combo_trim = QComboBox()
+        self.combo_trim = ComboSinRueda()
         self.combo_trim.addItems(["1T", "2T", "3T", "4T"])
         self.combo_trim.setFixedWidth(60)
-        self.spin_anio = QSpinBox()
+        self.spin_anio = SpinSinRueda()
         self.spin_anio.setRange(2000, 2100)
         self.spin_anio.setValue(date.today().year)
         self.spin_anio.setFixedWidth(72)
@@ -620,7 +641,7 @@ class VentanaPrincipal(QMainWindow):
         est.setTextAlignment(Qt.AlignCenter)
         self.tabla.setItem(r, C_ESTADO, est)
 
-        combo = QComboBox()
+        combo = ComboSinRueda()
         combo.addItems(["gasto", "venta"])
         combo.setCurrentText(tipo)
         combo.currentTextChanged.connect(lambda _t, row=r: self._revalidar_fila(row))
