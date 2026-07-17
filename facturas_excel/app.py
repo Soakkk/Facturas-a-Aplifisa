@@ -11,13 +11,15 @@ import argparse
 import os
 import sys
 
+from datetime import date
+
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QProgressDialog, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QProgressDialog, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,8 +33,12 @@ from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import construir, detectar_cliente, propagar_nifs
+from facturas_excel.resumen import describir, resumir
 from facturas_excel.rutas import ruta_config
-from facturas_excel.validacion import ERROR, OK, REVISAR, encontrar_duplicados, validar
+from facturas_excel.validacion import (
+    ERROR, OK, REVISAR, detectar_periodo, encontrar_duplicados, fmt_periodo,
+    periodo_de, validar,
+)
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -256,6 +262,26 @@ class VentanaPrincipal(QMainWindow):
         bloque_cliente.addWidget(etiqueta)
         bloque_cliente.addWidget(self.lbl_cliente)
         la.addLayout(bloque_cliente, 1)
+
+        bloque_periodo = QVBoxLayout()
+        etiqueta_per = QLabel("TRIMESTRE QUE SE TRABAJA")
+        etiqueta_per.setObjectName("textoSuave")
+        fila_per = QHBoxLayout()
+        fila_per.setSpacing(4)
+        self.combo_trim = QComboBox()
+        self.combo_trim.addItems(["1T", "2T", "3T", "4T"])
+        self.combo_trim.setFixedWidth(60)
+        self.spin_anio = QSpinBox()
+        self.spin_anio.setRange(2000, 2100)
+        self.spin_anio.setValue(date.today().year)
+        self.spin_anio.setFixedWidth(72)
+        for w in (self.combo_trim, self.spin_anio):
+            fila_per.addWidget(w)
+        self.combo_trim.currentIndexChanged.connect(self._revalidar_todo)
+        self.spin_anio.valueChanged.connect(self._revalidar_todo)
+        bloque_periodo.addWidget(etiqueta_per)
+        bloque_periodo.addLayout(fila_per)
+        la.addLayout(bloque_periodo)
         self.btn_gastos = QPushButton("Exportar gastos")
         self.btn_gastos.setObjectName("exito")
         self.btn_gastos.setEnabled(False)
@@ -313,6 +339,22 @@ class VentanaPrincipal(QMainWindow):
         split.addWidget(visor_card)
         split.setSizes([980, 380])
         cuerpo.addWidget(split, 1)
+
+        resumen_card = QFrame()
+        resumen_card.setObjectName("tarjeta")
+        lr = QVBoxLayout(resumen_card)
+        lr.setContentsMargins(12, 10, 12, 10)
+        lr.setSpacing(2)
+        self.lbl_resumen_titulo = QLabel("Resumen del trimestre")
+        self.lbl_resumen_titulo.setObjectName("tituloSeccion")
+        self.lbl_resumen_gastos = QLabel("Gastos: —")
+        self.lbl_resumen_ventas = QLabel("Ventas: —")
+        self.lbl_resumen_fuera = QLabel("")
+        self.lbl_resumen_fuera.setObjectName("textoSuave")
+        for w in (self.lbl_resumen_titulo, self.lbl_resumen_gastos,
+                  self.lbl_resumen_ventas, self.lbl_resumen_fuera):
+            lr.addWidget(w)
+        cuerpo.addWidget(resumen_card)
 
         self.lbl_estado = QLabel("Cargue un lote de facturas para empezar.")
         self.lbl_estado.setObjectName("textoSuave")
@@ -505,6 +547,7 @@ class VentanaPrincipal(QMainWindow):
             for f in pr.facturas:
                 self._anadir_fila(png, f, pr.tipo, pr.cuenta, pr.gxx, pr.aviso)
         self.tabla.blockSignals(False)
+        self._autoseleccionar_periodo()
         self._revalidar_todo()
         hay_datos = self.tabla.rowCount() > 0
         self.btn_gastos.setEnabled(hay_datos)
@@ -567,11 +610,29 @@ class VentanaPrincipal(QMainWindow):
         w = self.tabla.cellWidget(r, C_TIPO)
         return w.currentText() if w else "gasto"
 
+    def _periodo(self):
+        """Trimestre que se esta trabajando, segun los selectores."""
+        return (self.spin_anio.value(), self.combo_trim.currentIndex() + 1)
+
+    def _autoseleccionar_periodo(self):
+        """Propone el trimestre mayoritario del lote (el que se esta trabajando);
+        asi las descolgadas saltan solas. Se puede cambiar a mano."""
+        periodo = detectar_periodo([d["factura"] for d in self.filas])
+        if not periodo:
+            return
+        anio, trim = periodo
+        for w in (self.combo_trim, self.spin_anio):
+            w.blockSignals(True)
+        self.spin_anio.setValue(anio)
+        self.combo_trim.setCurrentIndex(trim - 1)
+        for w in (self.combo_trim, self.spin_anio):
+            w.blockSignals(False)
+
     def _revalidar_fila(self, r):
         if r >= len(self.filas):
             return
         f = self._leer_fila(r)
-        res = validar(f)
+        res = validar(f, self._periodo())
         estado = res.estado
         msgs = list(res.mensajes)
         if self.filas[r]["aviso"]:
@@ -598,10 +659,11 @@ class VentanaPrincipal(QMainWindow):
             self._revalidar_fila(r)
 
     def _resumen(self):
+        periodo = self._periodo()
         estados = []
         for r in range(self.tabla.rowCount()):
             f = self.filas[r]["factura"]
-            e = validar(f).estado
+            e = validar(f, periodo).estado
             if self.filas[r]["aviso"] and e == OK:
                 e = REVISAR
             if r in self._duplicados and e == OK:
@@ -611,6 +673,28 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText(
             f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
             f"🟢 {estados.count(OK)}  🟡 {estados.count(REVISAR)}  🔴 {estados.count(ERROR)}")
+        self._pintar_resumen(periodo)
+
+    def _pintar_resumen(self, periodo):
+        """Suma solo lo del trimestre que se trabaja: es lo que se declara.
+        Lo de fuera se cuenta aparte para que se vea que esta ahi."""
+        dentro = {"gasto": [], "venta": []}
+        fuera = 0
+        for r in range(self.tabla.rowCount()):
+            f = self.filas[r]["factura"]
+            if periodo_de(f.fecha) == periodo:
+                dentro[self._tipo_fila(r)].append(f)
+            else:
+                fuera += 1
+        self.lbl_resumen_titulo.setText(f"Resumen del {fmt_periodo(periodo)}")
+        self.lbl_resumen_gastos.setText(f"Gastos:  {describir(resumir(dentro['gasto']))}")
+        self.lbl_resumen_ventas.setText(f"Ventas:  {describir(resumir(dentro['venta']))}")
+        if fuera:
+            self.lbl_resumen_fuera.setText(
+                f"⚠ {fuera} línea(s) fuera del {fmt_periodo(periodo)} o sin fecha "
+                f"válida: NO suman en este resumen (mírelas en la tabla, en ámbar).")
+        else:
+            self.lbl_resumen_fuera.setText("")
 
     # ---------- miniatura ----------
     def _mostrar_miniatura(self):
@@ -639,11 +723,26 @@ class VentanaPrincipal(QMainWindow):
         if not facturas:
             QMessageBox.warning(self, "Sin datos", f"No hay {tipo}s que exportar.")
             return
-        errores = sum(1 for f in facturas if validar(f).estado == ERROR)
+        periodo = self._periodo()
+        errores = sum(1 for f in facturas if validar(f, periodo).estado == ERROR)
         if errores:
             r = QMessageBox.question(
                 self, "Hay errores",
                 f"{errores} línea(s) con errores (rojo). ¿Exportar de todas formas?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
+        fuera = [f for f in facturas if periodo_de(f.fecha) != periodo]
+        if fuera:
+            detalle = "\n".join(
+                f"  · {f.fecha or '(sin fecha)'} — {f.nombre or '?'}" for f in fuera[:8])
+            if len(fuera) > 8:
+                detalle += f"\n  · … y {len(fuera) - 8} más"
+            r = QMessageBox.question(
+                self, f"Hay facturas fuera del {fmt_periodo(periodo)}",
+                f"{len(fuera)} línea(s) NO son del {fmt_periodo(periodo)} "
+                f"(o no tienen fecha válida):\n\n{detalle}\n\n"
+                "Se exportarán igualmente. ¿Continuar?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return
