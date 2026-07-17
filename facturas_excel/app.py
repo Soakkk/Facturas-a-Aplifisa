@@ -16,23 +16,29 @@ from datetime import date
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
-    QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QProgressDialog, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+    QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
+    QPushButton, QProgressDialog, QSpinBox, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import __version__, updater
 from facturas_excel.claves import guardar_api_key, leer_api_key
+from facturas_excel.clientes import (
+    en_recargo_equivalencia, guardar_recargo_equivalencia,
+)
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
 from facturas_excel.exportar import exportar_excel
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
-from facturas_excel.procesar import construir, detectar_cliente, propagar_nifs
+from facturas_excel.procesar import (
+    a_total_factura, construir, detectar_cliente, marcar_sustituidas,
+    propagar_nifs,
+)
 from facturas_excel.resumen import describir, resumir
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
@@ -149,6 +155,8 @@ class Worker(QThread):
             # Rellenar los NIF ilegibles con los de otras facturas del mismo
             # proveedor (necesita el lote entero, por eso va aqui al final).
             propagar_nifs([pr for _, pr in procesadas])
+            # Post-facturaciones que rehacen un albaran anterior del lote.
+            marcar_sustituidas([pr for _, pr in procesadas])
             self.terminado.emit(procesadas, nombre, nif)
         except Exception as e:  # noqa
             self.fallo.emit(str(e))
@@ -261,6 +269,13 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_cliente.setObjectName("cliente")
         bloque_cliente.addWidget(etiqueta)
         bloque_cliente.addWidget(self.lbl_cliente)
+        self.chk_recargo = QCheckBox("En recargo de equivalencia (gastos por el total)")
+        self.chk_recargo.setToolTip(
+            "El cliente no deduce IVA: cada gasto se registra por el total de la\n"
+            "factura (base + IVA + recargo), sin desglose. Se recuerda por NIF.")
+        self.chk_recargo.setEnabled(False)
+        self.chk_recargo.toggled.connect(self._on_recargo)
+        bloque_cliente.addWidget(self.chk_recargo)
         la.addLayout(bloque_cliente, 1)
 
         bloque_periodo = QVBoxLayout()
@@ -540,13 +555,15 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_cliente.setText(
             f"{nombre or 'Cliente no identificado'}"
             + (f"  ·  {nif}" if nif else ""))
-        self.tabla.blockSignals(True)
-        self.tabla.setRowCount(0)
-        self.filas = []
-        for png, pr in procesadas:
-            for f in pr.facturas:
-                self._anadir_fila(png, f, pr.tipo, pr.cuenta, pr.gxx, pr.aviso)
-        self.tabla.blockSignals(False)
+        # El lote crudo se guarda tal cual: al marcar/desmarcar el recargo la
+        # tabla se rehace desde aqui, sin volver a llamar a Gemini.
+        self._procesadas = procesadas
+        self._cliente_nif, self._cliente_nombre = nif, nombre
+        self.chk_recargo.blockSignals(True)
+        self.chk_recargo.setEnabled(bool(nif))
+        self.chk_recargo.setChecked(en_recargo_equivalencia(nif))
+        self.chk_recargo.blockSignals(False)
+        self._rellenar_tabla()
         self._autoseleccionar_periodo()
         self._revalidar_todo()
         hay_datos = self.tabla.rowCount() > 0
@@ -554,6 +571,25 @@ class VentanaPrincipal(QMainWindow):
         self.btn_ventas.setEnabled(hay_datos)
         if hay_datos:
             self.tabla.selectRow(0)
+
+    def _rellenar_tabla(self):
+        recargo = self.chk_recargo.isChecked()
+        self.tabla.blockSignals(True)
+        self.tabla.setRowCount(0)
+        self.filas = []
+        for png, pr in getattr(self, "_procesadas", []):
+            vista = a_total_factura(pr) if recargo else pr
+            for f in vista.facturas:
+                self._anadir_fila(png, f, vista.tipo, vista.cuenta, vista.gxx,
+                                  vista.aviso)
+        self.tabla.blockSignals(False)
+
+    def _on_recargo(self, activo):
+        """Marcar el recargo rehace la tabla: cambia como se registra cada gasto."""
+        guardar_recargo_equivalencia(getattr(self, "_cliente_nif", ""), activo,
+                                     getattr(self, "_cliente_nombre", ""))
+        self._rellenar_tabla()
+        self._revalidar_todo()
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso):
         senales_bloqueadas = self.tabla.signalsBlocked()
@@ -686,8 +722,13 @@ class VentanaPrincipal(QMainWindow):
                 dentro[self._tipo_fila(r)].append(f)
             else:
                 fuera += 1
-        self.lbl_resumen_titulo.setText(f"Resumen del {fmt_periodo(periodo)}")
-        self.lbl_resumen_gastos.setText(f"Gastos:  {describir(resumir(dentro['gasto']))}")
+        # En recargo el gasto no tiene desglose de IVA: solo el total factura.
+        recargo = self.chk_recargo.isChecked()
+        self.lbl_resumen_titulo.setText(
+            f"Resumen del {fmt_periodo(periodo)}"
+            + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
+        self.lbl_resumen_gastos.setText(
+            f"Gastos:  {describir(resumir(dentro['gasto']), solo_total=recargo)}")
         self.lbl_resumen_ventas.setText(f"Ventas:  {describir(resumir(dentro['venta']))}")
         if fuera:
             self.lbl_resumen_fuera.setText(

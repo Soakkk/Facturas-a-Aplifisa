@@ -52,6 +52,12 @@ Identifica las DOS partes de la factura, cada una con su nombre y NIF/CIF:
 
 {_CRITERIO_CUENTAS}
 
+MUY IMPORTANTE — SOLO LO IMPRESO. Usa siempre los importes IMPRESOS por el
+emisor. IGNORA por completo cualquier anotacion manuscrita: totales escritos a
+mano, cifras rodeadas con un circulo, lineas tachadas, "NO" junto a un articulo
+o el total impreso tachado con una raya. Aunque el total impreso este tachado y
+al lado haya otro escrito a mano, devuelve SIEMPRE el impreso.
+
 Devuelve SOLO un JSON con esta estructura exacta:
 {{
   "emisor_nombre": "...", "emisor_nif": "...",
@@ -60,15 +66,32 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "fecha": "dd/mm/aaaa",
   "fecha_operacion": "dd/mm/aaaa o null",
   "lineas_iva": [{{"base": 0.0, "tipo_iva": 0.0, "cuota_iva": 0.0}}],
+  "base_requiv": null, "pct_requiv": null, "cuota_requiv": null,
   "base_irpf": null, "pct_irpf": null, "cuota_irpf": null,
   "total": 0.0,
+  "sustituye_a": null,
+  "hay_anotaciones_manuscritas": false,
   "cuenta_gasto": "codigo PGC segun el criterio de arriba (si fuese un gasto)",
   "subclave_gxx": "G14/G15/G16/G17/G18 si cuenta_gasto es 628, si no null",
   "concepto_texto": "descripcion breve del gasto/venta",
   "confianza": "alta/media/baja segun lo legible que este la factura"
 }}
 Numeros con punto decimal. Si la factura tiene varios tipos de IVA, pon una
-entrada por cada tipo en lineas_iva. Si un dato no aparece, usa null."""
+entrada por cada tipo en lineas_iva. Si un dato no aparece, usa null.
+
+RECARGO DE EQUIVALENCIA: si la factura desglosa un "Recargo Equivalencia" o
+"Recargo Equivalent" (tipos habituales 5,2 / 1,4 / 0,5 %), rellena base_requiv,
+pct_requiv y cuota_requiv. Es un impuesto MAS que se suma al total, no un
+descuento. Si no aparece, deja los tres a null.
+
+FACTURA QUE SUSTITUYE A OTRA: si el documento dice que sustituye/anula/rectifica
+a otro (p.ej. "Sustituye al doc.n: 4532023141", "POST-FACTURACION", factura
+rectificativa), pon en "sustituye_a" el numero del documento al que sustituye.
+Si no lo dice, null.
+
+ANOTACIONES A MANO: pon "hay_anotaciones_manuscritas" a true si ves cualquier
+cosa escrita a mano sobre la factura (aunque la ignores para los importes), para
+que una persona la revise. Las firmas de "RECIBI MERCANCIAS" no cuentan."""
 
 
 @dataclass

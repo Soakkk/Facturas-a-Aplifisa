@@ -13,7 +13,7 @@ Reutilizable desde la UI y desde scripts.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
 from .conceptos import DEFAULT_VENTA, asignar_concepto, subclave_628
@@ -84,6 +84,8 @@ class FacturaProcesada:
     origen: str
     pagina: int
     aviso: str = ""           # rol emisor/destinatario dudoso, etc.
+    sustituye_a: str = ""     # nº del documento al que sustituye, si lo dice
+    sustituida_por: str = ""  # nº de la factura del lote que la sustituye a ella
 
 
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
@@ -146,17 +148,89 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         f.pct_iva = _num(linea.get("tipo_iva"))
         f.cuota_iva = _num(linea.get("cuota_iva"))
         if i == 0:
+            # El recargo y la retencion van una sola vez por factura, no por
+            # linea de IVA (si no, se contarian varias veces en el total).
+            f.base_requiv = _num(datos.get("base_requiv"))
+            f.pct_requiv = _num(datos.get("pct_requiv"))
+            f.cuota_requiv = _num(datos.get("cuota_requiv"))
             f.base_irpf = _num(datos.get("base_irpf"))
             f.pct_irpf = _num(datos.get("pct_irpf"))
             f.cuota_irpf = _num(datos.get("cuota_irpf"))
         facturas.append(f)
 
+    if datos.get("hay_anotaciones_manuscritas"):
+        aviso = f"{aviso} Tiene algo escrito a mano: se han usado los importes " \
+                f"IMPRESOS (lo manuscrito no cuenta). Compruébala.".strip()
+
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
-                            gxx=gxx, origen=origen, pagina=pagina, aviso=aviso)
+                            gxx=gxx, origen=origen, pagina=pagina, aviso=aviso,
+                            sustituye_a=str(datos.get("sustituye_a") or "").strip())
 
 
 def _anadir_aviso(pr: FacturaProcesada, texto: str) -> None:
     pr.aviso = f"{pr.aviso} {texto}".strip() if pr.aviso else texto
+
+
+def _num_doc(valor) -> str:
+    """Deja un nº de documento comparable (Gemini lo devuelve con o sin puntos)."""
+    return "".join(c for c in str(valor or "") if c.isalnum()).upper()
+
+
+def marcar_sustituidas(procesadas: List[FacturaProcesada]) -> int:
+    """Marca las facturas que otra factura del lote dice sustituir.
+
+    Coca-Cola manda una "POST-FACTURACION" que pone "Sustituye al doc.n: N" y
+    rehace un albaran anterior. Si se importan las dos, el gasto se duplica: el
+    numero y la base son distintos, asi que la deteccion de duplicados normal no
+    las ve. Aqui solo se MARCAN (en rojo): decide la persona.
+    """
+    por_numero: Dict[str, List[FacturaProcesada]] = defaultdict(list)
+    for pr in procesadas:
+        num = _num_doc(pr.facturas[0].num_factura if pr.facturas else None)
+        if num:
+            por_numero[num].append(pr)
+
+    marcadas = 0
+    for pr in procesadas:
+        objetivo = _num_doc(pr.sustituye_a)
+        if not objetivo:
+            continue
+        nuevo = pr.facturas[0].num_factura if pr.facturas else "?"
+        for vieja in por_numero.get(objetivo, []):
+            if vieja is pr:
+                continue
+            _anadir_aviso(vieja, f"SUSTITUIDA por la factura {nuevo} del mismo "
+                                 f"lote: NO la importes o duplicarás el gasto.")
+            vieja.sustituida_por = nuevo
+            marcadas += 1
+    return marcadas
+
+
+def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
+    """Deja la factura como un unico apunte por el TOTAL (base + IVA + recargo).
+
+    Para clientes en recargo de equivalencia: no deducen IVA, asi que el gasto es
+    el importe integro y en Aplifisa se registra como total factura, sin desglose.
+
+    Si la factura lleva retencion NO se toca: el IRPF hay que declararlo aparte
+    (modelo 111) y colapsarlo lo perderia. Se avisa para hacerla a mano.
+    """
+    if pr.tipo != "gasto" or not pr.facturas:
+        return pr
+    if any(f.cuota_irpf for f in pr.facturas):
+        copia = replace(pr, facturas=[replace(f) for f in pr.facturas])
+        _anadir_aviso(copia, "Lleva retención de IRPF: NO se ha pasado a total "
+                             "factura (la retención hay que declararla). Revísala.")
+        return copia
+
+    total = sum((f.base_iva or 0) + (f.cuota_iva or 0) for f in pr.facturas)
+    total += sum(f.cuota_requiv or 0 for f in pr.facturas)
+    base = replace(pr.facturas[0])
+    base.base_iva = round(total, 2)
+    base.pct_iva = None
+    base.cuota_iva = None
+    base.base_requiv = base.pct_requiv = base.cuota_requiv = None
+    return replace(pr, facturas=[base])
 
 
 def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
