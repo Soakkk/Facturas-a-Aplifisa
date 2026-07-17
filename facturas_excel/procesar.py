@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
+from . import proveedores
 from .conceptos import DEFAULT_VENTA, asignar_concepto, subclave_628
 from .extraccion import _num
 from .modelo import Factura
@@ -238,6 +239,67 @@ def marcar_sustituidas(procesadas: List[FacturaProcesada]) -> int:
             vieja.sustituida_por = nuevo
             marcadas += 1
     return marcadas
+
+
+def clave_proveedor(nombre) -> str:
+    """Nombre normalizado que identifica a un proveedor en la memoria."""
+    return " ".join(sorted(_tokens_nombre(nombre)))
+
+
+def recordar_nif(nombre, nif, manual: bool = False) -> bool:
+    """Guarda el NIF de un proveedor para los proximos lotes (y otros clientes).
+    Solo se recuerdan NIF que pasan el digito de control."""
+    nif = normaliza_nif(nif)
+    clave = clave_proveedor(nombre)
+    if not clave or not validar_nif(nif):
+        return False
+    return proveedores.guardar(clave, nif, str(nombre or "").strip(), manual)
+
+
+def aprender_nifs(procesadas: List[FacturaProcesada]) -> int:
+    """Memoriza los NIF que SI se han leido bien en este lote."""
+    n = 0
+    for pr in procesadas:
+        if not pr.facturas:
+            continue
+        f = pr.facturas[0]
+        if recordar_nif(f.nombre, f.nif):
+            n += 1
+    return n
+
+
+def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
+    """Rellena los NIF que faltan o no valen con los ya sabidos de otras veces.
+
+    Se usa DESPUES de propagar_nifs: dentro del mismo lote la prueba es mejor.
+    Como en propagar_nifs, no pisa nunca un NIF valido; si el proveedor llega con
+    uno valido DISTINTO al recordado, no toca nada y avisa (puede haber cambiado
+    de CIF, o ser otra empresa que se llama parecido).
+    """
+    completados = 0
+    for pr in procesadas:
+        if not pr.facturas:
+            continue
+        f = pr.facturas[0]
+        ficha = proveedores.leer(clave_proveedor(f.nombre))
+        if not ficha:
+            continue
+        actual = normaliza_nif(f.nif)
+        if validar_nif(actual):
+            if actual != ficha["nif"]:
+                _anadir_aviso(pr, f"OJO: {f.nombre} tiene guardado el NIF "
+                                  f"{ficha['nif']} y esta factura trae {actual}. "
+                                  f"Comprueba cuál es el bueno.")
+            continue
+        leido = (f.nif or "").strip()   # antes de pisarlo: f ES pr.facturas[0]
+        for linea in pr.facturas:
+            linea.nif = ficha["nif"]
+        motivo = f"aquí se leyó «{leido}», que no es válido" if leido \
+            else "aquí no se leyó ninguno"
+        _anadir_aviso(pr, f"NIF puesto de memoria ({ficha['nif']}): es el que "
+                          f"consta guardado para {f.nombre} y {motivo}. Compruébalo.")
+        completados += 1
+    return completados
 
 
 def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:

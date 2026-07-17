@@ -36,14 +36,15 @@ from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import (
-    a_total_factura, construir, detectar_cliente, marcar_sustituidas,
-    propagar_nifs,
+    a_total_factura, aprender_nifs, clave_proveedor, completar_desde_memoria,
+    construir, detectar_cliente, marcar_sustituidas, normaliza_nif,
+    propagar_nifs, recordar_nif,
 )
 from facturas_excel.resumen import describir, resumir
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, detectar_periodo, encontrar_duplicados, fmt_periodo,
-    periodo_de, validar,
+    periodo_de, validar, validar_nif,
 )
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -175,9 +176,12 @@ class Worker(QThread):
                           for img, origen, pag, datos in registros]
             # Rellenar los NIF ilegibles con los de otras facturas del mismo
             # proveedor (necesita el lote entero, por eso va aqui al final).
-            propagar_nifs([pr for _, pr in procesadas])
+            solo_pr = [pr for _, pr in procesadas]
+            propagar_nifs(solo_pr)              # 1º la prueba del propio lote
+            completar_desde_memoria(solo_pr)    # 2º lo sabido de otras veces
+            aprender_nifs(solo_pr)              # 3º memorizar lo leido bien
             # Post-facturaciones que rehacen un albaran anterior del lote.
-            marcar_sustituidas([pr for _, pr in procesadas])
+            marcar_sustituidas(solo_pr)
             self.terminado.emit(procesadas, nombre, nif)
         except Exception as e:  # noqa
             self.fallo.emit(str(e))
@@ -663,7 +667,45 @@ class VentanaPrincipal(QMainWindow):
 
     # ---------- edicion / validacion ----------
     def _on_celda(self, item):
+        aviso = self._nif_escrito_a_mano(item.row()) \
+            if item.column() == C_NIF else ""
         self._revalidar_todo()
+        if aviso:
+            self.lbl_estado.setText(aviso)  # despues: _resumen pisa la barra
+
+    def _nif_escrito_a_mano(self, r) -> str:
+        """Un NIF escrito por una persona vale mas que cualquier lectura: se
+        guarda para siempre y se pone ya en el resto de facturas de ese mismo
+        proveedor que esten sin el, aqui y en los proximos lotes."""
+        if r >= len(self.filas):
+            return ""
+        f = self._leer_fila(r)
+        nif = normaliza_nif(f.nif)
+        if not f.nombre or not validar_nif(nif):
+            return ""                  # a medio escribir o ilegible: no guardar
+        if not recordar_nif(f.nombre, nif, manual=True):
+            return ""
+        clave = clave_proveedor(f.nombre)
+        aplicadas = []
+        self.tabla.blockSignals(True)
+        for otra in range(self.tabla.rowCount()):
+            if otra == r:
+                continue
+            g = self._leer_fila(otra)
+            if clave_proveedor(g.nombre) != clave or validar_nif(normaliza_nif(g.nif)):
+                continue
+            g.nif = nif
+            self.tabla.item(otra, C_NIF).setText(nif)
+            self.filas[otra]["aviso"] = (
+                f"{self.filas[otra]['aviso']} NIF puesto a mano ({nif}) desde "
+                f"otra factura de {f.nombre}.").strip()
+            aplicadas.append(otra + 1)
+        self.tabla.blockSignals(False)
+        aviso = f"NIF {nif} guardado para {f.nombre}: ya no habrá que escribirlo más."
+        if aplicadas:
+            aviso += ("  Puesto también en la línea "
+                      + ", ".join(str(n) for n in aplicadas) + ".")
+        return aviso
 
     def _leer_fila(self, r):
         """Actualiza la Factura de la fila con lo que hay en las celdas."""
