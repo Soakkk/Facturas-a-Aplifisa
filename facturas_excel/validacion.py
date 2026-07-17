@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .modelo import Factura
 
@@ -181,18 +181,27 @@ def validar(f: Factura, periodo: Optional[Periodo] = None) -> Resultado:
     return Resultado(estado=estado, mensajes=msgs)
 
 
-def encontrar_duplicados(facturas: List[Factura]) -> List[int]:
-    """Devuelve indices de facturas que parecen duplicadas (mismo nº+NIF+base)."""
-    vistos = {}
-    dups = []
+def encontrar_duplicados(facturas: List[Factura]) -> Dict[int, int]:
+    """Facturas repetidas dentro del lote: {fila duplicada: fila original}.
+
+    Misma factura = mismo nº + NIF + base + tipo de IVA. El tipo entra en la
+    clave porque una factura con varios tipos de IVA son VARIAS filas con el
+    mismo nº y NIF, y si dos de sus lineas tuvieran la misma base se marcarian
+    como duplicadas sin serlo.
+    """
+    vistos: Dict[tuple, int] = {}
+    dups: Dict[int, int] = {}
     for i, f in enumerate(facturas):
         clave = (
             (f.num_factura or "").strip().upper(),
             (f.nif or "").strip().upper(),
             round(f.base_iva or 0, 2),
+            round(f.pct_iva or 0, 2),
         )
-        if clave in vistos and any(clave):
-            dups.append(i)
+        if not any(clave):
+            continue          # fila vacia: no se compara
+        if clave in vistos:
+            dups[i] = vistos[clave]
         else:
             vistos[clave] = i
     return dups

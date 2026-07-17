@@ -47,6 +47,12 @@ QFrame#tarjeta {{
     background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px;
 }}
 QLabel#tituloSeccion {{ color: #102A4C; font-size: 17px; font-weight: 700; }}
+QFrame#alerta {{
+    background: #FEF3F2; border: 1px solid {DANGER};
+    border-left: 5px solid {DANGER}; border-radius: 6px;
+}}
+QLabel#alertaTitulo {{ color: {DANGER}; font-size: 14px; font-weight: 700; }}
+QLabel#alertaTexto {{ color: #7A271A; font-size: 12px; }}
 QLabel#textoSuave {{ color: {MUTED}; font-size: 11px; }}
 QLabel#cliente {{ color: {NAVY}; font-size: 14px; font-weight: 700; }}
 QLabel#visor {{

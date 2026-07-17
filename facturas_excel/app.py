@@ -312,6 +312,23 @@ class VentanaPrincipal(QMainWindow):
         self.progreso.setVisible(False)
         cuerpo.addWidget(self.progreso)
 
+        # Alerta de duplicados: tiene que verse sin tener que pasar el raton
+        # por encima de una celda (un duplicado importado se paga dos veces).
+        self.alerta = QFrame()
+        self.alerta.setObjectName("alerta")
+        self.alerta.setVisible(False)
+        lal = QVBoxLayout(self.alerta)
+        lal.setContentsMargins(14, 10, 14, 10)
+        lal.setSpacing(2)
+        self.lbl_alerta_titulo = QLabel()
+        self.lbl_alerta_titulo.setObjectName("alertaTitulo")
+        self.lbl_alerta_texto = QLabel()
+        self.lbl_alerta_texto.setObjectName("alertaTexto")
+        self.lbl_alerta_texto.setWordWrap(True)
+        lal.addWidget(self.lbl_alerta_titulo)
+        lal.addWidget(self.lbl_alerta_texto)
+        cuerpo.addWidget(self.alerta)
+
         split = QSplitter(Qt.Horizontal)
         tabla_card = QFrame()
         tabla_card.setObjectName("tarjeta")
@@ -676,9 +693,12 @@ class VentanaPrincipal(QMainWindow):
             if estado == OK:
                 estado = REVISAR
         if r in self._duplicados:
-            msgs.append("Posible duplicado dentro del lote (mismo nº, NIF y base).")
-            if estado == OK:
-                estado = REVISAR
+            # Rojo, no ambar: importar dos veces la misma factura la paga dos
+            # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
+            msgs.append(f"FACTURA DUPLICADA: es la misma que la línea "
+                        f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
+                        f"base y tipo de IVA). Bórrala o quedará registrada dos veces.")
+            estado = ERROR
         celda = self.tabla.item(r, C_ESTADO)
         self.tabla.blockSignals(True)
         celda.setText(ICONO_ESTADO[estado])
@@ -689,10 +709,39 @@ class VentanaPrincipal(QMainWindow):
         self._resumen()
 
     def _revalidar_todo(self):
-        self._duplicados = set(encontrar_duplicados(
-            [self._leer_fila(r) for r in range(self.tabla.rowCount())]))
+        self._duplicados = encontrar_duplicados(
+            [self._leer_fila(r) for r in range(self.tabla.rowCount())])
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
+        self._pintar_alerta()
+
+    def _pintar_alerta(self):
+        """Banner rojo arriba con las duplicadas y las sustituidas: las dos
+        acaban registrando dos veces el mismo gasto si se cuelan."""
+        avisos = []
+        for r, original in sorted(self._duplicados.items()):
+            f = self.filas[r]["factura"]
+            avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
+                          f"{f.nombre or '?'} — repetida de la línea {original + 1}.")
+        sustituidas = [r for r in range(len(self.filas))
+                       if "SUSTITUIDA" in (self.filas[r]["aviso"] or "")]
+        for r in sustituidas:
+            f = self.filas[r]["factura"]
+            avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
+                          f"{f.nombre or '?'} — sustituida por otra del lote.")
+        if not avisos:
+            self.alerta.setVisible(False)
+            return
+        n = len(avisos)
+        self.lbl_alerta_titulo.setText(
+            f"⚠  ATENCIÓN: {n} factura{'s' if n > 1 else ''} "
+            f"{'repetidas' if n > 1 else 'repetida'} en el lote")
+        self.lbl_alerta_texto.setText(
+            "\n".join(avisos[:6])
+            + (f"\n… y {n - 6} más." if n > 6 else "")
+            + "\n\nSi se importan, el gasto se registra dos veces. Bórralas de "
+              "la tabla antes de exportar.")
+        self.alerta.setVisible(True)
 
     def _resumen(self):
         periodo = self._periodo()
@@ -702,8 +751,8 @@ class VentanaPrincipal(QMainWindow):
             e = validar(f, periodo).estado
             if self.filas[r]["aviso"] and e == OK:
                 e = REVISAR
-            if r in self._duplicados and e == OK:
-                e = REVISAR
+            if r in self._duplicados:
+                e = ERROR
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
         self.lbl_estado.setText(
@@ -765,6 +814,20 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Sin datos", f"No hay {tipo}s que exportar.")
             return
         periodo = self._periodo()
+        dups = [r for r in self._duplicados if r < len(self.filas)
+                and self._tipo_fila(r) == tipo]
+        if dups:
+            lineas = "\n".join(
+                f"  · Línea {r + 1}: {self.filas[r]['factura'].num_factura or '?'} — "
+                f"{self.filas[r]['factura'].nombre or '?'}" for r in sorted(dups)[:8])
+            r = QMessageBox.question(
+                self, "⚠ Hay facturas duplicadas",
+                f"{len(dups)} línea(s) están REPETIDAS en el lote:\n\n{lineas}\n\n"
+                "Si las exportas, el registro se hará DOS VECES.\n"
+                "¿Exportar de todas formas?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
         errores = sum(1 for f in facturas if validar(f, periodo).estado == ERROR)
         if errores:
             r = QMessageBox.question(

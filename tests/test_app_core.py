@@ -35,6 +35,9 @@ def test_arrastre_filtra_archivos_no_compatibles(tmp_path):
 
 
 def test_insertar_filas_es_atomico_y_marca_duplicados():
+    from facturas_excel.validacion import ERROR
+    from facturas_excel.app import ICONO_ESTADO
+
     v = VentanaPrincipal(comprobar_updates=False)
     for _ in range(2):
         v._anadir_fila(b"", Factura(
@@ -43,4 +46,24 @@ def test_insertar_filas_es_atomico_y_marca_duplicados():
             pct_iva=21, cuota_iva=21, total_impreso=121,
         ), "gasto", "628", "G17", "")
     v._revalidar_todo()
-    assert "Posible duplicado" in v.tabla.item(1, C_ESTADO).toolTip()
+    # Duplicado = rojo y alerta arriba: importarlo lo paga dos veces.
+    celda = v.tabla.item(1, C_ESTADO)
+    assert "FACTURA DUPLICADA" in celda.toolTip()
+    assert celda.text() == ICONO_ESTADO[ERROR]
+    assert not v.alerta.isHidden()
+    assert "factura repetida" in v.lbl_alerta_titulo.text()
+
+
+def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
+    # Son varias filas con el mismo nº y NIF: si dos lineas tuvieran la misma
+    # base se marcaban como duplicadas sin serlo.
+    v = VentanaPrincipal(comprobar_updates=False)
+    for pct, cuota in ((21, 21), (10, 10)):
+        v._anadir_fila(b"", Factura(
+            num_factura="F-2", fecha="16/07/2026", nombre="Proveedor",
+            nif="B12345678", concepto="600", base_iva=100,
+            pct_iva=pct, cuota_iva=cuota, total_impreso=231, lineas_factura=2,
+        ), "gasto", "600", None, "")
+    v._revalidar_todo()
+    assert v._duplicados == {}
+    assert v.alerta.isHidden()
