@@ -24,8 +24,9 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from facturas_excel import __version__, updater
+from facturas_excel import __version__, pendientes, updater
 from facturas_excel.claves import guardar_api_key, leer_api_key
+from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.clientes import (
     en_recargo_equivalencia, guardar_recargo_equivalencia,
 )
@@ -236,6 +237,8 @@ class VentanaPrincipal(QMainWindow):
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
+            # Despues de la actualizacion: si hay version nueva, primero eso.
+            QTimer.singleShot(2600, lambda: self._mostrar_pendientes(al_arrancar=True))
 
     def _crear_interfaz(self):
         central = QWidget()
@@ -436,7 +439,17 @@ class VentanaPrincipal(QMainWindow):
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
                        lambda: self._comprobar_actualizaciones(silencioso=False))
+        menu.addAction("Para mejorar el programa…",
+                       lambda: self._mostrar_pendientes(al_arrancar=False))
         menu.addAction("Acerca de", self._acerca_de)
+
+    def _mostrar_pendientes(self, al_arrancar: bool):
+        """Lo que hace falta saber para seguir afinando el programa, y un hueco
+        para contestar. Al arrancar solo salta una vez por version."""
+        if al_arrancar and (pendientes.ya_visto(__version__)
+                            or not pendientes.leer_pendientes()):
+            return
+        DialogoPendientes(__version__, self, al_arrancar=al_arrancar).exec()
 
     def _acerca_de(self):
         QMessageBox.about(
