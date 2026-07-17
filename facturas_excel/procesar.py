@@ -88,6 +88,28 @@ class FacturaProcesada:
     sustituida_por: str = ""  # nº de la factura del lote que la sustituye a ella
 
 
+TOLERANCIA_CUADRE = 0.02  # euros de margen por redondeos
+
+
+def _cuadre_factura(facturas: List[Factura]) -> str:
+    """Comprueba el total sumando TODAS las lineas de IVA de la factura.
+
+    Con varios tipos de IVA ninguna fila cuadra ella sola con el total impreso
+    (cada una es un trozo), asi que el cuadre hay que hacerlo aqui, una vez.
+    """
+    if len(facturas) < 2:
+        return ""  # una sola linea: ya lo comprueba validacion.validar
+    total = facturas[0].total_impreso
+    if total is None:
+        return ""
+    suma = sum((f.base_iva or 0) + (f.cuota_iva or 0) + (f.cuota_requiv or 0)
+               for f in facturas) - (facturas[0].cuota_irpf or 0)
+    if abs(round(suma, 2) - total) <= TOLERANCIA_CUADRE:
+        return ""
+    return (f"El total no cuadra: la factura pone {total:.2f} y sus "
+            f"{len(facturas)} líneas de IVA suman {suma:.2f}.")
+
+
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
               origen: str = "", pagina: int = 0) -> FacturaProcesada:
     cliente_nif = normaliza_nif(cliente_nif)
@@ -144,19 +166,31 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     facturas = []
     for i, linea in enumerate(lineas):
         f = Factura(**comun)
+        f.lineas_factura = len(lineas)
         f.base_iva = _num(linea.get("base"))
         f.pct_iva = _num(linea.get("tipo_iva"))
         f.cuota_iva = _num(linea.get("cuota_iva"))
-        if i == 0:
-            # El recargo y la retencion van una sola vez por factura, no por
-            # linea de IVA (si no, se contarian varias veces en el total).
-            f.base_requiv = _num(datos.get("base_requiv"))
+        # CADA tipo de IVA lleva su propio recargo (21->5,2 / 10->1,4 / 4->0,5),
+        # y su base es la de esa linea. Los campos sueltos de nivel factura son
+        # el respaldo para cuando Gemini los devuelve al viejo estilo.
+        f.pct_requiv = _num(linea.get("pct_requiv"))
+        f.cuota_requiv = _num(linea.get("cuota_requiv"))
+        if f.pct_requiv is None and f.cuota_requiv is None and i == 0:
             f.pct_requiv = _num(datos.get("pct_requiv"))
             f.cuota_requiv = _num(datos.get("cuota_requiv"))
+        if f.pct_requiv is not None or f.cuota_requiv is not None:
+            f.base_requiv = _num(datos.get("base_requiv")) if len(lineas) == 1 \
+                else f.base_iva
+            if f.base_requiv is None:
+                f.base_requiv = f.base_iva
+        if i == 0:
+            # La retencion es una sola por factura, no por linea de IVA.
             f.base_irpf = _num(datos.get("base_irpf"))
             f.pct_irpf = _num(datos.get("pct_irpf"))
             f.cuota_irpf = _num(datos.get("cuota_irpf"))
         facturas.append(f)
+
+    aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
     if datos.get("hay_anotaciones_manuscritas"):
         aviso = f"{aviso} Tiene algo escrito a mano: se han usado los importes " \

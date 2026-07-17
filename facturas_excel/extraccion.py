@@ -65,8 +65,8 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "num_factura": "...",
   "fecha": "dd/mm/aaaa",
   "fecha_operacion": "dd/mm/aaaa o null",
-  "lineas_iva": [{{"base": 0.0, "tipo_iva": 0.0, "cuota_iva": 0.0}}],
-  "base_requiv": null, "pct_requiv": null, "cuota_requiv": null,
+  "lineas_iva": [{{"base": 0.0, "tipo_iva": 0.0, "cuota_iva": 0.0,
+                  "pct_requiv": null, "cuota_requiv": null}}],
   "base_irpf": null, "pct_irpf": null, "cuota_irpf": null,
   "total": 0.0,
   "sustituye_a": null,
@@ -79,10 +79,12 @@ Devuelve SOLO un JSON con esta estructura exacta:
 Numeros con punto decimal. Si la factura tiene varios tipos de IVA, pon una
 entrada por cada tipo en lineas_iva. Si un dato no aparece, usa null.
 
-RECARGO DE EQUIVALENCIA: si la factura desglosa un "Recargo Equivalencia" o
-"Recargo Equivalent" (tipos habituales 5,2 / 1,4 / 0,5 %), rellena base_requiv,
-pct_requiv y cuota_requiv. Es un impuesto MAS que se suma al total, no un
-descuento. Si no aparece, deja los tres a null.
+RECARGO DE EQUIVALENCIA: si la factura desglosa un "Recargo Equivalencia",
+"Recargo Equivalent" o "REC.EQUIV", va DENTRO de su linea de lineas_iva
+(pct_requiv y cuota_requiv), porque CADA TIPO DE IVA LLEVA SU PROPIO RECARGO:
+IVA 21% -> 5,2% ; IVA 10% -> 1,4% ; IVA 4% -> 0,5%. Su base es la misma que la
+base de esa linea. Es un impuesto MAS que se suma al total, no un descuento.
+Si esa linea no lleva recargo, deja los dos a null.
 
 FACTURA QUE SUSTITUYE A OTRA: si el documento dice que sustituye/anula/rectifica
 a otro (p.ej. "Sustituye al doc.n: 4532023141", "POST-FACTURACION", factura

@@ -157,7 +157,9 @@ def validar(f: Factura, periodo: Optional[Periodo] = None) -> Resultado:
     # Cuadre con el total impreso: si no cuadra puede haber suplidos, retencion
     # o financiacion (ej. moviles a plazos) que no son base imponible -> revisar,
     # no bloquea (la base y la cuota pueden ser correctas para el impuesto).
-    if f.total_impreso is not None and f.base_iva is not None:
+    # Solo tiene sentido si la fila ES la factura entera: con varios tipos de IVA
+    # cada fila es un trozo y nunca cuadraria sola (el cuadre lo hace construir).
+    if f.total_impreso is not None and f.base_iva is not None and f.lineas_factura == 1:
         calculado = (f.base_iva or 0) + (f.cuota_iva or 0) \
             + (f.cuota_requiv or 0) - (f.cuota_irpf or 0)
         calculado = round(calculado, 2)
