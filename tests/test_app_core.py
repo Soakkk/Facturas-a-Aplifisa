@@ -57,15 +57,31 @@ def test_la_rueda_del_raton_no_cambia_gasto_venta_ni_el_trimestre():
 
     combo = v.tabla.cellWidget(0, C_TIPO)
     rueda(combo)
-    assert combo.currentText() == "gasto"
+    assert combo.currentData() == "gasto"
 
     trim, anio = v.combo_trim.currentText(), v.spin_anio.value()
     rueda(v.combo_trim)
     rueda(v.spin_anio)
     assert (v.combo_trim.currentText(), v.spin_anio.value()) == (trim, anio)
 
-    combo.setCurrentText("venta")      # elegirlo a mano si funciona
-    assert combo.currentText() == "venta"
+    combo.setCurrentIndex(combo.findData("venta"))      # elegirlo a mano si funciona
+    assert combo.currentData() == "venta"
+
+
+def test_eliminar_y_deshacer_una_factura():
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._anadir_fila(b"", Factura(
+        num_factura="F-1", fecha="16/07/2026", nombre="Proveedor",
+        nif="B30048276", concepto="600", base_iva=100, pct_iva=21,
+        cuota_iva=21, total_impreso=121,
+    ), "gasto", "600", None, "")
+    v.tabla.selectRow(0)
+    v._eliminar_seleccion()
+    assert v.tabla.rowCount() == 0
+    assert v.btn_deshacer_borrado.isEnabled()
+    v._deshacer_borrado()
+    assert v.tabla.rowCount() == 1
+    assert v._tipo_fila(0) == "gasto"
 
 
 def test_insertar_filas_es_atomico_y_marca_duplicados():

@@ -37,6 +37,11 @@ QMenu::item:selected {{ background: #EDF4FA; color: {NAVY}; }}
 QFrame#cabecera {{ background: {NAVY}; border: none; }}
 QLabel#marca {{ color: white; font-size: 20px; font-weight: 700; }}
 QLabel#marcaSubtitulo {{ color: #C9D8E8; font-size: 11px; }}
+QLabel#estadoCabecera {{
+    color: #E7EFF7; background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.20);
+    border-radius: 14px; padding: 6px 11px; font-weight: 600;
+}}
 QLabel#pasoActivo {{
     background: #E8F0F8; color: {NAVY}; border: 1px solid #BFD0E2;
     border-radius: 14px; padding: 6px 11px; font-weight: 700;

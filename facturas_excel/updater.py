@@ -1,6 +1,6 @@
 """Comprobador de actualizaciones via GitHub Releases.
 
-Consulta la ultima release de Soakkk/Facturas-a-Aplifisa-releases, compara con
+Consulta la ultima release de Soakkk/Facturas-a-Aplifisa, compara con
 la version instalada y, si hay una nueva, descarga el instalador (asset .exe)
 y lo lanza. El instalador (Inno Setup, mismo AppId) actualiza in-place.
 """

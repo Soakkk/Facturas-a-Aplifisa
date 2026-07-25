@@ -35,7 +35,7 @@ visibles sin perder la imagen original.
 
 ## Instalación y actualizaciones
 
-Instalador en [Facturas-a-Aplifisa-releases](https://github.com/Soakkk/Facturas-a-Aplifisa-releases).
+Instalador en las [releases de Facturas a Aplifisa](https://github.com/Soakkk/Facturas-a-Aplifisa/releases).
 La app comprueba actualizaciones al arrancar y se actualiza sola.
 
 ## Desarrollo

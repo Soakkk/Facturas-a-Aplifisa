@@ -226,6 +226,7 @@ class VentanaPrincipal(QMainWindow):
         self.setMinimumSize(1080, 680)
         self.setAcceptDrops(True)
         self.filas = []  # por fila: dict(png, factura, aviso)
+        self._ultimo_borrado = []
         self._duplicados = set()
         self._rutas_actuales = []
         self._hilo_update = None
@@ -237,8 +238,6 @@ class VentanaPrincipal(QMainWindow):
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
-            # Despues de la actualizacion: si hay version nueva, primero eso.
-            QTimer.singleShot(2600, lambda: self._mostrar_pendientes(al_arrancar=True))
 
     def _crear_interfaz(self):
         central = QWidget()
@@ -248,7 +247,7 @@ class VentanaPrincipal(QMainWindow):
 
         cabecera = QFrame()
         cabecera.setObjectName("cabecera")
-        cabecera.setFixedHeight(92)
+        cabecera.setFixedHeight(68)
         lc = QHBoxLayout(cabecera)
         lc.setContentsMargins(24, 14, 24, 14)
         logo = QLabel()
@@ -260,17 +259,15 @@ class VentanaPrincipal(QMainWindow):
         marca = QVBoxLayout()
         titulo = QLabel("Facturas a Aplifisa")
         titulo.setObjectName("marca")
-        subtitulo = QLabel("Preparar, revisar y exportar facturas para captura masiva")
+        subtitulo = QLabel("Clasificación automática y exportación para captura masiva")
         subtitulo.setObjectName("marcaSubtitulo")
         marca.addWidget(titulo)
         marca.addWidget(subtitulo)
         lc.addLayout(marca)
         lc.addStretch()
-        for texto, activo in (("1  Cargar", True), ("2  Revisar", False),
-                              ("3  Exportar", False)):
-            paso = QLabel(texto)
-            paso.setObjectName("pasoActivo" if activo else "pasoInactivo")
-            lc.addWidget(paso)
+        estado_auto = QLabel("Gastos e ingresos se clasifican automáticamente")
+        estado_auto.setObjectName("estadoCabecera")
+        lc.addWidget(estado_auto)
         raiz.addWidget(cabecera)
 
         cuerpo = QVBoxLayout()
@@ -325,15 +322,12 @@ class VentanaPrincipal(QMainWindow):
         bloque_periodo.addWidget(etiqueta_per)
         bloque_periodo.addLayout(fila_per)
         la.addLayout(bloque_periodo)
-        self.btn_gastos = QPushButton("Exportar gastos")
+        self.btn_gastos = QPushButton("Exportar a Aplifisa…")
         self.btn_gastos.setObjectName("exito")
         self.btn_gastos.setEnabled(False)
-        self.btn_gastos.clicked.connect(lambda: self._exportar("gasto"))
-        self.btn_ventas = QPushButton("Exportar ventas")
-        self.btn_ventas.setEnabled(False)
-        self.btn_ventas.clicked.connect(lambda: self._exportar("venta"))
+        self.btn_gastos.clicked.connect(self._exportar_todo)
+        self.btn_ventas = self.btn_gastos
         la.addWidget(self.btn_gastos)
-        la.addWidget(self.btn_ventas)
         cuerpo.addWidget(acciones)
 
         self.progreso = QProgressBar()
@@ -364,10 +358,33 @@ class VentanaPrincipal(QMainWindow):
         lt.setContentsMargins(12, 12, 12, 12)
         titulo_tabla = QLabel("Datos extraídos")
         titulo_tabla.setObjectName("tituloSeccion")
-        ayuda_tabla = QLabel("Revise las celdas en ámbar o rojo antes de exportar")
+        ayuda_tabla = QLabel(
+            "El programa decide Gasto o Ingreso. Revise únicamente las filas ámbar o rojas.")
         ayuda_tabla.setObjectName("textoSuave")
         lt.addWidget(titulo_tabla)
         lt.addWidget(ayuda_tabla)
+
+        herramientas = QHBoxLayout()
+        herramientas.setSpacing(8)
+        herramientas.addWidget(QLabel("Mostrar:"))
+        self.combo_filtro_estado = ComboSinRueda()
+        self.combo_filtro_estado.addItems(
+            ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
+        self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
+        herramientas.addWidget(self.combo_filtro_estado)
+        btn_siguiente = QPushButton("Siguiente incidencia")
+        btn_siguiente.clicked.connect(self._siguiente_incidencia)
+        herramientas.addWidget(btn_siguiente)
+        herramientas.addStretch(1)
+        self.btn_deshacer_borrado = QPushButton("Deshacer eliminación")
+        self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_deshacer_borrado.clicked.connect(self._deshacer_borrado)
+        herramientas.addWidget(self.btn_deshacer_borrado)
+        btn_eliminar = QPushButton("Eliminar selección")
+        btn_eliminar.setObjectName("peligro")
+        btn_eliminar.clicked.connect(self._eliminar_seleccion)
+        herramientas.addWidget(btn_eliminar)
+        lt.addLayout(herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setHorizontalHeaderLabels(COLS)
@@ -439,7 +456,7 @@ class VentanaPrincipal(QMainWindow):
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
                        lambda: self._comprobar_actualizaciones(silencioso=False))
-        menu.addAction("Para mejorar el programa…",
+        menu.addAction("Diagnóstico y sugerencias…",
                        lambda: self._mostrar_pendientes(al_arrancar=False))
         menu.addAction("Acerca de", self._acerca_de)
 
@@ -659,9 +676,16 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.setItem(r, C_ESTADO, est)
 
         combo = ComboSinRueda()
-        combo.addItems(["gasto", "venta"])
-        combo.setCurrentText(tipo)
-        combo.currentTextChanged.connect(lambda _t, row=r: self._revalidar_fila(row))
+        combo.addItem("Gasto", "gasto")
+        combo.addItem("Ingreso", "venta")
+        combo.setCurrentIndex(max(0, combo.findData(tipo)))
+        combo.setToolTip(
+            "Clasificación dudosa: compruebe si corresponde a Gasto o Ingreso."
+            if aviso and ("dudoso" in aviso.lower() or "confirma" in aviso.lower())
+            else "Clasificación automática según el NIF y el papel del cliente en la factura.")
+        combo.currentIndexChanged.connect(
+            lambda _i, control=combo: self._revalidar_fila(
+                self._fila_del_control_tipo(control)))
         self.tabla.setCellWidget(r, C_TIPO, combo)
 
         valores = {
@@ -737,7 +761,84 @@ class VentanaPrincipal(QMainWindow):
 
     def _tipo_fila(self, r):
         w = self.tabla.cellWidget(r, C_TIPO)
-        return w.currentText() if w else "gasto"
+        return w.currentData() if w else "gasto"
+
+    def _fila_del_control_tipo(self, control) -> int:
+        """Localiza la fila actual del desplegable incluso después de borrar filas."""
+        for fila in range(self.tabla.rowCount()):
+            if self.tabla.cellWidget(fila, C_TIPO) is control:
+                return fila
+        return -1
+
+    def _estado_fila(self, fila: int) -> str:
+        celda = self.tabla.item(fila, C_ESTADO)
+        return celda.text() if celda else ""
+
+    def _aplicar_filtro(self) -> None:
+        opcion = self.combo_filtro_estado.currentIndex()
+        for fila in range(self.tabla.rowCount()):
+            estado = self._estado_fila(fila)
+            visible = (
+                opcion == 0
+                or (opcion == 1 and estado == ICONO_ESTADO[REVISAR])
+                or (opcion == 2 and estado == ICONO_ESTADO[ERROR])
+                or (opcion == 3 and estado == ICONO_ESTADO[OK])
+            )
+            self.tabla.setRowHidden(fila, not visible)
+
+    def _siguiente_incidencia(self) -> None:
+        total = self.tabla.rowCount()
+        if not total:
+            return
+        inicio = self.tabla.currentRow()
+        for salto in range(1, total + 1):
+            fila = (inicio + salto) % total
+            if self._estado_fila(fila) != ICONO_ESTADO[OK]:
+                self.combo_filtro_estado.setCurrentIndex(0)
+                self.tabla.selectRow(fila)
+                self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
+                return
+        self.lbl_estado.setText("Todo el lote está correcto y listo para exportar.")
+
+    def _eliminar_seleccion(self) -> None:
+        filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},
+                       reverse=True)
+        if not filas:
+            QMessageBox.information(
+                self, "Eliminar facturas", "Seleccione una o varias filas completas.")
+            return
+        self._ultimo_borrado = []
+        for fila in filas:
+            registro = self.filas[fila]
+            self._ultimo_borrado.append({
+                "registro": registro,
+                "tipo": self._tipo_fila(fila),
+                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
+                "gxx": self.tabla.item(fila, C_GXX).text(),
+            })
+            self.tabla.removeRow(fila)
+            self.filas.pop(fila)
+        self._ultimo_borrado.reverse()
+        self.btn_deshacer_borrado.setEnabled(True)
+        self._revalidar_todo()
+        self._aplicar_filtro()
+        self.lbl_estado.setText(
+            f"{len(filas)} línea(s) eliminada(s). Puede deshacer la operación.")
+
+    def _deshacer_borrado(self) -> None:
+        if not self._ultimo_borrado:
+            return
+        for borrada in self._ultimo_borrado:
+            registro = borrada["registro"]
+            self._anadir_fila(
+                registro["png"], registro["factura"], borrada["tipo"],
+                borrada["cuenta"], borrada["gxx"], registro["aviso"])
+        cantidad = len(self._ultimo_borrado)
+        self._ultimo_borrado = []
+        self.btn_deshacer_borrado.setEnabled(False)
+        self._revalidar_todo()
+        self._aplicar_filtro()
+        self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
 
     def _periodo(self):
         """Trimestre que se esta trabajando, segun los selectores."""
@@ -758,7 +859,7 @@ class VentanaPrincipal(QMainWindow):
             w.blockSignals(False)
 
     def _revalidar_fila(self, r):
-        if r >= len(self.filas):
+        if r < 0 or r >= len(self.filas):
             return
         f = self._leer_fila(r)
         res = validar(f, self._periodo())
@@ -790,6 +891,8 @@ class VentanaPrincipal(QMainWindow):
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
         self._pintar_alerta()
+        if hasattr(self, "combo_filtro_estado"):
+            self._aplicar_filtro()
 
     def _pintar_alerta(self):
         """Banner rojo arriba con las duplicadas y las sustituidas: las dos
@@ -883,6 +986,63 @@ class VentanaPrincipal(QMainWindow):
             self._mostrar_miniatura()
 
     # ---------- exportar ----------
+    def _exportar_todo(self):
+        """Genera en una sola operación los Excel de gastos e ingresos."""
+        por_tipo = {"gasto": [], "venta": []}
+        for fila in range(self.tabla.rowCount()):
+            por_tipo[self._tipo_fila(fila)].append(self._leer_fila(fila))
+        if not any(por_tipo.values()):
+            QMessageBox.warning(self, "Sin datos", "No hay facturas que exportar.")
+            return
+
+        periodo = self._periodo()
+        problemas = []
+        if self._duplicados:
+            problemas.append(
+                f"{len(self._duplicados)} factura(s) duplicada(s) que se registrarían dos veces")
+        errores = sum(
+            1 for facturas in por_tipo.values() for factura in facturas
+            if validar(factura, periodo).estado == ERROR)
+        if errores:
+            problemas.append(f"{errores} línea(s) con errores")
+        fuera = [
+            factura for facturas in por_tipo.values() for factura in facturas
+            if periodo_de(factura.fecha) != periodo
+        ]
+        if fuera:
+            problemas.append(
+                f"{len(fuera)} línea(s) fuera del {fmt_periodo(periodo)} o sin fecha válida")
+        if problemas:
+            respuesta = QMessageBox.question(
+                self, "Revisión pendiente",
+                "Antes de exportar se han detectado:\n\n  · "
+                + "\n  · ".join(problemas)
+                + "\n\n¿Quiere exportar de todas formas?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if respuesta != QMessageBox.Yes:
+                self._siguiente_incidencia()
+                return
+
+        carpeta = QFileDialog.getExistingDirectory(
+            self, "Carpeta para los Excel de Aplifisa", ESCRITORIO)
+        if not carpeta:
+            return
+        generados = []
+        for tipo, nombre, xml in (
+            ("gasto", "gastos.xlsx", "gastos.xml"),
+            ("venta", "ingresos.xlsx", "ingresos.xml"),
+        ):
+            if not por_tipo[tipo]:
+                continue
+            ruta = os.path.join(carpeta, nombre)
+            exportar_excel(por_tipo[tipo], leer_config(ruta_config(xml)), ruta)
+            generados.append(nombre)
+        QMessageBox.information(
+            self, "Exportación terminada",
+            "Archivos preparados para Aplifisa:\n\n  · "
+            + "\n  · ".join(generados)
+            + f"\n\nCarpeta: {carpeta}")
+
     def _exportar(self, tipo):
         facturas = [self.filas[r]["factura"] for r in range(self.tabla.rowCount())
                     if self._tipo_fila(r) == tipo]
