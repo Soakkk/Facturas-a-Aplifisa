@@ -1252,6 +1252,10 @@ class VentanaPrincipal(QMainWindow):
             [self._leer_fila(r) for r in range(self.tabla.rowCount())])
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
+        # El resumen se rehace SIEMPRE, tambien con la tabla vacia: si no, al
+        # vaciar el lote se quedaban abajo los totales del lote anterior y
+        # parecia que no se habia borrado nada.
+        self._resumen()
         self._pintar_alerta()
         if hasattr(self, "combo_filtro_estado"):
             self._aplicar_filtro()
@@ -1300,6 +1304,7 @@ class VentanaPrincipal(QMainWindow):
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
         self.lbl_estado.setText(
+            "Lote vacío. Cargue o escanee facturas para empezar." if not estados else
             f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
             f"🟢 {estados.count(OK)}  🟡 {estados.count(REVISAR)}  🔴 {estados.count(ERROR)}")
         self._pintar_resumen()

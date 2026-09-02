@@ -166,3 +166,32 @@ def test_sin_saltos_no_molesta_con_avisos():
     cargar_bloque(v, r"C:\tmp\taco.pdf",
                   [factura(f"{n:02d}/25", 100.0 + n) for n in (1, 2, 3, 4)])
     assert v.alerta.isHidden()
+
+
+def test_al_vaciar_el_lote_el_resumen_tambien_se_queda_a_cero(monkeypatch):
+    # Se quedaban abajo los totales del lote anterior y parecia que "Vaciar
+    # todo" no habia borrado nada.
+    from PySide6.QtWidgets import QMessageBox
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\uno.pdf", [factura("F-1"), factura("F-2", 50)])
+    assert v.tabla_resumen.rowCount() > 0
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    v._vaciar_todo()
+
+    assert v.tabla.rowCount() == 0
+    assert v.tabla_resumen.rowCount() == 0
+    assert v.alerta.isHidden()
+    assert "Cliente pendiente" in v.lbl_cliente.text()
+
+
+def test_quitar_el_ultimo_bloque_tambien_limpia_el_resumen(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\uno.pdf", [factura("F-1")])
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    v.combo_filtro_bloque.setCurrentText("uno")
+    v._quitar_bloque()
+    assert v.tabla_resumen.rowCount() == 0
