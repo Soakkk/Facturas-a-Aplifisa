@@ -19,9 +19,16 @@ from google import genai
 from google.genai import types
 
 # Modelos por orden de preferencia (con reserva ante 503/alta demanda).
-# flash-latest = ultimo Flash estable: la mejor relacion precision/coste/velocidad
-# para extraer campos de facturas. pro-latest de refuerzo (mas potente, mas caro).
-MODELOS = ["gemini-flash-latest", "gemini-pro-latest", "gemini-3.1-flash-lite"]
+#
+# Va FIJADO a gemini-3.7-flash a peticion del usuario (2026-09-02), no al alias
+# "gemini-flash-latest": ese alias salta solo al modelo que Google saque, y con
+# el saltaria tambien la tarifa y la forma de leer las facturas sin avisar.
+# Fijandolo, el dia que cambie algo se ve aqui y se decide.
+# Precio (2026-09-02): 0,75 $ / 3,75 $ por millon de tokens; el 1/1/2027 pasa a
+# 1,50 / 7,50 -> repasar entonces si compensa frente a gemini-2.5-flash
+# (0,30 / 2,50), que tambien leia bien estas facturas.
+# Detras van las reservas por si un dia ese modelo se retira o da 503.
+MODELOS = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-pro-latest"]
 
 
 class SinCredito(Exception):
