@@ -18,9 +18,12 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    - 🟢 todo cuadra (cuota = base × tipo, total coincide, NIF válido)
    - 🟡 revisar (suplidos/financiación, NIF dudoso, rol ambiguo…)
    - 🔴 error (descuadres, faltan campos obligatorios)
-   Con la **imagen de la factura al lado** para corregir al vuelo.
+   Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
+   se abre una vista previa grande.
 4. **Exportar** `gastos.xlsx` / `ventas.xlsx` → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
+   Los suplidos identificados se mantienen separados de la base y del IVA y se
+   exportan en su campo específico de Aplifisa.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

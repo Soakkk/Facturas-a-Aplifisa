@@ -130,10 +130,10 @@ def test_el_resumen_cuadra_bloque_a_bloque():
     assert v.tabla_resumen.rowCount() == 3
     assert v.tabla_resumen.item(0, 0).text() == "escaneo1"
     assert v.tabla_resumen.item(0, 2).text() == "2"
-    assert v.tabla_resumen.item(0, 7).text() == "181,50 €"   # 150 + 31,50
-    assert v.tabla_resumen.item(1, 7).text() == "84,70 €"    # 70 + 14,70
+    assert v.tabla_resumen.item(0, 8).text() == "181,50 €"   # 150 + 31,50
+    assert v.tabla_resumen.item(1, 8).text() == "84,70 €"    # 70 + 14,70
     assert v.tabla_resumen.item(2, 0).text() == "TODOS LOS BLOQUES"
-    assert v.tabla_resumen.item(2, 7).text() == "266,20 €"
+    assert v.tabla_resumen.item(2, 8).text() == "266,20 €"
 
 
 def test_la_celda_iva_desglosa_varios_porcentajes_sin_anadir_columnas():
@@ -141,9 +141,28 @@ def test_la_celda_iva_desglosa_varios_porcentajes_sin_anadir_columnas():
     cargar_bloque(v, r"C:\tmp\mixto.pdf",
                   [factura("F-1", 100, 10), factura("F-2", 200, 21)])
 
-    assert v.tabla_resumen.columnCount() == 8
+    assert v.tabla_resumen.columnCount() == 9
     assert v.tabla_resumen.item(0, 4).text() == (
         "10%: 10,00 € · 21%: 42,00 €")
+
+
+def test_la_celda_iva_muestra_el_porcentaje_aunque_solo_haya_un_tipo():
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\un_tipo.pdf", [factura("F-1", 100, 21)])
+
+    assert v.tabla_resumen.item(0, 4).text() == "21%: 21,00 €"
+
+
+def test_el_resumen_muestra_los_suplidos_sin_mezclarlos_con_la_base():
+    v = VentanaPrincipal(comprobar_updates=False)
+    f = factura("F-1", 100, 21)
+    f.suplidos = 109.08
+    f.total_impreso = 230.08
+    cargar_bloque(v, r"C:\tmp\suplidos.pdf", [f])
+
+    assert v.tabla_resumen.item(0, 3).text() == "100,00 €"
+    assert v.tabla_resumen.item(0, 7).text() == "109,08 €"
+    assert v.tabla_resumen.item(0, 8).text() == "230,08 €"
 
 
 def test_resumir_por_bloque_agrupa_y_redondea():

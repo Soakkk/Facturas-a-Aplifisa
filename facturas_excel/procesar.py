@@ -179,7 +179,9 @@ def _cuadre_factura(facturas: List[Factura]) -> str:
     if total is None:
         return ""
     suma = sum((f.base_iva or 0) + (f.cuota_iva or 0) + (f.cuota_requiv or 0)
-               for f in facturas) - (facturas[0].cuota_irpf or 0)
+               for f in facturas)
+    suma += facturas[0].suplidos or 0
+    suma -= facturas[0].cuota_irpf or 0
     if abs(round(suma, 2) - total) <= TOLERANCIA_CUADRE:
         return ""
     return (f"El total no cuadra: la factura pone {total:.2f} y sus "
@@ -271,6 +273,9 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             f.base_irpf = _num(datos.get("base_irpf"))
             f.pct_irpf = _num(datos.get("pct_irpf"))
             f.cuota_irpf = _num(datos.get("cuota_irpf"))
+            # Los suplidos tambien son un importe unico de la factura. Van en
+            # su columna de Aplifisa y no forman parte de la base ni del IVA.
+            f.suplidos = _num(datos.get("suplidos"))
         facturas.append(f)
 
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
@@ -393,7 +398,7 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
 
 
 def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
-    """Deja la factura como un unico apunte por el TOTAL (base + IVA + recargo).
+    """Deja un unico apunte por el TOTAL (base + IVA + recargo + suplidos).
 
     Para clientes en recargo de equivalencia: no deducen IVA, asi que el gasto es
     el importe integro y en Aplifisa se registra como total factura, sin desglose.
@@ -411,11 +416,13 @@ def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
 
     total = sum((f.base_iva or 0) + (f.cuota_iva or 0) for f in pr.facturas)
     total += sum(f.cuota_requiv or 0 for f in pr.facturas)
+    total += pr.facturas[0].suplidos or 0
     base = replace(pr.facturas[0])
     base.base_iva = round(total, 2)
     base.pct_iva = None
     base.cuota_iva = None
     base.base_requiv = base.pct_requiv = base.cuota_requiv = None
+    base.suplidos = None  # ya esta incluido en el gasto por el total
     return replace(pr, facturas=[base])
 
 

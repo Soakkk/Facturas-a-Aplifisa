@@ -5,7 +5,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QApplication
 
-from facturas_excel.app import C_ESTADO, VentanaPrincipal, _argumentos, parse_numero, rutas_factura_de_mime
+from facturas_excel.app import (
+    C_ESTADO, C_SUPLIDOS, VentanaPrincipal, VisorClicable, _argumentos,
+    parse_numero, rutas_factura_de_mime,
+)
 from facturas_excel.modelo import Factura
 
 _app = QApplication.instance() or QApplication([])
@@ -98,6 +101,38 @@ def test_insertar_filas_es_atomico_y_marca_duplicados():
     assert not v.alerta.isHidden()
     assert "revisar" in v.lbl_alerta_titulo.text()
     assert "repetida" in v.lbl_alerta_texto.text()
+
+
+def test_los_suplidos_se_pueden_revisar_y_editar_en_la_tabla():
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._anadir_fila(b"", Factura(
+        num_factura="F-1", fecha="16/07/2026", nombre="Proveedor",
+        nif="B30048276", concepto="623", base_iva=100, pct_iva=21,
+        cuota_iva=21, suplidos=109.08, total_impreso=230.08,
+    ), "gasto", "623", "G19", "")
+
+    assert v.tabla.item(0, C_SUPLIDOS).text() == "109,08"
+    v.tabla.item(0, C_SUPLIDOS).setText("110,50")
+    assert v._leer_fila(0).suplidos == 110.50
+
+
+def test_el_documento_original_es_clicable_y_abre_la_vista_grande(monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtTest import QSignalSpy, QTest
+    from PySide6.QtWidgets import QDialog
+
+    v = VentanaPrincipal(comprobar_updates=False)
+    assert isinstance(v.lbl_img, VisorClicable)
+    spy = QSignalSpy(v.lbl_img.clicked)
+    abiertos = []
+    monkeypatch.setattr(QDialog, "exec", lambda dialog: abiertos.append(dialog.size()))
+    v._pixmap_documento = QPixmap(600, 900)
+
+    QTest.mouseClick(v.lbl_img, Qt.LeftButton)
+
+    assert spy.count() == 1
+    assert abiertos and abiertos[0].width() > 600
 
 
 def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():

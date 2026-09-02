@@ -184,12 +184,14 @@ def validar(f: Factura) -> Resultado:
                 f"importes van en negativo."
             )
         calculado = (f.base_iva or 0) + (f.cuota_iva or 0) \
-            + (f.cuota_requiv or 0) - (f.cuota_irpf or 0)
+            + (f.cuota_requiv or 0) + (f.suplidos or 0) \
+            - (f.cuota_irpf or 0)
         calculado = round(calculado, 2)
         if abs(calculado - f.total_impreso) > TOLERANCIA:
             marcar_revisar(
                 f"El total no cuadra: factura pone {f.total_impreso}, "
-                f"base+cuota = {calculado} (¿suplidos/retención/financiación?)"
+                f"base+cuota+suplidos−retención = {calculado} "
+                f"(¿falta algún suplido/retención/financiación?)"
             )
 
     return Resultado(estado=estado, mensajes=msgs)

@@ -14,11 +14,11 @@ import sys
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-    QPushButton, QProgressDialog, QSplitter, QTableWidget,
+    QPushButton, QProgressDialog, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -65,13 +65,13 @@ HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Total", "Bloque"]
+        "NIF", "Base", "% IVA", "Cuota", "Suplidos", "Total", "Bloque"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_SUPLIDOS, C_TOTAL, C_BLOQUE = range(len(COLS))
 
 # Columnas del resumen por bloque (punto de control antes de exportar).
 COLS_RESUMEN = ["Bloque", "Tipo", "Líneas", "Base", "IVA", "Recargo", "IRPF",
-                "Total factura"]
+                "Suplidos", "Total factura"]
 TODOS_LOS_BLOQUES = "Todos los bloques"
 
 
@@ -90,6 +90,17 @@ class _SinRueda:
 
 class ComboSinRueda(_SinRueda, QComboBox):
     pass
+
+
+class VisorClicable(QLabel):
+    """Miniatura que abre el documento a mayor tamaño con un clic."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 def ruta_recurso(nombre):
@@ -444,11 +455,16 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_origen.setObjectName("textoSuave")
         self.lbl_origen.setWordWrap(True)
-        self.lbl_img = QLabel("Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
+        self.lbl_img = VisorClicable(
+            "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
         self.lbl_img.setObjectName("visor")
         self.lbl_img.setAlignment(Qt.AlignCenter)
         self.lbl_img.setMinimumWidth(330)
         self.lbl_img.setMinimumHeight(430)
+        self.lbl_img.setCursor(QCursor(Qt.PointingHandCursor))
+        self.lbl_img.setToolTip("Haga clic para abrir una vista previa grande.")
+        self.lbl_img.clicked.connect(self._abrir_vista_previa)
+        self._pixmap_documento = QPixmap()
         lv.addWidget(titulo_visor)
         lv.addWidget(self.lbl_origen)
         lv.addWidget(self.lbl_img, 1)
@@ -1142,7 +1158,8 @@ class VentanaPrincipal(QMainWindow):
         valores = {
             C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
             C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
-            C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva), C_TOTAL: fmt(f.total_impreso),
+            C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva),
+            C_SUPLIDOS: fmt(f.suplidos), C_TOTAL: fmt(f.total_impreso),
             C_BLOQUE: bloque,
         }
         for col, val in valores.items():
@@ -1215,6 +1232,7 @@ class VentanaPrincipal(QMainWindow):
         f.base_iva = parse_numero(self.tabla.item(r, C_BASE).text())
         f.pct_iva = parse_numero(self.tabla.item(r, C_PCT).text())
         f.cuota_iva = parse_numero(self.tabla.item(r, C_CUOTA).text())
+        f.suplidos = parse_numero(self.tabla.item(r, C_SUPLIDOS).text())
         f.total_impreso = parse_numero(self.tabla.item(r, C_TOTAL).text())
         return f
 
@@ -1465,6 +1483,7 @@ class VentanaPrincipal(QMainWindow):
                 "" if solo_total else iva_desglosado(t),
                 eur(t.requiv) if t.tiene_requiv and not solo_total else "",
                 f"−{eur(t.irpf)}" if t.tiene_irpf else "",
+                eur(t.suplidos) if t.tiene_suplidos and not solo_total else "",
                 eur(t.total),
             ]
             for c, texto in enumerate(valores):
@@ -1494,6 +1513,11 @@ class VentanaPrincipal(QMainWindow):
     def _mostrar_miniatura(self):
         r = self.tabla.currentRow()
         if r < 0 or r >= len(self.filas):
+            self._pixmap_documento = QPixmap()
+            self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
+            self.lbl_img.clear()
+            self.lbl_img.setText(
+                "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
             return
         png = self.filas[r]["png"]
         factura = self.filas[r]["factura"]
@@ -1502,8 +1526,34 @@ class VentanaPrincipal(QMainWindow):
         pix = QPixmap()
         pix.loadFromData(png)
         if not pix.isNull():
+            self._pixmap_documento = pix
             self.lbl_img.setPixmap(pix.scaled(
                 self.lbl_img.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self._pixmap_documento = QPixmap()
+
+    def _abrir_vista_previa(self):
+        """Muestra la página seleccionada grande y con barras de desplazamiento."""
+        if self._pixmap_documento.isNull():
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.lbl_origen.text() or "Documento original")
+        dlg.setModal(True)
+        layout = QVBoxLayout(dlg)
+        scroll = QScrollArea(dlg)
+        scroll.setWidgetResizable(False)
+        imagen = QLabel()
+        imagen.setAlignment(Qt.AlignCenter)
+        imagen.setPixmap(self._pixmap_documento)
+        imagen.resize(self._pixmap_documento.size())
+        scroll.setWidget(imagen)
+        layout.addWidget(scroll, 1)
+        cerrar = QPushButton("Cerrar")
+        cerrar.clicked.connect(dlg.accept)
+        layout.addWidget(cerrar, 0, Qt.AlignRight)
+        pantalla = QApplication.primaryScreen().availableGeometry()
+        dlg.resize(int(pantalla.width() * 0.9), int(pantalla.height() * 0.9))
+        dlg.exec()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

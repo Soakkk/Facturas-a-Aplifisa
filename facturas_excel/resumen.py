@@ -1,6 +1,7 @@
 """Suma de un grupo de facturas, para cuadrar el lote antes de exportarlo.
 
-El total se CALCULA (base + IVA + recargo - retencion) en vez de sumar el total
+El total se CALCULA (base + IVA + recargo + suplidos - retencion) en vez de
+sumar el total
 impreso: es lo que se va a registrar en Aplifisa, que es lo que interesa cuadrar.
 Si el impreso no coincide, validacion ya lo marca factura a factura.
 """
@@ -20,12 +21,14 @@ class Totales:
     iva: float = 0.0
     irpf: float = 0.0
     requiv: float = 0.0
+    suplidos: float = 0.0
     iva_por_tipo: Dict[float, float] = field(default_factory=dict)
 
     @property
     def total(self) -> float:
-        """Total factura: lo que se paga = base + IVA + recargo - retencion."""
-        return round(self.base + self.iva + self.requiv - self.irpf, 2)
+        """Total: base + IVA + recargo + suplidos - retencion."""
+        return round(
+            self.base + self.iva + self.requiv + self.suplidos - self.irpf, 2)
 
     @property
     def tiene_irpf(self) -> bool:
@@ -34,6 +37,10 @@ class Totales:
     @property
     def tiene_requiv(self) -> bool:
         return abs(self.requiv) > 0.005
+
+    @property
+    def tiene_suplidos(self) -> bool:
+        return abs(self.suplidos) > 0.005
 
 
 def _acumular(t: Totales, f: Factura) -> None:
@@ -45,10 +52,11 @@ def _acumular(t: Totales, f: Factura) -> None:
         t.iva_por_tipo[tipo] = t.iva_por_tipo.get(tipo, 0.0) + f.cuota_iva
     t.irpf += f.cuota_irpf or 0.0
     t.requiv += f.cuota_requiv or 0.0
+    t.suplidos += f.suplidos or 0.0
 
 
 def _redondear(t: Totales) -> Totales:
-    for campo in ("base", "iva", "irpf", "requiv"):
+    for campo in ("base", "iva", "irpf", "requiv", "suplidos"):
         setattr(t, campo, round(getattr(t, campo), 2))
     t.iva_por_tipo = {tipo: round(cuota, 2)
                       for tipo, cuota in t.iva_por_tipo.items()}
@@ -86,8 +94,8 @@ def eur(v: float) -> str:
 
 
 def iva_desglosado(t: Totales) -> str:
-    """IVA compacto para la tabla; desglosa solo cuando hay varios tipos."""
-    if len(t.iva_por_tipo) <= 1:
+    """IVA compacto: muestra siempre porcentaje y cuota cuando se conoce."""
+    if not t.iva_por_tipo:
         return eur(t.iva)
 
     def porcentaje(tipo: float) -> str:
@@ -112,6 +120,8 @@ def describir(t: Totales, solo_total: bool = False) -> str:
         partes.append(f"recargo {eur(t.requiv)}")
     if t.tiene_irpf:  # solo si la factura lleva retencion
         partes.append(f"IRPF −{eur(t.irpf)}")
+    if t.tiene_suplidos:
+        partes.append(f"suplidos {eur(t.suplidos)}")
     partes.append(f"total factura {eur(t.total)}")
     return "  ·  ".join(partes)
 

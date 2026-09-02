@@ -94,6 +94,17 @@ tanto en gastos como en ingresos.
   detallan dentro de la misma celda (por ejemplo,
   `10%: 12,34 € · 21%: 56,78 €`) sin añadir columnas ni saturar la tabla.
 
+### Lo nuevo de la 1.10.2: suplidos y documento ampliado
+
+- Gemini lee los **suplidos expresamente identificados** en la factura. Se
+  muestran en una columna editable, se suman al total sin mezclarlos con la
+  base ni el IVA y se exportan en el campo `Suplidos` de Aplifisa.
+- La comprobación del total tiene en cuenta base, IVA, recargo, suplidos e IRPF.
+- El resumen muestra siempre el porcentaje de IVA, aunque solo haya un tipo
+  (`21%: 123,45 €`).
+- La miniatura de **Documento original** se puede pulsar para verla grande y
+  desplazarse por ella.
+
 ### Lo nuevo de la 1.9.0: el catalogo entero de Aplifisa
 
 Me pasaste la lista completa de conceptos (200, 600...682) con sus subclaves.

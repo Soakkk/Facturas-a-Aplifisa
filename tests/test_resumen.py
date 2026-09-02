@@ -75,5 +75,17 @@ def test_varios_tipos_de_iva_se_desglosan_en_una_sola_celda():
 
 def test_un_solo_tipo_de_iva_mantiene_el_total_sencillo():
     t = resumir([factura("04/06/2026", 100.0, 21.0)])
-    assert iva_desglosado(t) == "21,00 €"
+    assert iva_desglosado(t) == "21%: 21,00 €"
+
+
+def test_los_suplidos_se_suman_al_total_y_aparecen_en_el_resumen():
+    f = factura("04/06/2026", 100.0, 21.0)
+    f.suplidos = 109.08
+    f.total_impreso = 230.08
+
+    t = resumir([f])
+
+    assert t.suplidos == 109.08
+    assert t.total == 230.08
+    assert "suplidos 109,08 €" in describir(t)
 

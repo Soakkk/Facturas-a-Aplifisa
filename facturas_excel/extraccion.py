@@ -96,6 +96,7 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "lineas_iva": [{{"base": 0.0, "tipo_iva": 0.0, "cuota_iva": 0.0,
                   "pct_requiv": null, "cuota_requiv": null}}],
   "base_irpf": null, "pct_irpf": null, "cuota_irpf": null,
+  "suplidos": null,
   "total": 0.0,
   "sustituye_a": null,
   "hay_anotaciones_manuscritas": false,
@@ -115,6 +116,13 @@ RECARGO DE EQUIVALENCIA: si la factura desglosa un "Recargo Equivalencia",
 IVA 21% -> 5,2% ; IVA 10% -> 1,4% ; IVA 4% -> 0,5%. Su base es la misma que la
 base de esa linea. Es un impuesto MAS que se suma al total, no un descuento.
 Si esa linea no lleva recargo, deja los dos a null.
+
+SUPLIDOS: si la factura identifica expresamente un importe como "suplidos",
+"suplido" o cantidad pagada por cuenta del cliente, devuelve ese importe en
+"suplidos". Los suplidos NO forman parte de la base imponible ni llevan IVA,
+pero se SUMAN al total a pagar. Copia solamente el importe que figure como tal;
+no deduzcas un suplido solo porque haya una diferencia en el total. Si no
+aparece identificado, deja "suplidos" a null.
 
 FACTURA QUE SUSTITUYE A OTRA: si el documento dice que sustituye/anula/rectifica
 a otro (p.ej. "Sustituye al doc.n: 4532023141", "POST-FACTURACION", factura
