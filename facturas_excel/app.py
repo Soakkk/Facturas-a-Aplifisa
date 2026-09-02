@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, costes, escaner, pendientes, updater,
+    __version__, ajustes, archivo, costes, escaner, pendientes, updater,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
+from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.clientes import (
     en_recargo_equivalencia, guardar_recargo_equivalencia, nombres_conocidos,
@@ -276,6 +277,8 @@ class VentanaPrincipal(QMainWindow):
         self._hilo_update = None
         self._hilo_descarga_update = None
         self._hilo_escaneo = None
+        self._tipo_escaneo = "gastos"
+        self._escaneo_sin_identificar = False
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -511,11 +514,19 @@ class VentanaPrincipal(QMainWindow):
             ("Ctrl+E", self._escanear),
             ("Ctrl+O", self._cargar),
             ("Ctrl+G", self._exportar_todo),
+            ("Ctrl+L", self._ver_escaneos),
         ):
             QShortcut(QKeySequence(teclas), self, activated=accion)
 
     # ---------- menu / actualizaciones ----------
     def _crear_menu(self):
+        escaneos = self.menuBar().addMenu("Escaneos")
+        escaneos.addAction("Escanear facturas	Ctrl+E", self._escanear)
+        escaneos.addAction("Ver los escaneos guardados…	Ctrl+L",
+                           self._ver_escaneos)
+        escaneos.addAction("Abrir la carpeta de escaneos",
+                           lambda: archivo.abrir(archivo.carpeta_escaneos()))
+
         config = self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
@@ -702,13 +713,16 @@ class VentanaPrincipal(QMainWindow):
             return
         dialogo.recordar()
         opciones = dialogo.valores()
-        if not opciones["cliente"]:
-            QMessageBox.warning(self, "Falta el cliente",
-                                "Escriba de qué cliente son las facturas: es lo "
-                                "que da nombre al PDF y a su carpeta.")
-            return
-        destino = escaner.ruta_destino(
-            opciones["carpeta"], opciones["cliente"], opciones["tipo"])
+        # Sin cliente no se para: el PDF nace en "Sin identificar" y se muda
+        # solo a su carpeta cuando el programa averigua de quién es por el NIF.
+        if opciones["cliente"]:
+            destino = escaner.ruta_destino(
+                opciones["carpeta"], opciones["cliente"], opciones["tipo"])
+        else:
+            destino = archivo.ruta_provisional(opciones["carpeta"],
+                                               opciones["tipo"])
+        self._tipo_escaneo = opciones["tipo"]
+        self._escaneo_sin_identificar = not opciones["cliente"]
         self.btn_escanear.setEnabled(False)
         self.btn_cargar.setEnabled(False)
         self.progreso.setVisible(True)
@@ -720,6 +734,13 @@ class VentanaPrincipal(QMainWindow):
         self._hilo_escaneo.terminado.connect(self._on_escaneo_hecho)
         self._hilo_escaneo.fallo.connect(self._on_escaneo_fallo)
         self._hilo_escaneo.start()
+
+    def _ver_escaneos(self):
+        """Los PDF que va generando el escaneo: abrirlos, recolocarlos o
+        volver a pasarlos por el programa."""
+        dialogo = DialogoEscaneos(self)
+        if dialogo.exec() == QDialog.Accepted and dialogo.rutas_elegidas:
+            self.procesar_rutas(dialogo.rutas_elegidas)
 
     def _on_escaneo_hecho(self, ruta):
         self.progreso.setRange(0, 100)
@@ -793,6 +814,9 @@ class VentanaPrincipal(QMainWindow):
     def _on_terminado(self, procesadas, nombre, nif):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
+        # Si el escaneo salió sin saber de quién era, ahora ya se sabe: el PDF
+        # se muda solo a la carpeta del cliente antes de nombrar el bloque.
+        self._recolocar_escaneo(nombre, procesadas)
         # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
         # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
         self._bloques.append({
@@ -819,6 +843,32 @@ class VentanaPrincipal(QMainWindow):
         self.btn_ventas.setEnabled(hay_datos)
         if hay_datos:
             self.tabla.selectRow(0)
+
+    def _recolocar_escaneo(self, cliente, procesadas):
+        """Muda el PDF recién escaneado a la carpeta de su cliente.
+
+        Al escanear no hace falta decir de quién son las facturas: el programa
+        lo averigua por el NIF que se repite y coloca el archivo despues. Si no
+        lo averigua, el PDF se queda en «Sin identificar» y se puede colocar a
+        mano desde «Escaneos guardados».
+        """
+        if not self._escaneo_sin_identificar or len(self._rutas_actuales) != 1:
+            return
+        ruta = self._rutas_actuales[0]
+        if not cliente or not archivo.sin_identificar(ruta):
+            return
+        ventas = sum(1 for _, pr in procesadas if pr.tipo == "venta")
+        tipo = "ingresos" if ventas > len(procesadas) / 2 else "gastos"
+        nueva = archivo.mover_a_cliente(ruta, cliente, tipo)
+        if nueva == ruta:
+            return
+        self._escaneo_sin_identificar = False
+        self._rutas_actuales = [nueva]
+        for _, pr in procesadas:     # que la miniatura siga apuntando al PDF
+            pr.origen = nueva
+            for f in pr.facturas:
+                f.origen_imagen = nueva
+        self.lbl_estado.setText(f"Escaneo guardado como {os.path.basename(nueva)}")
 
     def _nombre_bloque(self) -> str:
         """Nombre corto del bloque: el del PDF cargado, sin repetirse."""

@@ -72,9 +72,13 @@ def ruta_destino(carpeta_base: str, cliente: str, tipo: str,
     cliente = sanear(cliente or "Cliente sin identificar")
     tipo = "ingresos" if str(tipo).lower().startswith("i") else "gastos"
     dia = dia or date.today()
-    carpeta = os.path.join(carpeta_base, cliente)
+    return nombre_libre(os.path.join(carpeta_base, cliente),
+                        f"{cliente}_{tipo}_{dia:%Y-%m-%d}")
+
+
+def nombre_libre(carpeta: str, base: str) -> str:
+    """`carpeta/base.pdf`, numerado si ya existe (no se pisa nada)."""
     os.makedirs(carpeta, exist_ok=True)
-    base = f"{cliente}_{tipo}_{dia:%Y-%m-%d}"
     ruta = os.path.join(carpeta, f"{base}.pdf")
     n = 2
     while os.path.exists(ruta):

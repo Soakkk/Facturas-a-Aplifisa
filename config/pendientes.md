@@ -13,11 +13,15 @@ lo habría encontrado de otra forma.
 
 ### Novedades de esta versión que quiero que pruebes
 
-- **Botón «Escanear facturas»** (o Ctrl+E): elige cliente y si son gastos o
-  ingresos, y el programa maneja el alimentador, guarda el PDF en
-  `Documentos\Facturas escaneadas\<CLIENTE>` con el nombre puesto y lo mete
-  solo en el lote. **Dime si el escáner responde bien** (tu HP M148dw) y si el
-  taco entero entra de una pasada.
+- **Botón «Escanear facturas»** (o Ctrl+E): el programa maneja el alimentador,
+  guarda el PDF en `Documentos\Facturas escaneadas\<CLIENTE>` con el nombre
+  puesto y lo mete solo en el lote. **Ni hace falta decirle de quién son**: si
+  dejas el cliente vacío, lo detecta por el NIF y coloca el PDF él solo.
+  **Dime si el escáner responde bien** (tu HP M148dw) y si el taco entero entra
+  de una pasada.
+- **Menú «Escaneos» (Ctrl+L)**: la lista de todos los PDF escaneados, para
+  volver a meter uno en el lote, abrirlo, cambiarlo de cliente o quitarlo de en
+  medio (no se borra, va a la carpeta `_Papelera`).
 - **Varios PDF en un mismo Excel**: cada carga o escaneo es un «bloque» que se
   suma; se pueden juntar 3 o 4 escaneos de un requerimiento y exportar una vez.
 - **Abajo a la derecha sale lo que cuesta**: el modelo de Gemini que ha

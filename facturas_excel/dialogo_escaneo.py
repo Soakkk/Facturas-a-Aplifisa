@@ -1,7 +1,10 @@
-"""Lo poco que hay que decir antes de escanear: de quien son las facturas y si
-son gastos o ingresos. Con eso el PDF se nombra y se archiva solo.
+"""Lo poco que hay que decir antes de escanear.
 
-El tipo aqui es SOLO para archivar: cada factura la sigue clasificando el
+Ni eso hace falta: si no se pone cliente, el PDF nace en "Sin identificar" y se
+muda solo a la carpeta del cliente en cuanto el programa lo averigua por el NIF
+que se repite en las facturas.
+
+El tipo es SOLO para archivar y nombrar: cada factura la sigue clasificando el
 programa por el NIF (una venta colada en un taco de gastos se detecta igual).
 """
 
@@ -42,7 +45,11 @@ class DialogoEscaneo(QDialog):
         self.combo_cliente.addItems(clientes)
         self.combo_cliente.setCurrentText("")
         self.combo_cliente.lineEdit().setPlaceholderText(
-            "Nombre del cliente (para nombrar y archivar el PDF)")
+            "Déjelo vacío y lo detecta el programa")
+        self.combo_cliente.setToolTip(
+            "Si lo deja vacío, el PDF se guarda como «Sin identificar» y se "
+            "muda solo a la carpeta del cliente cuando el programa lo detecta "
+            "por el NIF de las facturas.")
         formulario.addRow("Cliente:", self.combo_cliente)
 
         self.combo_tipo = QComboBox()

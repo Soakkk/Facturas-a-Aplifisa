@@ -22,6 +22,7 @@
 |---|--------|--------|
 | 1 | Modelo, coste y presupuesto de Gemini | ✅ hecho (falta decidir modelo) |
 | 2 | El programa escanea (botón + ADF) | ✅ hecho |
+| 7 | Cliente automático y gestión de los PDF | ✅ hecho (pedido el 2026-09-02) |
 | 3 | Quitar el banner azul superior | ✅ hecho (menú Configuración incluido) |
 | 4 | Resumen de importes por bloque escaneado | ✅ hecho |
 | 5 | Quitar el trimestre | ✅ hecho |
@@ -143,6 +144,25 @@ Flujo a construir:
   `Ctrl+Z` deshacer eliminación.
 - Sinergia con **Escaner-Fotos-Facturas** (ya existe `procesar_rutas` pensada
   para eso): que aquella app pueda mandar el PDF mejorado directamente a esta.
+
+## 7. Cliente automático al escanear y gestión de los PDF — ✅ HECHO (2026-09-02)
+
+Pedido por el usuario después de ver los puntos 1-6.
+
+- **No hace falta decir de quién son las facturas al escanear.** Si se deja el
+  cliente vacío, el PDF nace en `<carpeta>\Sin identificar\Escaneo_<tipo>_<fecha>.pdf`
+  y, en cuanto el programa detecta al cliente por el NIF, `app._recolocar_escaneo`
+  lo **muda solo** a `<CLIENTE>\<CLIENTE>_<gastos|ingresos>_<fecha>.pdf`. El tipo
+  se decide por mayoría de lo detectado (si casi todo son ventas, se archiva como
+  ingresos). Si no se detecta cliente, se queda donde está y se coloca a mano.
+  Mover el archivo nunca puede costar el escaneo: si falla, se sigue con la ruta
+  vieja.
+- **`archivo.py` + `dialogo_escaneos.py`**: menú **Escaneos** (Ctrl+L) con la
+  lista de PDF (cliente, fecha, archivo, tamaño), y botones para volver a
+  meterlos en el lote, abrirlos, abrir su carpeta, cambiarlos de cliente o
+  quitarlos. **Nada se borra**: lo quitado va a `_Papelera` dentro de la propia
+  carpeta de escaneos. La fecha se lee del nombre, no del archivo, para que
+  moverlo no la cambie.
 
 ## 3. Quitar el banner azul superior — ✅ HECHO (2026-09-01, sin publicar)
 
