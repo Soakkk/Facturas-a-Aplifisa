@@ -6,9 +6,26 @@ en la próxima sesión.
 ### Lo más útil de todo
 
 **El total factura de cada lote.** Compara el que da el programa (abajo, en
-«Resumen del trimestre») con el tuyo. Si no cuadran, dímelo aunque no sepas por
+«Comprobación de totales por bloque», que ahora suma cada PDF por separado)
+con el tuyo. Si no cuadran, dímelo aunque no sepas por
 qué: así salió el abono de Coca-Cola, que se estaba registrando en positivo, y no
 lo habría encontrado de otra forma.
+
+### Novedades de esta versión que quiero que pruebes
+
+- **Botón «Escanear facturas»** (o Ctrl+E): elige cliente y si son gastos o
+  ingresos, y el programa maneja el alimentador, guarda el PDF en
+  `Documentos\Facturas escaneadas\<CLIENTE>` con el nombre puesto y lo mete
+  solo en el lote. **Dime si el escáner responde bien** (tu HP M148dw) y si el
+  taco entero entra de una pasada.
+- **Varios PDF en un mismo Excel**: cada carga o escaneo es un «bloque» que se
+  suma; se pueden juntar 3 o 4 escaneos de un requerimiento y exportar una vez.
+- **Abajo a la derecha sale lo que cuesta**: el modelo de Gemini que ha
+  contestado, el coste del lote y lo que llevas gastado del mes. **Dime qué
+  modelo te sale**: si es un Gemini 3.x, cada factura cuesta 2,5 veces más que
+  con el 2.5 Flash y a lo mejor conviene cambiarlo (aun así hablamos de
+  céntimos: unas 30 facturas salen por unos 7 céntimos).
+- Ya **no hay trimestre**: nada se pone en ámbar por ser de otra fecha.
 
 ### Dudas concretas pendientes
 

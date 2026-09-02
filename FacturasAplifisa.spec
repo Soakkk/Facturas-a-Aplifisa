@@ -3,6 +3,8 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
 hiddenimports += collect_submodules('keyring.backends')
+# Escaneo por WIA (COM de Windows)
+hiddenimports += ['win32com.client', 'pythoncom', 'pywintypes']
 
 
 a = Analysis(

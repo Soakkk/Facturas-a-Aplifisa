@@ -12,9 +12,9 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
@@ -22,11 +22,15 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from facturas_excel import __version__, pendientes, updater
+from facturas_excel import (
+    __version__, ajustes, costes, escaner, pendientes, updater,
+)
 from facturas_excel.claves import guardar_api_key, leer_api_key
+from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.clientes import (
-    en_recargo_equivalencia, guardar_recargo_equivalencia,
+    en_recargo_equivalencia, guardar_recargo_equivalencia, nombres_conocidos,
+    recordar_nombre,
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
@@ -133,6 +137,7 @@ def fmt(v):
 class Worker(QThread):
     progreso = Signal(int, int)
     terminado = Signal(object, str, str)   # lista[(png, FacturaProcesada)], nombre, nif
+    gasto = Signal(str, float)             # modelo real, coste del lote en euros
     fallo = Signal(str)
 
     def __init__(self, rutas, api_key):
@@ -150,10 +155,15 @@ class Worker(QThread):
             total = len(imagenes)
             registros = [None] * total
 
+            consumo = []   # (modelo, tokens entrada, tokens salida) por factura
+
             def tarea(idx):
                 origen, pagina, img = imagenes[idx]
                 try:
-                    datos = extractor.extraer(img, origen, pagina).crudo
+                    leido = extractor.extraer(img, origen, pagina)
+                    consumo.append((leido.modelo, leido.tokens_entrada,
+                                    leido.tokens_salida))
+                    datos = leido.crudo
                 except SinCredito:
                     raise  # detiene todo el lote con aviso
                 except Exception as e:  # una factura ilegible no tumba el lote
@@ -170,6 +180,14 @@ class Worker(QThread):
                     hechas += 1
                     self.progreso.emit(hechas, total)
 
+            # Lo gastado en Gemini, con los tokens reales de cada respuesta.
+            modelo, coste_lote = "", 0.0
+            for m, entrada, salida in consumo:
+                modelo = m or modelo
+                coste_lote += costes.registrar(m, entrada, salida)
+            if consumo:
+                self.gasto.emit(modelo, round(coste_lote, 6))
+
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = [(img, construir(datos, nif, nombre, origen, pag))
                           for img, origen, pag, datos in registros]
@@ -183,6 +201,30 @@ class Worker(QThread):
             marcar_sustituidas(solo_pr)
             self.terminado.emit(procesadas, nombre, nif)
         except Exception as e:  # noqa
+            self.fallo.emit(str(e))
+
+
+class HiloEscaneo(QThread):
+    """El escaneo, fuera del hilo de la ventana: un taco de 30 hojas tarda."""
+    progreso = Signal(int)      # hojas escaneadas hasta ahora
+    terminado = Signal(str)     # ruta del PDF
+    fallo = Signal(str)
+
+    def __init__(self, destino, opciones):
+        super().__init__()
+        self.destino = destino
+        self.opciones = opciones
+
+    def run(self):
+        try:
+            ruta = escaner.escanear(
+                self.destino, device_id=self.opciones["device_id"],
+                dpi=self.opciones["dpi"],
+                alimentador=self.opciones["alimentador"],
+                duplex=self.opciones["duplex"],
+                progreso=self.progreso.emit)
+            self.terminado.emit(ruta)
+        except Exception as e:
             self.fallo.emit(str(e))
 
 
@@ -233,10 +275,13 @@ class VentanaPrincipal(QMainWindow):
         self._rutas_actuales = []
         self._hilo_update = None
         self._hilo_descarga_update = None
+        self._hilo_escaneo = None
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
         self._crear_interfaz()
+        self._crear_atajos()
+        self._pintar_gasto()
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
@@ -257,14 +302,19 @@ class VentanaPrincipal(QMainWindow):
         acciones.setObjectName("tarjeta")
         la = QHBoxLayout(acciones)
         la.setContentsMargins(16, 12, 16, 12)
+        self.btn_escanear = QPushButton("Escanear facturas")
+        self.btn_escanear.setObjectName("primario")
+        self.btn_escanear.setMinimumHeight(40)
+        self.btn_escanear.setToolTip(
+            "Escanea el taco del alimentador, guarda el PDF con el nombre del "
+            "cliente y lo mete en el lote.  (Ctrl+E)")
+        self.btn_escanear.clicked.connect(self._escanear)
         self.btn_cargar = QPushButton("Abrir PDF o imágenes")
-        self.btn_cargar.setObjectName("primario")
         self.btn_cargar.setMinimumHeight(40)
+        self.btn_cargar.setToolTip("Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
         self.btn_cargar.clicked.connect(self._cargar)
-        self.btn_key = QPushButton("Configurar Gemini")
-        self.btn_key.clicked.connect(self._configurar_key)
+        la.addWidget(self.btn_escanear)
         la.addWidget(self.btn_cargar)
-        la.addWidget(self.btn_key)
         la.addSpacing(12)
         bloque_cliente = QVBoxLayout()
         etiqueta = QLabel("LOTE ACTUAL")
@@ -425,9 +475,19 @@ class VentanaPrincipal(QMainWindow):
         lr.addWidget(self.tabla_resumen)
         cuerpo.addWidget(resumen_card)
 
-        self.lbl_estado = QLabel("Cargue un lote de facturas para empezar.")
+        pie = QHBoxLayout()
+        self.lbl_estado = QLabel("Cargue o escanee un lote de facturas para empezar.")
         self.lbl_estado.setObjectName("textoSuave")
-        cuerpo.addWidget(self.lbl_estado)
+        pie.addWidget(self.lbl_estado, 1)
+        self.lbl_gasto = QLabel()
+        self.lbl_gasto.setObjectName("textoSuave")
+        self.lbl_gasto.setToolTip(
+            "Lo que cuesta leer las facturas con Gemini. Se calcula con los "
+            "tokens reales de cada respuesta.\nGoogle no permite consultar el "
+            "saldo de la cuenta desde el programa: esto es la cuenta que lleva "
+            "el propio programa.")
+        pie.addWidget(self.lbl_gasto)
+        cuerpo.addLayout(pie)
         cont = QWidget()
         cont.setLayout(cuerpo)
         raiz.addWidget(cont, 1)
@@ -438,13 +498,31 @@ class VentanaPrincipal(QMainWindow):
         for hilo in (
             getattr(self, "_hilo_update", None),
             getattr(self, "_hilo_descarga_update", None),
+            getattr(self, "_hilo_escaneo", None),
             getattr(self, "worker", None),
         ):
             if hilo and hilo.isRunning():
                 hilo.wait(5000)
 
+    def _crear_atajos(self):
+        """Lo que se usa cada dia, a un tecleo. No se tocan Supr ni Ctrl+Z:
+        son de editar celdas."""
+        for teclas, accion in (
+            ("Ctrl+E", self._escanear),
+            ("Ctrl+O", self._cargar),
+            ("Ctrl+G", self._exportar_todo),
+        ):
+            QShortcut(QKeySequence(teclas), self, activated=accion)
+
     # ---------- menu / actualizaciones ----------
     def _crear_menu(self):
+        config = self.menuBar().addMenu("Configuración")
+        config.addAction("API key de Gemini…", self._configurar_key)
+        config.addAction("Tope de gasto al mes…", self._configurar_tope)
+        config.addAction("Carpeta donde se guardan los escaneos…",
+                         self._configurar_carpeta_escaneos)
+        config.addAction("Calidad del escaneo (ppp)…", self._configurar_dpi)
+
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
                        lambda: self._comprobar_actualizaciones(silencioso=False))
@@ -560,6 +638,104 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.information(self, "Guardada",
                                     "API key guardada de forma segura.")
 
+    def _configurar_tope(self):
+        euros, ok = QInputDialog.getDouble(
+            self, "Tope de gasto al mes",
+            "Aviso cuando el gasto en Gemini del mes pase de (€):\n"
+            "(solo avisa; el límite de verdad se pone en Google)",
+            costes.tope(), 0.0, 1000.0, 2)
+        if ok:
+            costes.guardar_tope(euros)
+            self._pintar_gasto()
+
+    def _pintar_gasto(self, modelo="", coste_lote=0.0):
+        """Modelo que ha contestado, coste del lote y gasto del mes."""
+        self.lbl_gasto.setText(costes.resumen(modelo, coste_lote))
+
+    def _on_gasto(self, modelo, coste_lote):
+        self._pintar_gasto(modelo, coste_lote)
+        aviso = costes.aviso_tope()
+        if aviso and not getattr(self, "_aviso_tope_dado", False):
+            # Una vez por sesion: recordarlo en cada lote seria un incordio.
+            self._aviso_tope_dado = True
+            QMessageBox.warning(self, "Gasto de Gemini", aviso)
+
+    def _configurar_carpeta_escaneos(self):
+        actual = ajustes.leer("carpeta_escaneos", escaner.carpeta_por_defecto())
+        carpeta = QFileDialog.getExistingDirectory(
+            self, "Carpeta donde guardar los PDF escaneados", actual)
+        if carpeta:
+            ajustes.guardar("carpeta_escaneos", carpeta)
+            self.lbl_estado.setText(f"Los escaneos se guardarán en {carpeta}")
+
+    def _configurar_dpi(self):
+        opciones = ["150 ppp (archivos pequeños)",
+                    "200 ppp (recomendado)",
+                    "300 ppp (facturas con letra muy pequeña)"]
+        valores = [150, 200, 300]
+        actual = int(ajustes.leer("escaneo_dpi", escaner.DPI_POR_DEFECTO))
+        i = valores.index(actual) if actual in valores else 1
+        texto, ok = QInputDialog.getItem(
+            self, "Calidad del escaneo",
+            "A más ppp se lee mejor la letra pequeña, pero el PDF pesa más.\n"
+            "No cambia lo que cuesta leer la factura con Gemini.",
+            opciones, i, False)
+        if ok and texto:
+            ajustes.guardar("escaneo_dpi", valores[opciones.index(texto)])
+
+    # ---------- escaneo ----------
+    def _escanear(self):
+        if getattr(self, "_hilo_escaneo", None) and self._hilo_escaneo.isRunning():
+            QMessageBox.information(self, "Escaneando",
+                                    "Espere a que termine el escaneo en curso.")
+            return
+        disponibles = escaner.escaneres()
+        if not disponibles:
+            QMessageBox.warning(
+                self, "Sin escáner",
+                "Windows no ve ningún escáner.\n\nCompruebe que la impresora "
+                "está encendida y conectada, y vuelva a intentarlo.\n\n"
+                "Mientras tanto puede usar «Abrir PDF o imágenes».")
+            return
+        dialogo = DialogoEscaneo(disponibles, nombres_conocidos(), self)
+        if dialogo.exec() != QDialog.Accepted:
+            return
+        dialogo.recordar()
+        opciones = dialogo.valores()
+        if not opciones["cliente"]:
+            QMessageBox.warning(self, "Falta el cliente",
+                                "Escriba de qué cliente son las facturas: es lo "
+                                "que da nombre al PDF y a su carpeta.")
+            return
+        destino = escaner.ruta_destino(
+            opciones["carpeta"], opciones["cliente"], opciones["tipo"])
+        self.btn_escanear.setEnabled(False)
+        self.btn_cargar.setEnabled(False)
+        self.progreso.setVisible(True)
+        self.progreso.setRange(0, 0)          # no se sabe cuántas hojas hay
+        self.lbl_estado.setText("Escaneando… no retire las hojas del alimentador.")
+        self._hilo_escaneo = HiloEscaneo(destino, opciones)
+        self._hilo_escaneo.progreso.connect(
+            lambda n: self.lbl_estado.setText(f"Escaneando… {n} hoja(s)."))
+        self._hilo_escaneo.terminado.connect(self._on_escaneo_hecho)
+        self._hilo_escaneo.fallo.connect(self._on_escaneo_fallo)
+        self._hilo_escaneo.start()
+
+    def _on_escaneo_hecho(self, ruta):
+        self.progreso.setRange(0, 100)
+        self.btn_escanear.setEnabled(True)
+        self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
+        # Directo al lote: es el flujo que se pidio, sin pasar por abrir archivo.
+        self.procesar_rutas([ruta])
+
+    def _on_escaneo_fallo(self, mensaje):
+        self.progreso.setRange(0, 100)
+        self.progreso.setVisible(False)
+        self.btn_escanear.setEnabled(True)
+        self.btn_cargar.setEnabled(True)
+        self.lbl_estado.setText("No se pudo escanear.")
+        QMessageBox.critical(self, "Error al escanear", mensaje)
+
     # ---------- carga ----------
     def _cargar(self):
         rutas, _ = QFileDialog.getOpenFileNames(
@@ -598,6 +774,7 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText("Leyendo facturas con Gemini…")
         self.worker = Worker(rutas, api_key)
         self.worker.progreso.connect(self._on_progreso)
+        self.worker.gasto.connect(self._on_gasto)
         self.worker.terminado.connect(self._on_terminado)
         self.worker.fallo.connect(self._on_fallo)
         self.worker.start()
@@ -625,6 +802,9 @@ class VentanaPrincipal(QMainWindow):
             "nif": nif,
         })
         self._avisar_si_otro_cliente(nombre, nif)
+        # El nombre del cliente se guarda para proponerlo al escanear el
+        # proximo taco suyo, sin tener que escribirlo otra vez.
+        recordar_nombre(nif, nombre)
         self._cliente_nif, self._cliente_nombre = nif, nombre
         self._pintar_cliente()
         self.chk_recargo.blockSignals(True)

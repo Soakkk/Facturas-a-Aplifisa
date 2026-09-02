@@ -8,15 +8,21 @@
 >
 > Punto de partida: **v1.4.0**, rama `master`, carpeta local al día con GitHub.
 > Antes de tocar nada: `git fetch` y mirar `HEAD..origin/master` (Ricardo publica
-> desde otro sitio). Tests: `.venv\Scripts\python -m pytest tests\ -q` (59 tests).
+> desde otro sitio). Tests: `.venv\Scripts\python -m pytest tests\ -q` (86 tests).
+>
+> **LO QUE FALTA PARA PODER BORRAR ESTE ARCHIVO (2026-09-02):**
+> 1. Que el usuario **pruebe el escaneo con papel de verdad** en su HP M148dw.
+> 2. Ver **qué modelo de Gemini** sale en pantalla en un lote real y decidir si
+>    se fija `MODELOS` a `gemini-2.5-flash` (ver punto 1).
+> 3. **Publicar la versión** (subir `__version__` + tag `vX.Y.Z`).
 
 ## Estado general
 
 | # | Mejora | Estado |
 |---|--------|--------|
-| 1 | Modelo, coste y presupuesto de Gemini | ⬜ pendiente |
-| 2 | Escaneo automático (ADF + carpeta vigilada) | ⬜ pendiente |
-| 3 | Quitar el banner azul superior | ✅ hecho (falta el menú Configuración) |
+| 1 | Modelo, coste y presupuesto de Gemini | ✅ hecho (falta decidir modelo) |
+| 2 | El programa escanea (botón + ADF) | ✅ hecho |
+| 3 | Quitar el banner azul superior | ✅ hecho (menú Configuración incluido) |
 | 4 | Resumen de importes por bloque escaneado | ✅ hecho |
 | 5 | Quitar el trimestre | ✅ hecho |
 | 6 | Trabajar por bloques (varios PDF en un Excel) | ✅ hecho |
@@ -27,7 +33,22 @@ funcionalidad nueva e independiente.
 
 ---
 
-## 1. Qué Gemini se usa, cuánto cuesta y cuánto queda de presupuesto
+## 1. Qué Gemini se usa, cuánto cuesta y cuánto queda — ✅ HECHO (2026-09-02)
+
+`costes.py` con la tabla de tarifas (repasada el 2026-09-02 en la página oficial
+de precios), `gasto.json` por meses en `%APPDATA%`, tope configurable (5 €) y
+aviso al 80 % y al 100 %. `extraccion._consumo()` saca de cada respuesta el
+`model_version` real y los tokens (el "pensamiento" cuenta como salida); el
+Worker los suma y la ventana lo enseña abajo a la derecha.
+
+**PENDIENTE DE DECIDIR con datos reales:** `gemini-flash-latest` ya no apunta al
+2.5 Flash. Los Gemini 3.6/3.7 Flash cuestan **0,75 $ / 3,75 $** por millón
+(lanzamiento; **el 1/1/2027 pasan a 1,50 / 7,50**) frente a **0,30 / 2,50** del
+2.5 Flash y **0,10 / 0,40** del 2.5 Flash-Lite. Con 30 facturas: ~0,073 € con
+3.7 Flash, ~0,040 € con 2.5 Flash y ~0,009 € con 2.5 Flash-Lite. En cuanto el
+usuario pase un lote, mirar qué modelo sale en pantalla y decidir si se fija
+`MODELOS` a `gemini-2.5-flash`. **Sigue pendiente el escalado selectivo** (mandar
+a un modelo caro solo las facturas ámbar/rojas o de confianza baja).
 
 **Decidido con el usuario:** contador local + tope mensual. *La API de Gemini no
 expone el saldo de la cuenta* (eso solo está en la consola de Google Cloud), así
@@ -69,7 +90,18 @@ Qué hacer:
      facturas grandes y legibles (es ~3× más barato); si sí, usarlo de primera
      pasada y flash de refuerzo.
 
-## 2. El programa ES el escáner (botón Escanear)
+## 2. El programa ES el escáner (botón Escanear) — ✅ HECHO (2026-09-02)
+
+Hecho con **WIA** (el escaneo de Windows, sin instalar NAPS2 ni nada: se probó
+que Windows ve la HP LJ Pro M148/M149 por USB). `escaner.py` (enumerar, ADF,
+dúplex, ppp, y armar el PDF con PyMuPDF), `dialogo_escaneo.py` (cliente + tipo),
+`ajustes.py` (carpeta, escáner y ppp recordados) y el menú **Configuración**.
+El PDF va a `<carpeta>\<CLIENTE>\<CLIENTE>_<gastos|ingresos>_<fecha>.pdf` y
+entra solo en el lote como un bloque. Atajos Ctrl+E / Ctrl+O / Ctrl+G. Nueva
+dependencia: **pywin32** (en requirements y en el .spec).
+**FALTA PROBARLO CON PAPEL DE VERDAD**: los tests usan un escáner simulado.
+Queda sin hacer el punto 6 de abajo (carpeta vigilada) y la sinergia con
+Escaner-Fotos-Facturas.
 
 **Lo que quiere el usuario (aclarado 2026-09-01):** NO usar la app de HP y que
 esta la vigile. Quiere **un botón "Escanear" dentro del programa** que dispare
@@ -114,9 +146,8 @@ Flujo a construir:
 
 ## 3. Quitar el banner azul superior — ✅ HECHO (2026-09-01, sin publicar)
 
-Fuera el `QFrame#cabecera` y sus estilos. **Queda pendiente el menú
-"Configuración"** con lo útil (API key, tope de gasto, carpetas, escáner): se
-hará junto con los puntos 1 y 2, que son los que aportan los ajustes.
+Fuera el `QFrame#cabecera` y sus estilos. El menú **Configuración** ya está, con
+API key de Gemini, tope de gasto al mes, carpeta de escaneos y calidad (ppp).
 
 - En `app.py._crear_interfaz`: eliminar el `QFrame#cabecera` (68 px, azul marino)
   con el logo, "Facturas a Aplifisa", el subtítulo y la píldora "Gastos e

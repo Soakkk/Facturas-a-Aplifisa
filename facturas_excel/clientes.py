@@ -54,3 +54,25 @@ def guardar_recargo_equivalencia(nif, activo: bool, nombre: str = "") -> None:
             json.dump(todo, fh, indent=2, ensure_ascii=False)
     except OSError:
         pass  # no poder recordarlo no debe tumbar la app
+
+
+def nombres_conocidos() -> list:
+    """Nombres de los clientes ya vistos, para no tener que escribirlos."""
+    nombres = {ficha.get("nombre", "").strip()
+               for ficha in _leer_todo().values() if isinstance(ficha, dict)}
+    return sorted(n for n in nombres if n)
+
+
+def recordar_nombre(nif, nombre: str) -> None:
+    """Guarda el nombre del cliente aunque no este en recargo: sirve para
+    proponerlo al escanear."""
+    nif = _normaliza(nif)
+    if not nif or not nombre:
+        return
+    todo = _leer_todo()
+    todo.setdefault(nif, {})["nombre"] = nombre
+    try:
+        with open(_ruta(), "w", encoding="utf-8") as fh:
+            json.dump(todo, fh, indent=2, ensure_ascii=False)
+    except OSError:
+        pass

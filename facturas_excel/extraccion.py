@@ -110,6 +110,11 @@ class DatosFactura:
     crudo: dict
     origen: str = ""
     pagina: int = 0
+    # Lo que ha costado leer esta factura: el modelo que ha contestado de
+    # verdad (el alias 'gemini-flash-latest' cambia solo) y sus tokens.
+    modelo: str = ""
+    tokens_entrada: int = 0
+    tokens_salida: int = 0
 
 
 class Extractor:
@@ -146,8 +151,14 @@ class Extractor:
     def extraer(self, img: bytes, origen: str = "", pagina: int = 0) -> DatosFactura:
         datos = None
         ultimo_texto = ""
+        modelo, entrada, salida = "", 0, 0
         for _ in range(3):  # Gemini a veces emite JSON invalido; reintentar
             resp = self._generar(img)
+            # Los reintentos tambien se pagan: se suman todos.
+            m, e, sal = _consumo(resp)
+            modelo = m or modelo
+            entrada += e
+            salida += sal
             ultimo_texto = resp.text or ""
             datos = _parse_json_tolerante(ultimo_texto)
             if datos is not None:
@@ -155,7 +166,28 @@ class Extractor:
         if datos is None:
             raise ValueError(
                 f"No se pudo leer el JSON de Gemini (pag {pagina}): {ultimo_texto[:200]}")
-        return DatosFactura(crudo=datos, origen=origen, pagina=pagina)
+        return DatosFactura(crudo=datos, origen=origen, pagina=pagina,
+                            modelo=modelo, tokens_entrada=entrada,
+                            tokens_salida=salida)
+
+
+def _consumo(resp):
+    """(modelo real, tokens de entrada, tokens de salida) de una respuesta.
+
+    Se lee con cuidado: si el SDK cambia estos campos, el programa tiene que
+    seguir leyendo facturas aunque no pueda contar el gasto.
+    """
+    modelo = str(getattr(resp, "model_version", "") or "")
+    uso = getattr(resp, "usage_metadata", None)
+
+    def _n(nombre):
+        try:
+            return int(getattr(uso, nombre, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    # El "pensamiento" de los modelos nuevos se factura como salida.
+    return modelo, _n("prompt_token_count"),         _n("candidates_token_count") + _n("thoughts_token_count")
 
 
 def _parse_json_tolerante(texto: str):
