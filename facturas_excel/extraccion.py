@@ -38,7 +38,8 @@ class SinCredito(Exception):
 _CRITERIO_CUENTAS = """CUENTAS DE GASTO (PGC PYMES) - elige el codigo que mejor encaje:
 - 628 Suministros: luz, agua, gas, telefono/internet, y COMBUSTIBLE/carburante
   (gasoleo, diesel, gasolina). Si es 628, indica subclave_gxx:
-  G14 luz/electricidad, G15 agua, G16 gas, G17 telefono/internet, G18 combustible.
+  G14 luz/electricidad, G15 agua, G16 gas Y TAMBIEN GASOLEO/GASOIL/GASOLINA
+  y derivados del petroleo, G17 telefono/internet, G18 otros suministros.
 - 622 Reparacion y conservacion: talleres, reparacion de vehiculo/maquinaria,
   repuestos, recambios, neumaticos, kit distribucion.
 - 631 Tributos: impuestos, tasas (IVTM/impuesto de vehiculos, AEAT, ayuntamiento).

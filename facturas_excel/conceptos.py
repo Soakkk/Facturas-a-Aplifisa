@@ -6,7 +6,8 @@ por palabras clave. Es facilmente editable: ajusta CUENTA_* y los MAPA_*.
 
 Aplifisa: la columna Concepto es el CODIGO NUMERICO de la cuenta. Las cuentas de
 suministros 628 son "genericas" y Aplifisa pedira a mano la subclave AEAT (GXX):
-  628 luz=G14 · agua=G15 · gas=G16 · telefonia/internet=G17 · otros=G18
+  628 luz=G14 · agua=G15 · gas=G16 (gasoleo y derivados van aqui) ·
+      telefonia/internet=G17 · otros=G18
 La primera vez de cada proveedor se elige el GXX; despues Aplifisa lo recuerda.
 """
 
@@ -16,7 +17,7 @@ import re
 import unicodedata
 
 # --- cuentas base (ajustables por criterio de la asesoria) ---
-CUENTA_COMBUSTIBLE = "628"   # carburante como suministro (subclave GXX: G18 otros)
+CUENTA_COMBUSTIBLE = "628"   # carburante como suministro; subclave G16 (gas)
 DEFAULT_GASTO = "600"        # Aplifisa asigna 600 por defecto en compras
 DEFAULT_VENTA = "700"        # y 700 en ventas
 
@@ -94,9 +95,9 @@ def asignar_concepto(tipo: str, texto_busqueda: str) -> str:
 SUBCLAVES_628 = {
     "G14": "Suministros electricidad",
     "G15": "Suministros agua",
-    "G16": "Suministros gas",
+    "G16": "Suministros gas (aquí van también gasóleo y derivados)",
     "G17": "Suministros telefonia e internet",
-    "G18": "Otros suministros (combustible, etc.)",
+    "G18": "Otros suministros",
 }
 
 # Por orden: la primera palabra que se encuentre manda. El agua y la luz van
@@ -107,15 +108,17 @@ GXX_628 = [
              "energia xxi", "kwh", "potencia contratada", "luz"]),
     ("G15", ["agua", "aquaservice", "hidrogea", "emuasa", "aqualia",
              "acuambiente", "alcantarillado", "saneamiento"]),
+    # Criterio de la asesoria (confirmado 2026-09-02): el GASOLEO y sus
+    # derivados son gas, o sea G16. No van a "otros suministros".
     ("G16", ["gas natural", "butano", "propano", "redexis", "nedgia",
-             "gas ciudad", "gas"]),
+             "gas ciudad", "gas", "gasoleo", "gasoil", "gasolina", "diesel",
+             "carburante", "combustible", "adblue", "estacion de servicio",
+             "area de servicio", "gasolinera", "cepsa", "repsol", "galp",
+             "petroprix", "ballenoil", "plenoil", "shell", "avia"]),
     ("G17", ["telefon", "internet", "movil", "fibra", "orange", "movistar",
              "vodafone", "masmovil", "yoigo", "jazztel", "pepephone", "lowi",
              "digi ", "finetwork", "adamo", "banda ancha", "telecomunicacion"]),
-    ("G18", ["combustible", "gasoleo", "gasoil", "gasolina", "diesel",
-             "carburante", "adblue", "estacion de servicio", "area de servicio",
-             "gasolinera", "cepsa", "repsol", "galp", "petroprix", "ballenoil",
-             "plenoil", "shell", "avia"]),
+    ("G18", ["otros suministros"]),
 ]
 
 

@@ -9,10 +9,12 @@ from facturas_excel.modelo import Factura
 from facturas_excel.validacion import REVISAR, validar
 
 
-def test_el_gasoleo_no_se_va_al_gas():
-    # "gas" cazaba dentro de "gasoleo" y el combustible acababa en G16.
-    assert subclave_628("Gasoleo A del mes") == "G18"
-    assert subclave_628("Repsol gasolina 95") == "G18"
+def test_el_gasoleo_va_al_gas_por_criterio_de_la_asesoria():
+    # Criterio del usuario (2026-09-02): "gas es gasoleo y derivados", asi que
+    # el combustible va a G16, no a otros suministros. Asi lo tiene ademas
+    # configurado en Aplifisa.
+    assert subclave_628("Gasoleo A del mes") == "G16"
+    assert subclave_628("Repsol gasolina 95") == "G16"
     assert subclave_628("Gas natural Redexis") == "G16"
 
 
@@ -25,7 +27,7 @@ def test_los_suministros_tipicos_van_a_su_subclave():
 
 def test_una_gasolinera_es_combustible_aunque_no_diga_gasoleo():
     assert asignar_concepto("gasto", "AREA DE SERVICIO DE EJEMPLO SL") == "628"
-    assert subclave_628("AREA DE SERVICIO DE EJEMPLO SL") == "G18"
+    assert subclave_628("AREA DE SERVICIO DE EJEMPLO SL") == "G16"
 
 
 def test_la_628_sin_subclave_se_marca_para_revisar():
@@ -36,7 +38,7 @@ def test_la_628_sin_subclave_se_marca_para_revisar():
     assert res.estado == REVISAR
     assert any("628 necesita subclave" in m for m in res.mensajes)
 
-    f.subclave = "G18"
+    f.subclave = "G16"
     assert not any("subclave" in m for m in validar(f).mensajes)
 
 
