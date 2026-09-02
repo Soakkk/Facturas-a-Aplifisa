@@ -31,6 +31,19 @@ lo habría encontrado de otra forma.
   céntimos: unas 30 facturas salen por unos 7 céntimos).
 - Ya **no hay trimestre**: nada se pone en ámbar por ser de otra fecha.
 
+### Novedades de la 1.6.0
+
+- **El alimentador ya saca el taco entero.** El escaneo de Windows pasaba las
+  13 hojas pero solo entregaba la primera imagen (de ahi que 13 facturas
+  salieran en un PDF de una pagina). Ahora esa parte la hace **NAPS2**, que ya
+  esta instalado en tu equipo. Tu no notas nada: el mismo boton.
+- **Al escanear puedes elegir color y calidad**: blanco y negro / grises /
+  color, y de 75 a 300 ppp. Grises a 200 ppp es lo recomendado. Esto cambia lo
+  que TARDA el escaner y lo que pesa el PDF.
+- **Configuracion -> Calidad de lectura y coste**: aqui si se cambia lo que
+  cuesta Gemini, y el propio dialogo te dice cuanto sale cada factura.
+- **El panel de totales se puede ocultar** (boton «Ocultar», o menu Ver).
+
 ### Dudas concretas pendientes
 
 1. **La factura de BIMBO pone «Copia duplicada».** ¿Se registra igual que un

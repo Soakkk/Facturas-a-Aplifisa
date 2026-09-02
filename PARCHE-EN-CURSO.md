@@ -23,6 +23,8 @@
 | 1 | Modelo, coste y presupuesto de Gemini | ✅ hecho (falta decidir modelo) |
 | 2 | El programa escanea (botón + ADF) | ✅ hecho |
 | 7 | Cliente automático y gestión de los PDF | ✅ hecho (pedido el 2026-09-02) |
+| 8 | Escaneo configurable (color/ppp) y coste por factura | ✅ hecho |
+| 9 | Panel de totales ocultable | ✅ hecho |
 | 3 | Quitar el banner azul superior | ✅ hecho (menú Configuración incluido) |
 | 4 | Resumen de importes por bloque escaneado | ✅ hecho |
 | 5 | Quitar el trimestre | ✅ hecho |
@@ -106,7 +108,19 @@ a 200 ppp tardó 8,8 s y salió un PDF A4 de 33 KB. La v1.5.0 fallaba con
 la HP **solo entrega BMP** (se le pedía JPEG; ahora se pide lo que cada aparato
 declare y se convierte a JPEG con PIL), y los márgenes a 300 ppp se salían del
 máximo del cristal (1700x3000), así que ahora todo valor se recorta a lo que
-admita la propiedad (`_ajustar`). **El ALIMENTADOR fallaba por otra cosa (v1.5.2)**: poner la propiedad de
+admita la propiedad (`_ajustar`). **EL ALIMENTADOR NECESITA NAPS2 (v1.6.0) — LO GORDO.** WIA con esta HP pasa el
+taco entero por el alimentador pero **solo devuelve la PRIMERA imagen**: 13
+facturas acababan en un PDF de 1 pagina. Probado en el aparato real que no hay
+forma por WIA (ni `Pages=1`, ni reconectar, ni re-pedir el item): es limitacion
+de la capa de automatizacion (el multipagina de verdad necesita `IWiaTransfer`
+con callbacks, que wiaaut no expone). **Solucion: NAPS2** (libre; instalado con
+`winget install Cyanfish.NAPS2`; consola en WindowsApps). Probado: 11 hojas en
+un PDF de 11 paginas en 52 s. `escaner.escanear_naps2()` lo llama con
+`--noprofile --driver wia --source feeder|duplex --dpi --bitdepth --pagesize a4
+--deskew --force --verbose -o`. **El cristal sigue con WIA** para no depender de
+nada. Si falta NAPS2 y se pide alimentador: `FaltaNAPS2` con el enlace.
+
+**(v1.5.2, ya superado por lo de arriba)**: poner la propiedad de
 dispositivo **`Pages` (3096)** hacía que `Transfer` fallase con el mismo
 E_INVALIDARG, aunque la HP declare que admite de 0 a 50. Sin tocarla, el ADF
 escanea bien (probado: tiró de una hoja, 14,9 MB en BMP). Tampoco se fijan ya
