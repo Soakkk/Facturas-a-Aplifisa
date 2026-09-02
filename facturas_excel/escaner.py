@@ -35,7 +35,16 @@ P_ANCHO, P_ALTO = 6151, 6152
 P_TIPO_DATO = 4103          # 0=B/N, 2=grises, 3=color
 COLOR, GRISES = 3, 2
 
+# Formatos de imagen de WIA. OJO: muchos escaneres (la HP M148 entre ellos)
+# SOLO entregan BMP; pedirles JPEG da "El parametro no es correcto". Se pide lo
+# que cada aparato diga que sabe dar y se convierte despues.
 FORMATO_JPEG = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}"
+FORMATO_BMP = "{B96B3CAB-0728-11D3-9D7B-0000F81EF32E}"
+FORMATO_PNG = "{B96B3CAF-0728-11D3-9D7B-0000F81EF32E}"
+EXTENSION = {FORMATO_JPEG: "jpg", FORMATO_BMP: "bmp", FORMATO_PNG: "png"}
+
+# Como describe WIA lo que admite cada propiedad.
+SUBTIPO_RANGO, SUBTIPO_LISTA = 1, 2
 
 # Sin papel en el alimentador: es el final normal de un taco, no un fallo.
 HRESULT_SIN_PAPEL = (0x80210003, 0x80210002)
@@ -138,17 +147,65 @@ def _conectar(device_id: Optional[str]):
     raise SinEscaner("No se pudo conectar con el escáner elegido.")
 
 
+def _ajustar(prop, valor):
+    """El valor mas parecido que admita esa propiedad.
+
+    Cada escaner tiene sus limites (la HP solo hace 75/150/200/300 ppp y no
+    pasa de 1700x3000 puntos). Colar un valor fuera de rango no da un aviso:
+    revienta el escaneo entero con "El parametro no es correcto".
+    """
+    try:
+        subtipo = prop.SubType
+        if subtipo == SUBTIPO_RANGO:
+            return min(max(valor, prop.SubTypeMin), prop.SubTypeMax)
+        if subtipo == SUBTIPO_LISTA:
+            opciones = [v for v in prop.SubTypeValues]
+            if opciones and valor not in opciones:
+                return min(opciones, key=lambda v: abs(v - valor))
+    except Exception:
+        pass
+    return valor
+
+
 def _poner(propiedades, prop_id, valor) -> bool:
     """Cambia una propiedad WIA si el aparato la admite (muchos no admiten
     todas, y ponerse tozudo con una sola aborta el escaneo entero)."""
     try:
         for prop in propiedades:
             if prop.PropertyID == prop_id:
-                prop.Value = valor
+                prop.Value = _ajustar(prop, valor)
                 return True
     except Exception:
         pass
     return False
+
+
+def _formato_de(item) -> str:
+    """Formato en el que este escaner sabe entregar la imagen."""
+    try:
+        formatos = [str(f).upper() for f in item.Formats]
+    except Exception:
+        formatos = []
+    for candidato in (FORMATO_JPEG, FORMATO_BMP, FORMATO_PNG):
+        if candidato.upper() in formatos:
+            return candidato
+    return formatos[0] if formatos else FORMATO_BMP
+
+
+def _a_jpeg(ruta: str) -> str:
+    """Convierte a JPEG lo que no lo sea (un BMP de A4 a 200 ppp son 10 MB:
+    un taco de 30 hojas dejaria un PDF imposible de mandar)."""
+    if ruta.lower().endswith((".jpg", ".jpeg")):
+        return ruta
+    try:
+        from PIL import Image
+        destino = os.path.splitext(ruta)[0] + ".jpg"
+        with Image.open(ruta) as imagen:
+            imagen.convert("RGB").save(destino, "JPEG", quality=80, optimize=True)
+        os.remove(ruta)
+        return destino
+    except Exception:
+        return ruta          # peor es quedarse sin la hoja
 
 
 def _preparar(dispositivo, dpi: int, alimentador: bool, duplex: bool,
@@ -163,6 +220,8 @@ def _preparar(dispositivo, dpi: int, alimentador: bool, duplex: bool,
     _poner(item.Properties, P_RES_V, dpi)
     _poner(item.Properties, P_INI_H, 0)
     _poner(item.Properties, P_INI_V, 0)
+    # Los margenes se piden en puntos a esa resolucion, y _ajustar los recorta
+    # a lo que de el aparato (a 300 ppp un A4 se sale del maximo de la HP).
     _poner(item.Properties, P_ANCHO, int(A4_PULGADAS[0] * dpi))
     _poner(item.Properties, P_ALTO, int(A4_PULGADAS[1] * dpi))
     return item
@@ -202,10 +261,12 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
             "El alimentador está vacío: ponga las facturas en la bandeja de "
             "arriba y vuelva a intentarlo.")
     item = _preparar(dispositivo, dpi, alimentador, duplex, color)
+    formato = _formato_de(item)
+    extension = EXTENSION.get(formato, "bmp")
     paginas: List[str] = []
     while len(paginas) < MAX_PAGINAS:
         try:
-            imagen = item.Transfer(FORMATO_JPEG)
+            imagen = item.Transfer(formato)
         except Exception as e:
             if paginas and _es_sin_papel(e):
                 break            # se acabo el taco: normal
@@ -214,9 +275,10 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
                     f"Se escanearon {len(paginas)} hoja(s) y el escáner falló "
                     f"en la siguiente: {e}") from e
             raise ErrorEscaneo(f"No se pudo escanear: {e}") from e
-        ruta = os.path.join(carpeta_temporal, f"pag_{len(paginas) + 1:03d}.jpg")
+        ruta = os.path.join(carpeta_temporal,
+                            f"pag_{len(paginas) + 1:03d}.{extension}")
         imagen.SaveFile(ruta)
-        paginas.append(ruta)
+        paginas.append(_a_jpeg(ruta))
         if progreso:
             progreso(len(paginas))
         if not alimentador:

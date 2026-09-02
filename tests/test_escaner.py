@@ -128,3 +128,68 @@ def test_sin_escaner_conectado_lo_dice_claro(monkeypatch):
     with pytest.raises(escaner.SinEscaner) as e:
         escaner._conectar(None)
     assert "escáner" in str(e.value)
+
+
+# ---------------- lo que reviento con la HP real (v1.5.0) --------------------
+class PropLista:
+    """Propiedad WIA con lista cerrada de valores (los ppp del aparato)."""
+    SubType = escaner.SUBTIPO_LISTA
+    SubTypeValues = [75, 150, 200, 300]
+
+    def __init__(self, prop_id):
+        self.PropertyID = prop_id
+        self.Value = 200
+
+
+class PropRango:
+    """Propiedad WIA con rango (los margenes del cristal)."""
+    SubType = escaner.SUBTIPO_RANGO
+    SubTypeMin, SubTypeMax = 384, 1700
+
+    def __init__(self, prop_id):
+        self.PropertyID = prop_id
+        self.Value = 1700
+
+
+def test_un_valor_fuera_de_rango_se_recorta_en_vez_de_reventar():
+    # A 300 ppp un A4 pide 2481 puntos y el cristal de la HP solo da 1700:
+    # colarlo tal cual abortaba el escaneo con "El parametro no es correcto".
+    ancho = PropRango(escaner.P_ANCHO)
+    escaner._poner([ancho], escaner.P_ANCHO, 2481)
+    assert ancho.Value == 1700
+
+
+def test_unos_ppp_que_no_existen_se_cambian_por_el_mas_parecido():
+    res = PropLista(escaner.P_RES_H)
+    escaner._poner([res], escaner.P_RES_H, 250)
+    assert res.Value in (200, 300)
+
+
+class ItemConFormatos:
+    def __init__(self, formatos):
+        self.Formats = formatos
+
+
+def test_se_pide_el_formato_que_el_escaner_sepa_dar():
+    # La HP M148 SOLO da BMP: pedirle JPEG era el fallo de la v1.5.0.
+    assert escaner._formato_de(
+        ItemConFormatos([escaner.FORMATO_BMP])) == escaner.FORMATO_BMP
+    # Si sabe JPEG, mejor JPEG (no hay que convertir).
+    assert escaner._formato_de(
+        ItemConFormatos([escaner.FORMATO_BMP,
+                         escaner.FORMATO_JPEG])) == escaner.FORMATO_JPEG
+    # Un escaner que no dice nada: se prueba con BMP, que lo tienen todos.
+    assert escaner._formato_de(object()) == escaner.FORMATO_BMP
+
+
+def test_el_bmp_del_escaner_se_convierte_a_jpeg(tmp_path):
+    from PIL import Image
+    bmp = tmp_path / "pag_001.bmp"
+    Image.new("RGB", (1654, 2338), "white").save(bmp)
+    grande = bmp.stat().st_size
+
+    jpg = escaner._a_jpeg(str(bmp))
+
+    assert jpg.endswith(".jpg") and os.path.exists(jpg)
+    assert not os.path.exists(bmp)          # el BMP no se queda ocupando sitio
+    assert os.path.getsize(jpg) < grande / 10

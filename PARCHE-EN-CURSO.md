@@ -100,7 +100,13 @@ dúplex, ppp, y armar el PDF con PyMuPDF), `dialogo_escaneo.py` (cliente + tipo)
 El PDF va a `<carpeta>\<CLIENTE>\<CLIENTE>_<gastos|ingresos>_<fecha>.pdf` y
 entra solo en el lote como un bloque. Atajos Ctrl+E / Ctrl+O / Ctrl+G. Nueva
 dependencia: **pywin32** (en requirements y en el .spec).
-**FALTA PROBARLO CON PAPEL DE VERDAD**: los tests usan un escáner simulado.
+**PROBADO CON LA HP DE VERDAD (v1.5.1, 2026-09-02)**: una pasada por el cristal
+a 200 ppp tardó 8,8 s y salió un PDF A4 de 33 KB. La v1.5.0 fallaba con
+«El parámetro no es correcto» por dos motivos, los dos arreglados y con test:
+la HP **solo entrega BMP** (se le pedía JPEG; ahora se pide lo que cada aparato
+declare y se convierte a JPEG con PIL), y los márgenes a 300 ppp se salían del
+máximo del cristal (1700x3000), así que ahora todo valor se recorta a lo que
+admita la propiedad (`_ajustar`). **Falta pasarle un taco por el ALIMENTADOR.**
 Queda sin hacer el punto 6 de abajo (carpeta vigilada) y la sinergia con
 Escaner-Fotos-Facturas.
 
