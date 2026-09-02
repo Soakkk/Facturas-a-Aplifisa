@@ -109,6 +109,12 @@ def validar(f: Factura) -> Resultado:
         marcar_error("Falta el nombre (obligatorio)")
     if not f.concepto:
         marcar_error("Falta el concepto (obligatorio)")
+    elif str(f.concepto).strip().startswith("628") and not (f.subclave or "").strip():
+        # Los suministros son cuentas "genericas": sin decir de que suministro
+        # se trata, Aplifisa deja el apunte a revisar y hay que tocarlo a mano.
+        marcar_revisar(
+            "La cuenta 628 necesita subclave (G14 luz, G15 agua, G16 gas, "
+            "G17 teléfono/internet, G18 otros): rellene la columna GXX")
 
     # NIF: sin NIF o que no valida -> revisar (puede ser OCR o NIF extranjero),
     # no bloquea, pero avisa para que se compruebe.

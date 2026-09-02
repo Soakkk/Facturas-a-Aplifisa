@@ -35,6 +35,7 @@ from facturas_excel.clientes import (
     en_recargo_equivalencia, guardar_recargo_equivalencia, marcar_cliente,
     nombres_conocidos, recordar_nombre,
 )
+from facturas_excel.conceptos import SUBCLAVES_628
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
 from facturas_excel.exportar import exportar_excel
@@ -1125,8 +1126,11 @@ class VentanaPrincipal(QMainWindow):
         for col, val in valores.items():
             item = QTableWidgetItem("" if val is None else str(val))
             if col == C_GXX:
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                item.setToolTip("Subclave orientativa; Aplifisa la recuerda por proveedor.")
+                item.setToolTip(
+                    "Subclave del suministro. En Aplifisa la 628 NO puede ir "
+                    "sin ella:\n"
+                    + "\n".join(f"  {g} = {d}"
+                                for g, d in SUBCLAVES_628.items()))
             if col == C_BLOQUE:
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 item.setToolTip("Escaneo o PDF del que salió esta factura.")
@@ -1181,6 +1185,7 @@ class VentanaPrincipal(QMainWindow):
         d = self.filas[r]
         f = d["factura"]
         f.concepto = self.tabla.item(r, C_CUENTA).text() or None
+        f.subclave = (self.tabla.item(r, C_GXX).text() or "").strip().upper() or None
         f.fecha = self.tabla.item(r, C_FECHA).text() or None
         f.num_factura = self.tabla.item(r, C_NUM).text() or None
         f.nombre = self.tabla.item(r, C_NOMBRE).text() or None

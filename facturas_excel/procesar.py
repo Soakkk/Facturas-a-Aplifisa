@@ -269,6 +269,8 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         aviso = f"{aviso} Tiene algo escrito a mano: se han usado los importes " \
                 f"IMPRESOS (lo manuscrito no cuenta). Compruébala.".strip()
 
+    for _f in facturas:
+        _f.subclave = gxx
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
                             gxx=gxx, origen=origen, pagina=pagina, aviso=aviso,
                             sustituye_a=str(datos.get("sustituye_a") or "").strip())

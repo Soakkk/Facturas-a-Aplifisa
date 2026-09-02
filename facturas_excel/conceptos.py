@@ -12,6 +12,7 @@ La primera vez de cada proveedor se elige el GXX; despues Aplifisa lo recuerda.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 # --- cuentas base (ajustables por criterio de la asesoria) ---
@@ -26,11 +27,17 @@ REGLAS_GASTOS = [
     ("631", ["impuesto", "tributo", "tasa", "ivtm", "vehiculos de traccion",
              "agencia tributaria", "ayuntamiento", "suma gestion"]),
     ("628", ["telefon", "telecomunicacion", "internet", "movil", "orange",
-             "movistar", "vodafone", "masmovil", "yoigo", "fibra"]),
-    ("628", ["electricidad", "energia electrica", "iberdrola", "endesa", "naturgy"]),
+             "movistar", "vodafone", "masmovil", "yoigo", "fibra", "jazztel",
+             "pepephone", "lowi", "digi ", "finetwork", "adamo", "euskaltel",
+             "simyo", "o2 ", "linea movil", "cuota fija", "banda ancha"]),
+    ("628", ["electricidad", "energia electrica", "iberdrola", "endesa",
+             "naturgy", "holaluz", "totalenergies", "audax", "curenergia",
+             "energia xxi", "peaje de acceso", "kwh", "potencia contratada"]),
     ("628", ["aquaservice", "suministro de agua", "hidrogea", "aguas de",
-             "factura de agua", "consumo de agua"]),
-    ("628", ["gas natural", "butano", "propano", "redexis"]),
+             "factura de agua", "consumo de agua", "emuasa", "aqualia",
+             "acuambiente", "canal de isabel", "agua potable", "alcantarillado",
+             "saneamiento y depuracion"]),
+    ("628", ["gas natural", "butano", "propano", "redexis", "nedgia"]),
     ("623", ["notari", "registr", "abogad", "procurador", "gestoria",
              "asesoria", "auditor"]),
     ("625", ["seguro", "poliza", "mutua", "mapfre"]),
@@ -40,7 +47,10 @@ REGLAS_GASTOS = [
     ("622", ["taller", "reparacion", "averia", "neumatico", "recambio",
              "repuesto", "kit distribucion", "revision vehiculo"]),
     (CUENTA_COMBUSTIBLE, ["combustible", "gasoleo", "gasoil", "gasolina",
-                          "diesel", "carburante"]),
+                          "diesel", "carburante", "adblue", "estacion de servicio",
+                          "area de servicio", "gasolinera", "cepsa", "repsol",
+                          "galp", "petroprix", "ballenoil", "plenoil", "shell",
+                          "avia", "bonarea combustible"]),
     ("624", ["mensajeria", "porte", "paqueteria"]),
     ("629", ["papeleria", "material de oficina"]),
 ]
@@ -54,29 +64,65 @@ def _sin_acentos(s: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
+def _contiene(texto: str, clave: str) -> bool:
+    """Busca la palabra ENTERA, no un trozo.
+
+    Si no, "gas" cazaba dentro de "gasoleo" y el combustible se iba a la
+    subclave del gas (G16) en vez de a otros suministros (G18).
+    """
+    clave = _sin_acentos(clave.strip().lower())
+    if not clave:
+        return False
+    return re.search(r"\b" + re.escape(clave) + r"\b", texto) is not None
+
+
 def asignar_concepto(tipo: str, texto_busqueda: str) -> str:
     """Devuelve el codigo de concepto segun palabras clave, por prioridad.
     `texto_busqueda` incluye el concepto sugerido y el nombre de la contraparte."""
     texto = _sin_acentos((texto_busqueda or "").lower())
     reglas = REGLAS_GASTOS if tipo == "gasto" else REGLAS_VENTAS
     for codigo, claves in reglas:
-        if any(_sin_acentos(c) in texto for c in claves):
+        if any(_contiene(texto, c) for c in claves):
             return codigo
     return DEFAULT_GASTO if tipo == "gasto" else DEFAULT_VENTA
 
 
-# Subclave AEAT sugerida para suministros 628 (solo informativa para el usuario).
-GXX_628 = {"luz": "G14", "electricidad": "G14", "aquaservice": "G15",
-           "suministro de agua": "G15", "gas natural": "G16",
-           "telefon": "G17", "internet": "G17", "movil": "G17", "orange": "G17",
-           "movistar": "G17", "vodafone": "G17",
-           "combustible": "G18", "gasoleo": "G18", "gasoil": "G18",
-           "gasolina": "G18", "diesel": "G18", "carburante": "G18"}
+# --- subclaves AEAT de la 628 -----------------------------------------------
+# En Aplifisa la 628 NO se puede dejar sin subclave: son cuentas "genericas" y
+# desde 2021 Hacienda exige decir de que suministro se trata. Si falta, el
+# apunte se queda a revisar y hay que elegirla a mano.
+SUBCLAVES_628 = {
+    "G14": "Suministros electricidad",
+    "G15": "Suministros agua",
+    "G16": "Suministros gas",
+    "G17": "Suministros telefonia e internet",
+    "G18": "Otros suministros (combustible, etc.)",
+}
+
+# Por orden: la primera palabra que se encuentre manda. El agua y la luz van
+# antes que el combustible porque "suministro" a secas no dice de que es.
+GXX_628 = [
+    ("G14", ["electricidad", "energia electrica", "iberdrola", "endesa",
+             "naturgy", "holaluz", "totalenergies", "audax", "curenergia",
+             "energia xxi", "kwh", "potencia contratada", "luz"]),
+    ("G15", ["agua", "aquaservice", "hidrogea", "emuasa", "aqualia",
+             "acuambiente", "alcantarillado", "saneamiento"]),
+    ("G16", ["gas natural", "butano", "propano", "redexis", "nedgia",
+             "gas ciudad", "gas"]),
+    ("G17", ["telefon", "internet", "movil", "fibra", "orange", "movistar",
+             "vodafone", "masmovil", "yoigo", "jazztel", "pepephone", "lowi",
+             "digi ", "finetwork", "adamo", "banda ancha", "telecomunicacion"]),
+    ("G18", ["combustible", "gasoleo", "gasoil", "gasolina", "diesel",
+             "carburante", "adblue", "estacion de servicio", "area de servicio",
+             "gasolinera", "cepsa", "repsol", "galp", "petroprix", "ballenoil",
+             "plenoil", "shell", "avia"]),
+]
 
 
 def subclave_628(texto_busqueda: str) -> str | None:
+    """Que suministro es, para la subclave que exige Aplifisa en la 628."""
     texto = _sin_acentos((texto_busqueda or "").lower())
-    for clave, gxx in GXX_628.items():
-        if _sin_acentos(clave) in texto:
+    for gxx, claves in GXX_628:
+        if any(_contiene(texto, c) for c in claves):
             return gxx
     return None
