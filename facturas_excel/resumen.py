@@ -7,7 +7,7 @@ Si el impreso no coincide, validacion ya lo marca factura a factura.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Tuple
 
 from .modelo import Factura
@@ -20,6 +20,7 @@ class Totales:
     iva: float = 0.0
     irpf: float = 0.0
     requiv: float = 0.0
+    iva_por_tipo: Dict[float, float] = field(default_factory=dict)
 
     @property
     def total(self) -> float:
@@ -39,6 +40,9 @@ def _acumular(t: Totales, f: Factura) -> None:
     t.lineas += 1
     t.base += f.base_iva or 0.0
     t.iva += f.cuota_iva or 0.0
+    if f.pct_iva is not None and f.cuota_iva is not None:
+        tipo = round(float(f.pct_iva), 4)
+        t.iva_por_tipo[tipo] = t.iva_por_tipo.get(tipo, 0.0) + f.cuota_iva
     t.irpf += f.cuota_irpf or 0.0
     t.requiv += f.cuota_requiv or 0.0
 
@@ -46,6 +50,8 @@ def _acumular(t: Totales, f: Factura) -> None:
 def _redondear(t: Totales) -> Totales:
     for campo in ("base", "iva", "irpf", "requiv"):
         setattr(t, campo, round(getattr(t, campo), 2))
+    t.iva_por_tipo = {tipo: round(cuota, 2)
+                      for tipo, cuota in t.iva_por_tipo.items()}
     return t
 
 
@@ -79,6 +85,21 @@ def eur(v: float) -> str:
     return f"{signo}{'.'.join(grupos)},{dec} €"
 
 
+def iva_desglosado(t: Totales) -> str:
+    """IVA compacto para la tabla; desglosa solo cuando hay varios tipos."""
+    if len(t.iva_por_tipo) <= 1:
+        return eur(t.iva)
+
+    def porcentaje(tipo: float) -> str:
+        if tipo.is_integer():
+            return str(int(tipo))
+        return f"{tipo:g}".replace(".", ",")
+
+    return " · ".join(
+        f"{porcentaje(tipo)}%: {eur(cuota)}"
+        for tipo, cuota in sorted(t.iva_por_tipo.items()))
+
+
 def describir(t: Totales, solo_total: bool = False) -> str:
     """Texto del resumen. solo_total=True para los clientes que registran por
     el total de la factura (recargo de equivalencia): ahi el desglose sobra."""
@@ -93,3 +114,4 @@ def describir(t: Totales, solo_total: bool = False) -> str:
         partes.append(f"IRPF −{eur(t.irpf)}")
     partes.append(f"total factura {eur(t.total)}")
     return "  ·  ".join(partes)
+

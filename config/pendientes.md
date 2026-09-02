@@ -82,6 +82,18 @@ facturas del reves. Ahora:
   gastos y una factura sale como ingreso (o al reves), se marca en ambar; y si
   una factura es la unica de su bloque que va al reves, tambien.
 
+### Corrección de la 1.10.1: conceptos completos devueltos por Gemini
+
+Gemini devolvía unas veces solo la cuenta (`628`) y otras copiaba la línea
+entera del catálogo (`628 (G16) SUMINISTROS GAS`). Aunque ambas significaban lo
+mismo, el programa trataba el segundo texto como una cuenta inexistente y dejaba
+la fila en ámbar. Ahora separa siempre la cuenta y la subclave antes de validar,
+tanto en gastos como en ingresos.
+
+- En **Comprobación de totales por bloque**, si hay varios tipos de IVA se
+  detallan dentro de la misma celda (por ejemplo,
+  `10%: 12,34 € · 21%: 56,78 €`) sin añadir columnas ni saturar la tabla.
+
 ### Lo nuevo de la 1.9.0: el catalogo entero de Aplifisa
 
 Me pasaste la lista completa de conceptos (200, 600...682) con sus subclaves.
@@ -145,3 +157,4 @@ que adivinarlo.
   con la de BIMBO): hay dos «TOTAL FACTURA» y podría coger el que no es.
 - Fotografiar con el móvil **no gasta más créditos**: encuadra llenando la foto
   con la factura y se leerá mejor sin pagar más.
+

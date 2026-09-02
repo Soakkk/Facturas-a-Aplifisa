@@ -49,7 +49,7 @@ from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
     normaliza_nif, preparar_lote, recordar_nif,
 )
-from facturas_excel.resumen import eur, resumir, resumir_por_bloque
+from facturas_excel.resumen import eur, iva_desglosado, resumir, resumir_por_bloque
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
@@ -1462,7 +1462,7 @@ class VentanaPrincipal(QMainWindow):
             valores = [
                 bloque, tipo, str(t.lineas),
                 "" if solo_total else eur(t.base),
-                "" if solo_total else eur(t.iva),
+                "" if solo_total else iva_desglosado(t),
                 eur(t.requiv) if t.tiene_requiv and not solo_total else "",
                 f"−{eur(t.irpf)}" if t.tiene_irpf else "",
                 eur(t.total),
@@ -1471,6 +1471,8 @@ class VentanaPrincipal(QMainWindow):
                 item = QTableWidgetItem(texto)
                 if c >= 2:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if c == 4 and " · " in texto:
+                    item.setToolTip(texto)
                 if es_total:
                     fuente = item.font()
                     fuente.setBold(True)
@@ -1597,3 +1599,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

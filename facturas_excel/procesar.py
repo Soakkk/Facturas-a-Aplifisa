@@ -18,7 +18,8 @@ from typing import Dict, List, Tuple
 
 from . import clientes, proveedores
 from .conceptos import (
-    DEFAULT_VENTA, asignar_concepto, es_valido, subclave_628, subclaves_de,
+    DEFAULT_VENTA, asignar_concepto, es_valido, normalizar_concepto,
+    subclave_628, subclaves_de,
 )
 from .extraccion import _num
 from .modelo import Factura
@@ -220,16 +221,18 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         # Los ingresos tienen su propia lista en Aplifisa (700 ventas, 705
         # servicios, 740/741 subvenciones...). Si Gemini propone una de ellas
         # se respeta; si no, la de siempre.
-        cuenta = str(datos.get("cuenta_ingreso") or "").strip()
-        gxx = str(datos.get("subclave_ingreso") or "").strip().upper() or None
+        cuenta, gxx = normalizar_concepto(
+            datos.get("cuenta_ingreso"), datos.get("subclave_ingreso"))
         if not es_valido(cuenta, gxx):
             cuenta, gxx = DEFAULT_VENTA, None
     else:
-        cuenta = str(datos.get("cuenta_gasto") or "").strip()
+        cuenta, gxx = normalizar_concepto(
+            datos.get("cuenta_gasto"), datos.get("subclave_gxx"))
         texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
         if not cuenta:  # respaldo por palabras clave si Gemini no dio cuenta
             cuenta = asignar_concepto("gasto", texto)
-        gxx = datos.get("subclave_gxx") or (subclave_628(texto) if cuenta == "628" else None)
+        if not gxx and cuenta == "628":
+            gxx = subclave_628(texto)
 
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
@@ -488,3 +491,4 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     aprender_nifs(solo)              # 3º memorizar lo leido bien
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
+

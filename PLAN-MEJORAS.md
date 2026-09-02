@@ -97,6 +97,26 @@ Cada factura se lee 2 veces y se comparan campo a campo.
 - Resumen previo a exportar (nº facturas, suma de bases/cuotas) para cuadrar
   contra lo esperado del trimestre.
 
+## Archivo digital limpio por cliente (fase posterior)
+
+Objetivo: conservar los PDF que respaldan exactamente lo registrado, sin
+mezclar escaneos incompletos ni bloques que todavía tengan incidencias.
+
+- Estructura propuesta:
+  `<archivo digital>/<Gastos|Ingresos>/<CLIENTE> <EJERCICIO>/<1T|2T|3T|4T|ANUAL>/`.
+- El periodo se deduce de las fechas del bloque: un solo trimestre usa `1T` a
+  `4T`; si abarca varios trimestres del mismo ejercicio, usa `ANUAL`.
+- Si un PDF mezcla ejercicios, no se archiva automáticamente: antes habrá que
+  dividirlo o confirmar expresamente dónde debe quedar.
+- Un bloque solo puede archivarse después de exportar si **todas** sus filas
+  están verdes, el PDF original existe y el usuario lo confirma como revisado.
+- Se copia el original (no se mueve) y se calcula SHA-256 para no duplicarlo.
+- Guardar junto al PDF un índice que relacione archivo, facturas exportadas,
+  cliente, ejercicio, periodo y hash. Así se puede demostrar qué documento
+  respalda cada registro.
+- Si faltan páginas, hay filas ámbar/rojas, varios clientes o el Excel no se
+  generó correctamente, el bloque queda fuera del archivo definitivo.
+
 ## Extras open source (independientes, recomendar/instalar si el usuario quiere)
 - **Paperless-ngx** — archivo documental con OCR y búsqueda (por cliente/año).
 - **NAPS2** — escaneo por lotes en Windows directo a PDF.
@@ -123,3 +143,4 @@ Cada factura se lee 2 veces y se comparan campo a campo.
   es público. Cachés, PDFs y xlsx están en `.gitignore`.
 - Probar la UI en headless con `QT_QPA_PLATFORM=offscreen` y
   `VentanaPrincipal(comprobar_updates=False)` (evita el exit 9 por QThread vivo).
+

@@ -21,11 +21,11 @@ from facturas_excel.validacion import ERROR
 _app = QApplication.instance() or QApplication([])
 
 
-def factura(num="F-1", base=100.0):
+def factura(num="F-1", base=100.0, pct=21.0):
     return Factura(num_factura=num, fecha="16/07/2026", nombre="PROVEEDOR SL",
-                   nif="B30048276", concepto="600", base_iva=base, pct_iva=21.0,
-                   cuota_iva=round(base * 0.21, 2),
-                   total_impreso=round(base * 1.21, 2))
+                   nif="B30048276", concepto="600", base_iva=base, pct_iva=pct,
+                   cuota_iva=round(base * pct / 100, 2),
+                   total_impreso=round(base * (1 + pct / 100), 2))
 
 
 def procesada(f):
@@ -136,6 +136,16 @@ def test_el_resumen_cuadra_bloque_a_bloque():
     assert v.tabla_resumen.item(2, 7).text() == "266,20 €"
 
 
+def test_la_celda_iva_desglosa_varios_porcentajes_sin_anadir_columnas():
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\mixto.pdf",
+                  [factura("F-1", 100, 10), factura("F-2", 200, 21)])
+
+    assert v.tabla_resumen.columnCount() == 8
+    assert v.tabla_resumen.item(0, 4).text() == (
+        "10%: 10,00 € · 21%: 42,00 €")
+
+
 def test_resumir_por_bloque_agrupa_y_redondea():
     totales = resumir_por_bloque([
         ("uno", factura("F-1", 53.02)),
@@ -195,3 +205,4 @@ def test_quitar_el_ultimo_bloque_tambien_limpia_el_resumen(monkeypatch):
     v.combo_filtro_bloque.setCurrentText("uno")
     v._quitar_bloque()
     assert v.tabla_resumen.rowCount() == 0
+

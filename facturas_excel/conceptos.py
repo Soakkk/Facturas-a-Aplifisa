@@ -192,6 +192,44 @@ def catalogo(tipo=None) -> list:
             if tipo is None or t in (tipo, "ambos")]
 
 
+def normalizar_concepto(cuenta, subclave=None) -> tuple[str, str | None]:
+    """Separa la cuenta y la subclave aunque Gemini devuelva la etiqueta entera.
+
+    La respuesta pedida es ``628`` + ``G16``, pero a veces el modelo copia una
+    linea completa del catalogo: ``628 (G16) SUMINISTROS GAS``. Esa etiqueta no
+    puede llegar a la tabla como cuenta porque Aplifisa solo reconoce el codigo.
+    Se conservan los valores desconocidos para que la validacion siga avisando
+    en vez de corregir silenciosamente una propuesta realmente invalida.
+    """
+    texto_cuenta = str(cuenta or "").strip()
+    texto_subclave = str(subclave or "").strip().upper()
+
+    cuentas_validas = {c for c, _, _ in catalogo()}
+    cuenta_limpia = texto_cuenta
+    if cuenta_limpia not in cuentas_validas:
+        encontrada = re.search(r"(?<!\d)(\d{3})(?!\d)", texto_cuenta)
+        if encontrada and encontrada.group(1) in cuentas_validas:
+            cuenta_limpia = encontrada.group(1)
+
+    # Primero manda el campo especifico. Si viene vacio, se recupera la
+    # subclave que Gemini haya incluido entre parentesis en cuenta_gasto/
+    # cuenta_ingreso. Tambien se admite el concepto especial 200 (200).
+    gxx = texto_subclave or None
+    if texto_subclave:
+        encontrada = re.search(r"(?<![A-Z0-9])([GI]\d{2}|200)(?![A-Z0-9])",
+                               texto_subclave)
+        if encontrada:
+            gxx = encontrada.group(1)
+    elif cuenta_limpia:
+        posibles = [g for c, g, _ in catalogo() if c == cuenta_limpia and g]
+        mayusculas = texto_cuenta.upper()
+        gxx = next((g for g in posibles
+                    if re.search(r"(?<![A-Z0-9])" + re.escape(g)
+                                 + r"(?![A-Z0-9])", mayusculas)), None)
+
+    return cuenta_limpia, gxx
+
+
 def descripcion_de(cuenta, gxx=None) -> str | None:
     """Como llama Aplifisa a ese concepto, o None si no existe tal pareja."""
     cuenta = str(cuenta or "").strip()
@@ -218,3 +256,4 @@ def es_valido(cuenta, gxx=None) -> bool:
     if not posibles:
         return False
     return gxx in posibles if gxx else True
+

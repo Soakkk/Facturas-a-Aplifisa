@@ -8,7 +8,7 @@ si la lectura es buena, y el resumen suma TODO lo cargado.
 from datetime import date
 
 from facturas_excel.modelo import Factura
-from facturas_excel.resumen import describir, resumir
+from facturas_excel.resumen import describir, iva_desglosado, resumir
 from facturas_excel.validacion import OK, REVISAR, fecha_de, validar
 
 
@@ -58,3 +58,22 @@ def test_el_texto_del_resumen_omite_el_irpf_si_no_lo_hay():
 def test_modo_total_factura_para_recargo_de_equivalencia():
     t = resumir([factura("04/06/2026", 53.02, 11.13)])
     assert describir(t, solo_total=True) == "total factura 64,15 €"
+
+
+def test_varios_tipos_de_iva_se_desglosan_en_una_sola_celda():
+    diez = factura("04/06/2026", 100.0, 10.0)
+    diez.pct_iva = 10.0
+    veintiuno = factura("05/06/2026", 200.0, 42.0)
+    veintiuno.pct_iva = 21.0
+
+    t = resumir([diez, veintiuno])
+
+    assert t.iva == 52.0
+    assert t.iva_por_tipo == {10.0: 10.0, 21.0: 42.0}
+    assert iva_desglosado(t) == "10%: 10,00 € · 21%: 42,00 €"
+
+
+def test_un_solo_tipo_de_iva_mantiene_el_total_sencillo():
+    t = resumir([factura("04/06/2026", 100.0, 21.0)])
+    assert iva_desglosado(t) == "21,00 €"
+

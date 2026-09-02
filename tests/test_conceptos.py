@@ -126,3 +126,33 @@ def test_la_subclave_unica_se_rellena_sola():
              "total": 121.0, "cuenta_gasto": "622", "subclave_gxx": None}
     pr = construir(datos, "12345678Z", "CLIENTE")
     assert pr.gxx == "G13"
+
+
+def test_gemini_puede_devolver_la_etiqueta_completa_del_concepto():
+    """Caso real: unas filas traian 628 y otras el renglon entero del prompt."""
+    from facturas_excel.procesar import construir
+    from facturas_excel.validacion import OK
+
+    datos = {"emisor_nif": "B12345674", "emisor_nombre": "GASOLINERA EJEMPLO",
+             "receptor_nif": "12345678Z", "receptor_nombre": "CLIENTE",
+             "num_factura": "FA-739", "fecha": "28/02/2025",
+             "lineas_iva": [{"base": 72.79, "tipo_iva": 21.0,
+                             "cuota_iva": 15.29}],
+             "total": 88.08,
+             "cuenta_gasto": "628 (G16) SUMINISTROS GAS",
+             "subclave_gxx": "G16"}
+
+    pr = construir(datos, "12345678Z", "CLIENTE")
+
+    assert pr.cuenta == "628"
+    assert pr.gxx == "G16"
+    assert pr.facturas[0].concepto == "628"
+    assert validar(pr.facturas[0]).estado == OK
+
+
+def test_recupera_la_subclave_si_viene_dentro_de_la_cuenta():
+    from facturas_excel.conceptos import normalizar_concepto
+
+    assert normalizar_concepto("628 (G16) SUMINISTROS GAS") == ("628", "G16")
+    assert normalizar_concepto("705 (I01) PRESTACION DE SERVICIOS") == ("705", "I01")
+
