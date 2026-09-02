@@ -79,6 +79,37 @@ def validar_nif(nif: str) -> bool:
     return False
 
 
+def marcar_revisar_concepto(f: Factura, marcar_revisar) -> None:
+    """Comprueba el concepto contra el catalogo REAL de Aplifisa.
+
+    El registro tiene que quedar con la cuenta que toca: si la cuenta no existe
+    alli, o la pareja cuenta+subclave no es una de las suyas, al importar se
+    queda a revisar (o entra en un concepto que no es).
+    """
+    from .conceptos import descripcion_de, es_valido, subclaves_de
+
+    cuenta = str(f.concepto or "").strip()
+    gxx = (f.subclave or "").strip().upper()
+    if not es_valido(cuenta):
+        marcar_revisar(f"La cuenta {cuenta} no está en la lista de conceptos "
+                       f"de Aplifisa: compruébela")
+        return
+    posibles = subclaves_de(cuenta)
+    if not gxx:
+        if len(posibles) == 1:
+            return          # solo hay una: la pone Aplifisa sola
+        opciones = ", ".join(f"{g} {d.lower()}" for g, d in posibles)
+        marcar_revisar(f"La cuenta {cuenta} necesita subclave. Opciones: "
+                       f"{opciones}")
+    elif not es_valido(cuenta, gxx):
+        opciones = ", ".join(g for g, _ in posibles)
+        marcar_revisar(f"{cuenta} ({gxx}) no existe en Aplifisa. "
+                       f"Subclaves de la {cuenta}: {opciones}")
+    else:
+        # Todo correcto: se deja el nombre del concepto a la vista.
+        f.descripcion_concepto = descripcion_de(cuenta, gxx)
+
+
 def validar(f: Factura) -> Resultado:
     msgs: List[str] = []
     estado = OK
@@ -109,12 +140,8 @@ def validar(f: Factura) -> Resultado:
         marcar_error("Falta el nombre (obligatorio)")
     if not f.concepto:
         marcar_error("Falta el concepto (obligatorio)")
-    elif str(f.concepto).strip().startswith("628") and not (f.subclave or "").strip():
-        # Los suministros son cuentas "genericas": sin decir de que suministro
-        # se trata, Aplifisa deja el apunte a revisar y hay que tocarlo a mano.
-        marcar_revisar(
-            "La cuenta 628 necesita subclave (G14 luz, G15 agua, G16 gas, "
-            "G17 teléfono/internet, G18 otros): rellene la columna GXX")
+    else:
+        marcar_revisar_concepto(f, marcar_revisar)
 
     # NIF: sin NIF o que no valida -> revisar (puede ser OCR o NIF extranjero),
     # no bloquea, pero avisa para que se compruebe.

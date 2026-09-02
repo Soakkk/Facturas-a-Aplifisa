@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from . import ajustes
 from .conceptos import tabla_textos
 
-COLUMNAS = ["Concepto de Aplifisa", "Qué es", "Texto que escribe el programa"]
+COLUMNAS = ["Concepto de Aplifisa", "Texto que escribe el programa"]
 
 
 class DialogoTextos(QDialog):
@@ -35,7 +35,7 @@ class DialogoTextos(QDialog):
             "En Aplifisa: <b>Importación de Excel → Parametrizar los textos de "
             "los Conceptos</b>.<br>Para cada línea de abajo: elija el concepto "
             "en el desplegable, deje «IGUAL QUE» y escriba el texto de la "
-            "tercera columna.<br>Es cosa de una vez. Después, cada apunte entra "
+            "segunda columna.<br>Es cosa de una vez. Después, cada apunte entra "
             "con su cuenta <b>y su subclave</b>, también con proveedores nuevos.")
         intro.setWordWrap(True)
         raiz.addWidget(intro)
@@ -46,16 +46,17 @@ class DialogoTextos(QDialog):
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tabla.setAlternatingRowColors(True)
-        for fila, (etiqueta, descripcion, texto) in enumerate(filas):
-            for columna, valor in enumerate((etiqueta, descripcion, texto)):
+        for fila, (etiqueta, _descripcion, texto) in enumerate(filas):
+            for columna, valor in enumerate((etiqueta, texto)):
                 item = QTableWidgetItem(valor)
-                if columna == 2:
+                if columna == 1:
                     fuente = item.font()
                     fuente.setBold(True)
                     item.setFont(fuente)
                 self.tabla.setItem(fila, columna, item)
         self.tabla.resizeColumnsToContents()
         self.tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tabla.setSortingEnabled(True)
         raiz.addWidget(self.tabla, 1)
 
         self.chk_usar = QCheckBox(

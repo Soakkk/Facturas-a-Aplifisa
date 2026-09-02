@@ -48,14 +48,16 @@ def test_las_subclaves_son_las_que_pide_aplifisa():
 
 # ------------------------------- textos parametrizados en Aplifisa -----------
 def test_cada_concepto_tiene_su_texto_y_no_se_repite():
-    from facturas_excel.conceptos import TEXTOS_APLIFISA, texto_para
-    textos = list(TEXTOS_APLIFISA.values())
+    from facturas_excel.conceptos import catalogo, tabla_textos, texto_para
+    textos = [t for _, _, t in tabla_textos()]
     assert len(textos) == len(set(textos))     # dos conceptos no pueden compartir
-    assert texto_para("628", "G16") == "GASOLEO"
-    assert texto_para("628", "G15") == "AGUA"
-    assert texto_para("600") == "COMPRAS"
-    # Sin subclave en una 628 no se inventa nada: mejor el codigo de siempre.
-    assert texto_para("628") is None
+    assert len(textos) == len(catalogo())
+    # El texto es el nombre que usa el propio Aplifisa.
+    assert texto_para("628", "G16") == "SUMINISTROS GAS"
+    assert texto_para("628", "G15") == "SUMINISTROS AGUA"
+    assert texto_para("600", "G01") == "COMPRAS MERCADERIAS"
+    # Lo que no existe en Aplifisa no se inventa: va el codigo de siempre.
+    assert texto_para("628", "G99") is None
     assert texto_para("999") is None
 
 
@@ -82,5 +84,45 @@ def test_al_exportar_se_cambia_el_codigo_por_el_texto(monkeypatch, tmp_path):
     # Configurado: va el texto, y Aplifisa le pone la subclave sola.
     ajustes.guardar("concepto_texto", True)
     salida = v._para_aplifisa([f])
-    assert salida[0].concepto == "GASOLEO"
+    assert salida[0].concepto == "SUMINISTROS GAS"
     assert f.concepto == "628"          # el original no se toca
+
+
+# ------------------------------- catalogo real de Aplifisa -------------------
+def test_el_catalogo_es_el_de_aplifisa():
+    from facturas_excel.conceptos import catalogo, descripcion_de, subclaves_de
+    assert ("628", "G16", "SUMINISTROS GAS") in catalogo()
+    assert descripcion_de("646", "G47") == "REGULARIZACION RETA (A INGRESAR)"
+    # Una cuenta con varias subclaves: hay que elegir
+    assert len(subclaves_de("623")) == 4
+    assert len(subclaves_de("681")) == 6
+
+
+def test_una_pareja_que_no_existe_en_aplifisa_se_avisa():
+    f = Factura(nombre="X", nif="B12345674", fecha="31/01/2025", num_factura="1",
+                concepto="628", base_iva=100.0, pct_iva=21.0, cuota_iva=21.0,
+                total_impreso=121.0)
+    f.subclave = "G99"
+    assert any("no existe en Aplifisa" in m for m in validar(f).mensajes)
+
+    f.concepto, f.subclave = "615", None      # cuenta que Aplifisa no ofrece
+    assert any("no está en la lista" in m for m in validar(f).mensajes)
+
+
+def test_si_la_cuenta_solo_tiene_una_subclave_no_se_pregunta():
+    from facturas_excel.validacion import OK
+    f = Factura(nombre="X", nif="B12345674", fecha="31/01/2025", num_factura="1",
+                concepto="622", base_iva=100.0, pct_iva=21.0, cuota_iva=21.0,
+                total_impreso=121.0)
+    assert validar(f).estado == OK            # la 622 solo tiene G13
+
+
+def test_la_subclave_unica_se_rellena_sola():
+    from facturas_excel.procesar import construir
+    datos = {"emisor_nif": "B12345674", "emisor_nombre": "TALLER EJEMPLO",
+             "receptor_nif": "12345678Z", "receptor_nombre": "CLIENTE",
+             "num_factura": "1", "fecha": "31/01/2025",
+             "lineas_iva": [{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}],
+             "total": 121.0, "cuenta_gasto": "622", "subclave_gxx": None}
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    assert pr.gxx == "G13"

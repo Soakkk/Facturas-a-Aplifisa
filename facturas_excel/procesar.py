@@ -17,7 +17,9 @@ from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
 from . import clientes, proveedores
-from .conceptos import DEFAULT_VENTA, asignar_concepto, subclave_628
+from .conceptos import (
+    DEFAULT_VENTA, asignar_concepto, subclave_628, subclaves_de,
+)
 from .extraccion import _num
 from .modelo import Factura
 from .validacion import validar_nif
@@ -269,6 +271,12 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         aviso = f"{aviso} Tiene algo escrito a mano: se han usado los importes " \
                 f"IMPRESOS (lo manuscrito no cuenta). Compruébala.".strip()
 
+    # Si la cuenta solo tiene una subclave posible en Aplifisa, se pone sola:
+    # no hay nada que decidir y asi el apunte entra completo.
+    if not gxx and cuenta:
+        posibles = subclaves_de(cuenta)
+        if len(posibles) == 1:
+            gxx = posibles[0][0]
     for _f in facturas:
         _f.subclave = gxx
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,

@@ -34,23 +34,37 @@ MODELOS = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-pro-latest"]
 class SinCredito(Exception):
     """La API key no tiene credito / facturacion activa (no reintentar)."""
 
-# Criterio contable que sigue Gemini para proponer la cuenta de un GASTO.
-_CRITERIO_CUENTAS = """CUENTAS DE GASTO (PGC PYMES) - elige el codigo que mejor encaje:
-- 628 Suministros: luz, agua, gas, telefono/internet, y COMBUSTIBLE/carburante
-  (gasoleo, diesel, gasolina). Si es 628, indica subclave_gxx:
-  G14 luz/electricidad, G15 agua, G16 gas Y TAMBIEN GASOLEO/GASOIL/GASOLINA
-  y derivados del petroleo, G17 telefono/internet, G18 otros suministros.
-- 622 Reparacion y conservacion: talleres, reparacion de vehiculo/maquinaria,
-  repuestos, recambios, neumaticos, kit distribucion.
-- 631 Tributos: impuestos, tasas (IVTM/impuesto de vehiculos, AEAT, ayuntamiento).
-- 623 Servicios profesionales: notario, registro de la propiedad, abogado,
-  procurador, gestoria, asesoria, auditor.
-- 625 Primas de seguros.  626 Servicios bancarios.  627 Publicidad.
-- 621 Arrendamientos y canones (alquiler, renting).
-- 624 Transportes y mensajeria.  629 Otros servicios (material de oficina).
-- 600 Compras (solo si es mercaderia para revender).
-Aplica criterio contable real: p.ej. "bomba de agua" en una factura de taller es
-REPARACION (622), no suministro de agua (628)."""
+# Criterio contable que sigue Gemini para proponer el concepto de un GASTO.
+# La lista de conceptos NO es libre: es la que ofrece Aplifisa (catalogo en
+# config/conceptos_aplifisa.csv). Se le da entera para que elija de ahi y no se
+# invente cuentas que luego no existen al importar.
+def _lista_conceptos() -> str:
+    from .conceptos import catalogo
+    lineas = [f"  {c} ({g}) {d}" for c, g, d in catalogo()
+              if c not in ("700", "200")]
+    return chr(10).join(lineas)
+
+
+_CRITERIO_CUENTAS = """CONCEPTOS DE GASTO. Elige UNO de esta lista EXACTA y
+devuelve su cuenta y su subclave. No uses ninguna cuenta que no este aqui:
+{conceptos}
+
+CRITERIO DE LA ASESORIA (importante):
+- COMBUSTIBLE (gasoleo, gasoil, gasolina, diesel, AdBlue) y gasolineras o areas
+  de servicio -> 628 (G16) SUMINISTROS GAS. El gasoleo y sus derivados van al
+  gas, NO a otros suministros.
+- Luz/electricidad -> 628 (G14).  Agua -> 628 (G15).
+- Telefono, movil, internet, fibra -> 628 (G17).
+- Talleres, reparaciones, recambios, neumaticos -> 622 (G13). Aplica criterio
+  real: una "bomba de agua" en una factura de taller es reparacion, no agua.
+- Notario, registro, abogado, gestoria, asesoria -> 623 (G19).
+- Seguros -> 625 (G20).  Comisiones y gastos de banco -> 626 (G22).
+- Alquileres y renting -> 621 (G12).  Publicidad -> 627 (G22).
+- Mensajeria y portes -> 624 (G22).  Material de oficina -> 629 (G22).
+- Impuestos y tasas municipales (IVTM, basuras) -> 631 (G26).
+- Mercaderia para revender -> 600 (G01).
+- Si no encaja en ninguno con claridad, usa 629 (G22) OTROS SERVICIOS.""".format(
+    conceptos=_lista_conceptos())
 
 _PROMPT = f"""Eres un experto en contabilidad espanola. Analiza esta factura escaneada.
 
@@ -79,8 +93,8 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "total": 0.0,
   "sustituye_a": null,
   "hay_anotaciones_manuscritas": false,
-  "cuenta_gasto": "codigo PGC segun el criterio de arriba (si fuese un gasto)",
-  "subclave_gxx": "G14/G15/G16/G17/G18 si cuenta_gasto es 628, si no null",
+  "cuenta_gasto": "la cuenta del concepto elegido de la lista (si fuese gasto)",
+  "subclave_gxx": "la subclave GXX de ESE MISMO concepto (siempre, no solo en la 628)",
   "concepto_texto": "descripcion breve del gasto/venta",
   "confianza": "alta/media/baja segun lo legible que este la factura"
 }}

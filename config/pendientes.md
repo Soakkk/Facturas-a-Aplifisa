@@ -70,6 +70,22 @@ facturas del reves. Ahora:
 - Boton **«Cambiar cliente...»** junto al nombre: si se detecto mal, lo cambias
   y **el lote se rehace al momento sin volver a pagar a Gemini**.
 
+### Lo nuevo de la 1.9.0: el catalogo entero de Aplifisa
+
+Me pasaste la lista completa de conceptos (200, 600...682) con sus subclaves.
+Ahora esta dentro del programa (`config/conceptos_aplifisa.csv`) y sirve para:
+
+- **Gemini elige de esa lista exacta**, no de una idea general del PGC: no puede
+  proponer una cuenta que Aplifisa no tenga.
+- **Se comprueba la pareja cuenta+subclave**: si no existe (p.ej. 628 con una
+  GXX que no es), sale en ambar diciendo cuales son las buenas.
+- Si una cuenta solo tiene una subclave posible (la 622 solo tiene G13), **se
+  rellena sola**.
+- Los textos para parametrizar son ya **los nombres del propio Aplifisa**
+  ("SUMINISTROS GAS"), asi que se reconocen de un vistazo en su pantalla.
+
+Si ves que alguna cuenta que usas no esta en la lista, dimelo y la añado.
+
 ### Lo nuevo de la 1.8.0: la subclave, automatica
 
 Descubriste la pantalla de Aplifisa «Importacion de Excel -> Parametrizar los

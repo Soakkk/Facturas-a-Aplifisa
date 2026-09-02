@@ -132,53 +132,84 @@ def subclave_628(texto_busqueda: str) -> str | None:
 
 
 # --------------------------------------------------------- textos para Aplifisa
-# Aplifisa tiene una pantalla ("Importación de Excel / Parametrizar los textos
+# Aplifisa tiene una pantalla ("Importacion de Excel / Parametrizar los textos
 # de los Conceptos") donde se le dice: el texto TAL es el concepto CUAL. Si en
 # la columna Concepto del Excel va ese texto, el apunte entra con su cuenta Y su
-# subclave puestas, sin tener que elegir nada a mano ni siquiera con proveedores
-# nuevos. Que es justo el problema de la 628.
+# subclave puestas, sin elegir nada a mano ni siquiera con proveedores nuevos.
+# Que es justo lo que hacia falta para la 628.
 #
-# Aqui esta lo que escribe el programa. Se configura una vez en Aplifisa (el
-# menu Configuración -> "Textos de conceptos para Aplifisa" da la lista hecha).
-# Clave: (cuenta, subclave o None). Texto: lo que va al Excel.
-TEXTOS_APLIFISA = {
-    ("600", None): "COMPRAS",
-    ("621", None): "ALQUILERES",
-    ("622", None): "REPARACIONES",
-    ("623", None): "PROFESIONALES",
-    ("624", None): "TRANSPORTES",
-    ("625", None): "SEGUROS",
-    ("626", None): "GASTOS BANCARIOS",
-    ("627", None): "PUBLICIDAD",
-    ("628", "G14"): "LUZ",
-    ("628", "G15"): "AGUA",
-    ("628", "G16"): "GASOLEO",
-    ("628", "G17"): "TELEFONO",
-    ("628", "G18"): "OTROS SUMINISTROS",
-    ("629", None): "OTROS SERVICIOS",
-    ("631", None): "TRIBUTOS",
-    ("700", None): "VENTAS",
-}
-
-
+# El texto que escribe el programa es la DESCRIPCION del propio Aplifisa
+# ("SUMINISTROS GAS"), que es unica y se reconoce de un vistazo en su pantalla.
+# El usuario puede añadir ademas sus propios sinonimos alli (van por comas).
 def texto_para(cuenta, subclave=None) -> str | None:
-    """El texto parametrizado de ese concepto, o None si no hay ninguno.
+    """El texto que se escribe en el Excel para ese concepto.
 
-    Sin texto no se inventa nada: se exporta el codigo de siempre.
+    None si la pareja no existe en el catalogo: entonces se exporta el codigo
+    de siempre y no se inventa nada.
     """
-    cuenta = (str(cuenta or "").strip() or None)
-    if not cuenta:
-        return None
-    gxx = (str(subclave or "").strip().upper() or None)
-    return (TEXTOS_APLIFISA.get((cuenta, gxx))
-            or TEXTOS_APLIFISA.get((cuenta, None)))
+    return descripcion_de(cuenta, subclave) if es_valido(cuenta, subclave) else None
 
 
 def tabla_textos() -> list:
-    """[(concepto legible, texto)] para enseñarla y copiarla."""
-    filas = []
-    for (cuenta, gxx), texto in TEXTOS_APLIFISA.items():
-        etiqueta = f"{cuenta} ({gxx})" if gxx else cuenta
-        descripcion = SUBCLAVES_628.get(gxx, "") if cuenta == "628" else ""
-        filas.append((etiqueta, descripcion, texto))
-    return filas
+    """[(concepto, que es, texto)] para enseñarla y copiarla."""
+    return [(f"{c} ({g})" if g else c, d, d) for c, g, d in catalogo()]
+
+
+# ------------------------------------------- catalogo de conceptos de Aplifisa
+# La lista EXACTA que ofrece Aplifisa (config/conceptos_aplifisa.csv, sacada de
+# su pantalla de conceptos). Sirve para tres cosas:
+#   1. decirle a Gemini entre que conceptos tiene que elegir (y no inventarse
+#      cuentas que Aplifisa no admite),
+#   2. comprobar que la pareja cuenta+subclave existe de verdad,
+#   3. dar el texto que se parametriza en Aplifisa para que el apunte entre con
+#      su subclave puesta.
+_CATALOGO: list | None = None
+
+
+def catalogo() -> list:
+    """[(cuenta, gxx, descripcion)] tal como los ofrece Aplifisa."""
+    global _CATALOGO
+    if _CATALOGO is None:
+        from .rutas import ruta_config
+        filas = []
+        try:
+            with open(ruta_config("conceptos_aplifisa.csv"), encoding="utf-8") as fh:
+                for linea in fh.read().splitlines()[1:]:
+                    if not linea.strip():
+                        continue
+                    partes = linea.split(";")
+                    if len(partes) >= 3:
+                        filas.append((partes[0].strip(), partes[1].strip().upper(),
+                                      partes[2].strip()))
+        except OSError:
+            filas = []
+        _CATALOGO = filas
+    return _CATALOGO
+
+
+def descripcion_de(cuenta, gxx=None) -> str | None:
+    """Como llama Aplifisa a ese concepto, o None si no existe tal pareja."""
+    cuenta = str(cuenta or "").strip()
+    gxx = str(gxx or "").strip().upper()
+    for c, g, desc in catalogo():
+        if c == cuenta and (g == gxx or not gxx):
+            return desc
+    return None
+
+
+def subclaves_de(cuenta) -> list:
+    """Subclaves validas de una cuenta: [(gxx, descripcion)]."""
+    cuenta = str(cuenta or "").strip()
+    return [(g, d) for c, g, d in catalogo() if c == cuenta and g]
+
+
+def es_valido(cuenta, gxx=None) -> bool:
+    """La pareja cuenta+subclave existe en Aplifisa."""
+    cuenta = str(cuenta or "").strip()
+    gxx = str(gxx or "").strip().upper()
+    if not cuenta:
+        return False
+    posibles = [g for c, g, _ in catalogo() if c == cuenta]
+    if not posibles:
+        return False
+    return gxx in posibles if gxx else True

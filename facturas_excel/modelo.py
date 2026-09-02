@@ -50,13 +50,14 @@ class Factura:
     origen_imagen: Optional[str] = None     # ruta del archivo escaneado del que sale
     lineas_factura: int = 1                 # lineas de IVA que tiene la factura entera
     subclave: Optional[str] = None          # GXX del concepto (obligatoria en la 628)
+    descripcion_concepto: Optional[str] = None  # como lo llama Aplifisa
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
     def campos_dict(self) -> dict:
         """Devuelve {nombre_campo: valor} solo de los campos exportables."""
         excluidos = {"total_impreso", "origen_imagen", "lineas_factura",
-                     "subclave"}
+                     "subclave", "descripcion_concepto"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 
