@@ -106,7 +106,13 @@ a 200 ppp tardó 8,8 s y salió un PDF A4 de 33 KB. La v1.5.0 fallaba con
 la HP **solo entrega BMP** (se le pedía JPEG; ahora se pide lo que cada aparato
 declare y se convierte a JPEG con PIL), y los márgenes a 300 ppp se salían del
 máximo del cristal (1700x3000), así que ahora todo valor se recorta a lo que
-admita la propiedad (`_ajustar`). **Falta pasarle un taco por el ALIMENTADOR.**
+admita la propiedad (`_ajustar`). **El ALIMENTADOR fallaba por otra cosa (v1.5.2)**: poner la propiedad de
+dispositivo **`Pages` (3096)** hacía que `Transfer` fallase con el mismo
+E_INVALIDARG, aunque la HP declare que admite de 0 a 50. Sin tocarla, el ADF
+escanea bien (probado: tiró de una hoja, 14,9 MB en BMP). Tampoco se fijan ya
+los márgenes en modo alimentador (el tamaño lo manda el ADF). Y si la primera
+hoja falla por falta de papel, ahora sale «El alimentador está vacío» en vez
+del error crudo del COM. **Falta ver un taco de varias hojas seguidas.**
 Queda sin hacer el punto 6 de abajo (carpeta vigilada) y la sinergia con
 Escaner-Fotos-Facturas.
 

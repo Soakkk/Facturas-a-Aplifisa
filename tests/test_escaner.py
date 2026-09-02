@@ -193,3 +193,48 @@ def test_el_bmp_del_escaner_se_convierte_a_jpeg(tmp_path):
     assert jpg.endswith(".jpg") and os.path.exists(jpg)
     assert not os.path.exists(bmp)          # el BMP no se queda ocupando sitio
     assert os.path.getsize(jpg) < grande / 10
+
+
+# ---------------- el fallo del alimentador (v1.5.1) --------------------------
+class DispositivoFalso:
+    """Escaner con las propiedades que importan, para ver que se le toca."""
+
+    def __init__(self):
+        self.Properties = [PropFalsa(escaner.P_MANEJO_PAPEL),
+                           PropFalsa(escaner.P_PAGINAS, 7)]   # 7 = centinela
+        self.Items = {1: ItemFalso(1, b"jpeg")}
+
+
+def test_no_se_toca_la_propiedad_pages():
+    # Ponerle "Pages" a la HP M148 hacia fallar el escaneo por alimentador
+    # entero con "El parametro no es correcto", aunque diga que admite 0..50.
+    dev = DispositivoFalso()
+    escaner._preparar(dev, 200, alimentador=True, duplex=False, color=True)
+
+    paginas = next(p for p in dev.Properties if p.PropertyID == escaner.P_PAGINAS)
+    assert paginas.Value == 7          # intacta
+
+
+def test_por_el_alimentador_no_se_tocan_los_margenes():
+    # El tamaño de pagina lo manda el propio ADF: fijarlo a mano solo estorba.
+    def ancho_de(dev):
+        return next(p for p in dev.Items[1].Properties
+                    if p.PropertyID == escaner.P_ANCHO)
+
+    dev = DispositivoFalso()
+    ancho_de(dev).Value = 999          # centinela: no debe cambiar
+    escaner._preparar(dev, 200, alimentador=True, duplex=False, color=True)
+    assert ancho_de(dev).Value == 999
+
+    # Por el cristal si se pide el A4 entero.
+    dev2 = DispositivoFalso()
+    ancho_de(dev2).Value = 999
+    escaner._preparar(dev2, 200, alimentador=False, duplex=False, color=True)
+    assert ancho_de(dev2).Value == int(escaner.A4_PULGADAS[0] * 200)
+
+
+def test_si_la_primera_hoja_falta_se_dice_que_esta_vacio(tmp_path):
+    # Sin esto salia el error crudo del COM, que no dice nada a nadie.
+    with pytest.raises(escaner.ErrorEscaneo) as e:
+        escaner.capturar_paginas(EscanerFalso(hojas=0), str(tmp_path))
+    assert str(e.value) == escaner.SIN_PAPEL

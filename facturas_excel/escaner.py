@@ -54,6 +54,10 @@ A4_PULGADAS = (8.27, 11.69)
 MAX_PAGINAS = 200           # tope de seguridad por si el alimentador se atasca
 
 
+SIN_PAPEL = ("El alimentador está vacío: ponga las facturas en la bandeja de "
+             "arriba y vuelva a intentarlo.")
+
+
 class SinEscaner(Exception):
     """No hay ningun escaner disponible en el equipo."""
 
@@ -210,20 +214,27 @@ def _a_jpeg(ruta: str) -> str:
 
 def _preparar(dispositivo, dpi: int, alimentador: bool, duplex: bool,
               color: bool):
+    """Deja el escaner listo. Se toca lo MINIMO imprescindible.
+
+    Comprobado con la HP LJ Pro M148: tocar la propiedad "Pages" (3096) hace
+    que el escaneo por alimentador falle entero con "El parametro no es
+    correcto", aunque el aparato diga que admite de 0 a 50. Y en el alimentador
+    el tamaño de pagina lo manda el propio ADF, asi que poner margenes a mano
+    solo puede estropearlo. Se dejan los dos como esten.
+    """
     modo = (ALIMENTADOR | (DUPLEX if duplex else 0)) if alimentador else CRISTAL
     _poner(dispositivo.Properties, P_MANEJO_PAPEL, modo)
-    if alimentador:
-        _poner(dispositivo.Properties, P_PAGINAS, 0)   # 0 = hasta vaciarlo
     item = dispositivo.Items[1]
     _poner(item.Properties, P_TIPO_DATO, COLOR if color else GRISES)
     _poner(item.Properties, P_RES_H, dpi)
     _poner(item.Properties, P_RES_V, dpi)
-    _poner(item.Properties, P_INI_H, 0)
-    _poner(item.Properties, P_INI_V, 0)
-    # Los margenes se piden en puntos a esa resolucion, y _ajustar los recorta
-    # a lo que de el aparato (a 300 ppp un A4 se sale del maximo de la HP).
-    _poner(item.Properties, P_ANCHO, int(A4_PULGADAS[0] * dpi))
-    _poner(item.Properties, P_ALTO, int(A4_PULGADAS[1] * dpi))
+    if not alimentador:
+        # Por el cristal si conviene decir que se escanee un A4 entero; los
+        # valores se recortan a lo que admita el aparato.
+        _poner(item.Properties, P_INI_H, 0)
+        _poner(item.Properties, P_INI_V, 0)
+        _poner(item.Properties, P_ANCHO, int(A4_PULGADAS[0] * dpi))
+        _poner(item.Properties, P_ALTO, int(A4_PULGADAS[1] * dpi))
     return item
 
 
@@ -257,9 +268,7 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
     Se separa de `escanear` para poder probarla con un escaner de mentira.
     """
     if alimentador and _hay_papel(dispositivo) is False:
-        raise ErrorEscaneo(
-            "El alimentador está vacío: ponga las facturas en la bandeja de "
-            "arriba y vuelva a intentarlo.")
+        raise ErrorEscaneo(SIN_PAPEL)
     item = _preparar(dispositivo, dpi, alimentador, duplex, color)
     formato = _formato_de(item)
     extension = EXTENSION.get(formato, "bmp")
@@ -268,12 +277,17 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
         try:
             imagen = item.Transfer(formato)
         except Exception as e:
-            if paginas and _es_sin_papel(e):
+            sin_papel = _es_sin_papel(e)
+            if paginas and sin_papel:
                 break            # se acabo el taco: normal
             if paginas:
                 raise ErrorEscaneo(
                     f"Se escanearon {len(paginas)} hoja(s) y el escáner falló "
                     f"en la siguiente: {e}") from e
+            # Que la primera falle por falta de papel es lo mas normal del
+            # mundo: se olvido cargar el alimentador. Hay que decirlo asi.
+            if sin_papel:
+                raise ErrorEscaneo(SIN_PAPEL) from e
             raise ErrorEscaneo(f"No se pudo escanear: {e}") from e
         ruta = os.path.join(carpeta_temporal,
                             f"pag_{len(paginas) + 1:03d}.{extension}")
