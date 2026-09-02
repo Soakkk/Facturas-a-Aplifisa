@@ -129,3 +129,56 @@ def subclave_628(texto_busqueda: str) -> str | None:
         if any(_contiene(texto, c) for c in claves):
             return gxx
     return None
+
+
+# --------------------------------------------------------- textos para Aplifisa
+# Aplifisa tiene una pantalla ("Importación de Excel / Parametrizar los textos
+# de los Conceptos") donde se le dice: el texto TAL es el concepto CUAL. Si en
+# la columna Concepto del Excel va ese texto, el apunte entra con su cuenta Y su
+# subclave puestas, sin tener que elegir nada a mano ni siquiera con proveedores
+# nuevos. Que es justo el problema de la 628.
+#
+# Aqui esta lo que escribe el programa. Se configura una vez en Aplifisa (el
+# menu Configuración -> "Textos de conceptos para Aplifisa" da la lista hecha).
+# Clave: (cuenta, subclave o None). Texto: lo que va al Excel.
+TEXTOS_APLIFISA = {
+    ("600", None): "COMPRAS",
+    ("621", None): "ALQUILERES",
+    ("622", None): "REPARACIONES",
+    ("623", None): "PROFESIONALES",
+    ("624", None): "TRANSPORTES",
+    ("625", None): "SEGUROS",
+    ("626", None): "GASTOS BANCARIOS",
+    ("627", None): "PUBLICIDAD",
+    ("628", "G14"): "LUZ",
+    ("628", "G15"): "AGUA",
+    ("628", "G16"): "GASOLEO",
+    ("628", "G17"): "TELEFONO",
+    ("628", "G18"): "OTROS SUMINISTROS",
+    ("629", None): "OTROS SERVICIOS",
+    ("631", None): "TRIBUTOS",
+    ("700", None): "VENTAS",
+}
+
+
+def texto_para(cuenta, subclave=None) -> str | None:
+    """El texto parametrizado de ese concepto, o None si no hay ninguno.
+
+    Sin texto no se inventa nada: se exporta el codigo de siempre.
+    """
+    cuenta = (str(cuenta or "").strip() or None)
+    if not cuenta:
+        return None
+    gxx = (str(subclave or "").strip().upper() or None)
+    return (TEXTOS_APLIFISA.get((cuenta, gxx))
+            or TEXTOS_APLIFISA.get((cuenta, None)))
+
+
+def tabla_textos() -> list:
+    """[(concepto legible, texto)] para enseñarla y copiarla."""
+    filas = []
+    for (cuenta, gxx), texto in TEXTOS_APLIFISA.items():
+        etiqueta = f"{cuenta} ({gxx})" if gxx else cuenta
+        descripcion = SUBCLAVES_628.get(gxx, "") if cuenta == "628" else ""
+        filas.append((etiqueta, descripcion, texto))
+    return filas

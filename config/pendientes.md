@@ -70,6 +70,24 @@ facturas del reves. Ahora:
 - Boton **«Cambiar cliente...»** junto al nombre: si se detecto mal, lo cambias
   y **el lote se rehace al momento sin volver a pagar a Gemini**.
 
+### Lo nuevo de la 1.8.0: la subclave, automatica
+
+Descubriste la pantalla de Aplifisa «Importacion de Excel -> Parametrizar los
+textos de los Conceptos». Con eso se acaba el problema de la 628:
+
+1. Abre **Configuracion -> Textos de conceptos para Aplifisa**. Ahi tienes la
+   lista: concepto y el texto que escribe el programa (GASOLEO, AGUA, LUZ,
+   TELEFONO...). Boton para copiarla.
+2. En Aplifisa, en esa pantalla, para cada linea: elige el concepto, deja
+   «IGUAL QUE» y escribe el texto. Es cosa de una vez.
+3. Vuelve al programa y marca la casilla **«Ya lo tengo configurado»**.
+
+A partir de ahi el Excel lleva el texto y **cada apunte entra con su cuenta Y su
+subclave**, tambien con proveedores nuevos. Si no marcas la casilla, todo sigue
+como hasta ahora (el codigo de la cuenta).
+
+Ademas: el **gasoleo ya va a G16** (gas), como lo tienes tu configurado.
+
 ### Dudas concretas pendientes
 
 1. **La factura de BIMBO pone «Copia duplicada».** ¿Se registra igual que un

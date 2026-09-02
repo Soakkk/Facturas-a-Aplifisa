@@ -11,6 +11,8 @@ import argparse
 import os
 import sys
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -31,11 +33,12 @@ from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
+from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
     en_recargo_equivalencia, guardar_recargo_equivalencia, marcar_cliente,
     nombres_conocidos, recordar_nombre,
 )
-from facturas_excel.conceptos import SUBCLAVES_628
+from facturas_excel.conceptos import SUBCLAVES_628, texto_para
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
 from facturas_excel.exportar import exportar_excel
@@ -550,6 +553,7 @@ class VentanaPrincipal(QMainWindow):
         config.addAction("Carpeta donde se guardan los escaneos…",
                          self._configurar_carpeta_escaneos)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
+        config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
 
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
@@ -695,6 +699,17 @@ class VentanaPrincipal(QMainWindow):
             self.resumen_card.setVisible(bool(visible))
         if hasattr(self, "accion_resumen") and self.accion_resumen.isChecked() != visible:
             self.accion_resumen.setChecked(bool(visible))
+
+    def _configurar_textos(self):
+        """La lista de textos que hay que parametrizar una vez en Aplifisa."""
+        dialogo = DialogoTextos(self)
+        if dialogo.exec() == QDialog.Accepted:
+            dialogo.guardar()
+            self.lbl_estado.setText(
+                "El Excel llevará el TEXTO del concepto (Aplifisa le pondrá la "
+                "subclave sola)."
+                if ajustes.leer("concepto_texto", False) else
+                "El Excel llevará el código de la cuenta.")
 
     def _configurar_carpeta_escaneos(self):
         actual = ajustes.leer("carpeta_escaneos", escaner.carpeta_por_defecto())
@@ -1454,6 +1469,21 @@ class VentanaPrincipal(QMainWindow):
             self._mostrar_miniatura()
 
     # ---------- exportar ----------
+    def _para_aplifisa(self, facturas):
+        """Traduce el concepto al texto que Aplifisa tiene parametrizado.
+
+        Con el texto, el apunte entra con su cuenta Y su subclave puestas, que
+        es lo unico que evita tener que elegir el GXX a mano en cada proveedor
+        nuevo. Si no esta configurado, se exporta el codigo de siempre.
+        """
+        if not ajustes.leer("concepto_texto", False):
+            return facturas
+        traducidas = []
+        for f in facturas:
+            texto = texto_para(f.concepto, f.subclave)
+            traducidas.append(replace(f, concepto=texto) if texto else f)
+        return traducidas
+
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
         por_tipo = {"gasto": [], "venta": []}
@@ -1495,7 +1525,8 @@ class VentanaPrincipal(QMainWindow):
             if not por_tipo[tipo]:
                 continue
             ruta = os.path.join(carpeta, nombre)
-            exportar_excel(por_tipo[tipo], leer_config(ruta_config(xml)), ruta)
+            exportar_excel(self._para_aplifisa(por_tipo[tipo]),
+                           leer_config(ruta_config(xml)), ruta)
             generados.append(nombre)
         QMessageBox.information(
             self, "Exportación terminada",
