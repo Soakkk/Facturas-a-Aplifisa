@@ -48,7 +48,8 @@ from facturas_excel.procesar import (
 from facturas_excel.resumen import eur, resumir, resumir_por_bloque
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
-    ERROR, OK, REVISAR, encontrar_duplicados, validar, validar_nif,
+    ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
+    validar, validar_nif,
 )
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -743,6 +744,7 @@ class VentanaPrincipal(QMainWindow):
             destino = archivo.ruta_provisional(opciones["carpeta"],
                                                opciones["tipo"])
         self._tipo_escaneo = opciones["tipo"]
+        self._hojas_puestas = opciones.get("hojas", 0)
         self._escaneo_sin_identificar = not opciones["cliente"]
         self.btn_escanear.setEnabled(False)
         self.btn_cargar.setEnabled(False)
@@ -767,8 +769,30 @@ class VentanaPrincipal(QMainWindow):
         self.progreso.setRange(0, 100)
         self.btn_escanear.setEnabled(True)
         self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
+        self._avisar_hojas_perdidas(ruta)
         # Directo al lote: es el flujo que se pidio, sin pasar por abrir archivo.
         self.procesar_rutas([ruta])
+
+    def _avisar_hojas_perdidas(self, ruta):
+        """El alimentador arrastra a veces dos hojas pegadas: salen menos
+        páginas de las que se pusieron y esa factura no se registra."""
+        puestas = getattr(self, "_hojas_puestas", 0)
+        if not puestas:
+            return
+        try:
+            import fitz
+            with fitz.open(ruta) as doc:
+                leidas = doc.page_count
+        except Exception:
+            return
+        if leidas >= puestas:
+            return
+        QMessageBox.warning(
+            self, "Faltan hojas",
+            f"Puso {puestas} hojas y solo se han escaneado {leidas}.\n\n"
+            f"El alimentador suele arrastrar dos hojas pegadas. Compruebe qué "
+            f"factura falta (el programa avisa también si ve un salto en la "
+            f"numeración) y escanee esas hojas aparte: se añadirán al lote.")
 
     def _on_escaneo_fallo(self, mensaje):
         self.progreso.setRange(0, 100)
@@ -1240,6 +1264,10 @@ class VentanaPrincipal(QMainWindow):
             f = self.filas[r]["factura"]
             avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
                           f"{f.nombre or '?'} — repetida de la línea {original + 1}.")
+        # Una hoja que se quedo pegada en el alimentador no da ningun error:
+        # simplemente esa factura no esta. El salto de numeracion la delata.
+        avisos += huecos_de_numeracion(
+            [d["factura"] for d in self.filas])
         sustituidas = [r for r in range(len(self.filas))
                        if "SUSTITUIDA" in (self.filas[r]["aviso"] or "")]
         for r in sustituidas:
@@ -1251,13 +1279,13 @@ class VentanaPrincipal(QMainWindow):
             return
         n = len(avisos)
         self.lbl_alerta_titulo.setText(
-            f"⚠  ATENCIÓN: {n} factura{'s' if n > 1 else ''} "
-            f"{'repetidas' if n > 1 else 'repetida'} en el lote")
+            f"⚠  ATENCIÓN: {n} cosa{'s' if n > 1 else ''} que revisar "
+            f"antes de exportar")
         self.lbl_alerta_texto.setText(
             "\n".join(avisos[:6])
             + (f"\n… y {n - 6} más." if n > 6 else "")
-            + "\n\nSi se importan, el gasto se registra dos veces. Bórralas de "
-              "la tabla antes de exportar.")
+            + "\n\nUna factura repetida se registra dos veces; una que falta "
+              "no se registra nunca.")
         self.alerta.setVisible(True)
 
     def _resumen(self):

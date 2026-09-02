@@ -146,3 +146,23 @@ def test_resumir_por_bloque_agrupa_y_redondea():
     assert totales["uno"].lineas == 2
     assert totales["uno"].base == 253.02
     assert totales["dos"].base == 100.0
+
+
+def test_una_hoja_pegada_en_el_alimentador_se_caza_por_la_numeracion():
+    # Caso real: 13 hojas en el alimentador, 11 paginas escaneadas. La 09/25
+    # no dio ningun error, simplemente no estaba. El salto la delata.
+    v = VentanaPrincipal(comprobar_updates=False)
+    facturas = [factura(f"{n:02d}/25", 100.0 + n)
+                for n in (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12)]
+    cargar_bloque(v, r"C:\tmp\taco.pdf", facturas)
+
+    assert not v.alerta.isHidden()
+    assert "09/25" in v.lbl_alerta_texto.text()
+    assert "FALTA" in v.lbl_alerta_texto.text()
+
+
+def test_sin_saltos_no_molesta_con_avisos():
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\taco.pdf",
+                  [factura(f"{n:02d}/25", 100.0 + n) for n in (1, 2, 3, 4)])
+    assert v.alerta.isHidden()

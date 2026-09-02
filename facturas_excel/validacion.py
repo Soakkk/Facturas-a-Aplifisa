@@ -6,6 +6,7 @@ cuentas de la factura. Un digito mal leido casi siempre rompe alguna cuenta.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Dict, List, Optional
@@ -185,3 +186,72 @@ def encontrar_duplicados(facturas: List[Factura]) -> Dict[int, int]:
         else:
             vistos[clave] = i
     return dups
+
+
+# --------------------------------------------------- huecos en la numeracion
+# El alimentador arrastra a veces dos hojas pegadas y de esa factura NO se
+# entera nadie: no da error, simplemente no esta. Si un mismo emisor lleva una
+# serie seguida, un salto en la numeracion delata la hoja que falta.
+#
+# El numero de serie puede ir en cualquier sitio ("01/25", "F-2025-014",
+# "A25/7"), asi que la factura se parte en trozos de texto y numeros, se
+# agrupan las que comparten la misma forma, y se mira el unico numero que
+# cambia entre ellas: ese es el contador.
+MINIMO_SERIE = 3        # con menos de 3 no hay serie que valga
+MAXIMO_HUECO = 12       # un salto enorme suele ser otra serie, no una perdida
+
+
+def _trozos(num_factura: str):
+    """'01/25' -> (('', '/', ''), ('01', '25')): la forma y los numeros."""
+    partes = re.split(r"(\d+)", str(num_factura or "").strip().upper())
+    if len(partes) < 3:            # sin ningun numero: no hay serie posible
+        return None
+    texto = tuple(partes[0::2])
+    numeros = tuple(partes[1::2])
+    return texto, numeros
+
+
+def huecos_de_numeracion(facturas: List[Factura]) -> List[str]:
+    """Numeros que faltan en una serie seguida del mismo emisor.
+
+    Devuelve avisos ya escritos. Es un AVISO, no un error: puede que esa
+    factura simplemente no la haya traido el cliente.
+    """
+    series: Dict[tuple, List[tuple]] = {}
+    for f in facturas:
+        trozos = _trozos(f.num_factura)
+        if not trozos:
+            continue
+        texto, numeros = trozos
+        clave = ((f.nif or f.nombre or "").strip().upper(), texto, len(numeros))
+        series.setdefault(clave, []).append((numeros, f.nombre or ""))
+
+    avisos = []
+    for (_, texto, cuantos), entradas in series.items():
+        if len(entradas) < MINIMO_SERIE:
+            continue
+        # El contador es el unico hueco numerico que cambia (el resto suele ser
+        # el año o el codigo de serie, y tiene que quedarse igual).
+        cambian = [i for i in range(cuantos)
+                   if len({numeros[i] for numeros, _ in entradas}) > 1]
+        if len(cambian) != 1:
+            continue
+        col = cambian[0]
+        vistos = {int(numeros[col]) for numeros, _ in entradas}
+        faltan = [n for n in range(min(vistos), max(vistos)) if n not in vistos]
+        if not faltan or len(faltan) > MAXIMO_HUECO:
+            continue
+        modelo, quien = entradas[0]
+        ancho = len(modelo[col])
+
+        def escribir(n):
+            partes = list(modelo)
+            partes[col] = f"{n:0{ancho}d}"
+            return "".join(t + p for t, p in zip(texto, partes)) + texto[-1]
+
+        cuales = ", ".join(escribir(n) for n in faltan[:8])
+        avisos.append(
+            f"FALTA la factura {cuales} de {quien or 'este emisor'}: la "
+            f"numeración salta. ¿Se han quedado hojas pegadas en el "
+            f"alimentador o sin traer?")
+    return avisos

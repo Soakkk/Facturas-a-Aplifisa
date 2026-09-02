@@ -20,7 +20,7 @@ from typing import List, Tuple
 
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
-    QVBoxLayout,
+    QSpinBox, QVBoxLayout,
 )
 
 from . import ajustes
@@ -93,6 +93,16 @@ class DialogoEscaneo(QDialog):
             "No cambia lo que cuesta leer las facturas con Gemini.")
         formulario.addRow("Calidad:", self.combo_calidad)
 
+        self.spin_hojas = QSpinBox()
+        self.spin_hojas.setRange(0, 500)
+        self.spin_hojas.setSpecialValueText("no las he contado")
+        self.spin_hojas.setValue(0)
+        self.spin_hojas.setToolTip(
+            "Si dice cuántas hojas pone, el programa avisa si salen menos:\n"
+            "el alimentador arrastra a veces dos hojas pegadas y esa factura\n"
+            "no se registraría (no da ningún error, simplemente no está).")
+        formulario.addRow("Hojas que pone:", self.spin_hojas)
+
         self.chk_alimentador = QCheckBox("Usar el alimentador (taco de hojas)")
         self.chk_alimentador.setChecked(ajustes.leer("escaneo_alimentador", True))
         formulario.addRow("", self.chk_alimentador)
@@ -132,6 +142,7 @@ class DialogoEscaneo(QDialog):
             "alimentador": self.chk_alimentador.isChecked(),
             "duplex": self.chk_duplex.isChecked(),
             "modo_color": self.combo_color.currentData(),
+            "hojas": self.spin_hojas.value(),
             "dpi": self.combo_calidad.currentData(),
             "carpeta": ajustes.leer("carpeta_escaneos", carpeta_por_defecto()),
         }

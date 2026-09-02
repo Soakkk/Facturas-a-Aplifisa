@@ -44,6 +44,19 @@ lo habría encontrado de otra forma.
   cuesta Gemini, y el propio dialogo te dice cuanto sale cada factura.
 - **El panel de totales se puede ocultar** (boton «Ocultar», o menu Ver).
 
+### Lo nuevo de la 1.6.1: hojas que se pierden
+
+Con 13 hojas salieron 11 paginas: el alimentador arrastro dos hojas pegadas y
+faltaba la factura 09/25. **Eso no daba ningun aviso**, y una venta sin
+registrar es un problema serio. Ahora:
+
+- **El programa mira la numeracion**: si un emisor lleva 01/25, 02/25... y falta
+  la 09/25, sale un aviso rojo arriba diciendo cual falta.
+- **Al escanear puede decir cuantas hojas pone** (casilla «Hojas que pone»). Si
+  salen menos paginas, avisa en el momento.
+- Truco: **abanica el taco** antes de meterlo y no lo cargues muy alto; asi el
+  alimentador arrastra menos hojas pegadas.
+
 ### Dudas concretas pendientes
 
 1. **La factura de BIMBO pone «Copia duplicada».** ¿Se registra igual que un

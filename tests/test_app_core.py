@@ -96,7 +96,8 @@ def test_insertar_filas_es_atomico_y_marca_duplicados():
     assert "FACTURA DUPLICADA" in celda.toolTip()
     assert celda.text() == ICONO_ESTADO[ERROR]
     assert not v.alerta.isHidden()
-    assert "factura repetida" in v.lbl_alerta_titulo.text()
+    assert "revisar" in v.lbl_alerta_titulo.text()
+    assert "repetida" in v.lbl_alerta_texto.text()
 
 
 def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
