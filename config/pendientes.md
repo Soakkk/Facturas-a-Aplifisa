@@ -57,6 +57,19 @@ registrar es un problema serio. Ahora:
 - Truco: **abanica el taco** antes de meterlo y no lo cargues muy alto; asi el
   alimentador arrastra menos hojas pegadas.
 
+### Lo nuevo de la 1.7.0: quien es TU cliente
+
+Con un taco de facturas de la misma gasolinera, las dos partes salen las mismas
+veces y el programa elegia al azar: salio la gasolinera como cliente y todas las
+facturas del reves. Ahora:
+
+- Si hay empate, **te pregunta** de quien son las facturas, con las dos partes
+  delante (cuantas veces sale cada una y si emite o recibe).
+- **Lo que contestes se recuerda**: ese NIF queda marcado como cliente tuyo y la
+  otra parte como proveedor. La proxima vez ya no pregunta.
+- Boton **«Cambiar cliente...»** junto al nombre: si se detecto mal, lo cambias
+  y **el lote se rehace al momento sin volver a pagar a Gemini**.
+
 ### Dudas concretas pendientes
 
 1. **La factura de BIMBO pone «Copia duplicada».** ¿Se registra igual que un

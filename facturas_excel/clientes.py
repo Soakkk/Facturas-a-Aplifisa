@@ -76,3 +76,27 @@ def recordar_nombre(nif, nombre: str) -> None:
             json.dump(todo, fh, indent=2, ensure_ascii=False)
     except OSError:
         pass
+
+
+def marcar_cliente(nif, nombre: str = "") -> None:
+    """Deja constancia de que ESTE es un cliente de la asesoria, dicho por una
+    persona. Vale mucho mas que cualquier deduccion automatica: la proxima vez
+    que aparezca en un lote, gana el a cualquier otro NIF."""
+    nif = _normaliza(nif)
+    if not nif:
+        return
+    todo = _leer_todo()
+    ficha = todo.setdefault(nif, {})
+    ficha["confirmado"] = True
+    if nombre:
+        ficha["nombre"] = nombre
+    try:
+        with open(_ruta(), "w", encoding="utf-8") as fh:
+            json.dump(todo, fh, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def es_cliente_confirmado(nif) -> bool:
+    nif = _normaliza(nif)
+    return bool(nif and _leer_todo().get(nif, {}).get("confirmado"))

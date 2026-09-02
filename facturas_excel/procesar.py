@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
-from . import proveedores
+from . import clientes, proveedores
 from .conceptos import DEFAULT_VENTA, asignar_concepto, subclave_628
 from .extraccion import _num
 from .modelo import Factura
@@ -52,28 +52,100 @@ def _mismo_nombre(a, b) -> bool:
     return comunes >= 2 and comunes / min(len(ta), len(tb)) >= 0.6
 
 
-def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
-    """Devuelve (nombre, nif) del cliente: el NIF mas repetido en el lote."""
-    cuenta = Counter()
+@dataclass
+class Candidato:
+    """Una de las dos partes que salen en las facturas del lote."""
+    nif: str
+    nombre: str
+    veces: int = 0
+    como_emisor: int = 0
+    como_receptor: int = 0
+    cliente_confirmado: bool = False   # una persona dijo que es cliente
+    proveedor_conocido: bool = False   # ya se le ha comprado otras veces
+
+    @property
+    def puntos(self) -> int:
+        """Lo que dice a favor (o en contra) de que sea EL cliente del lote."""
+        return (1000 * self.cliente_confirmado
+                - 500 * self.proveedor_conocido
+                + self.veces)
+
+    @property
+    def papel(self) -> str:
+        if self.como_emisor and not self.como_receptor:
+            return "siempre emite"
+        if self.como_receptor and not self.como_emisor:
+            return "siempre recibe"
+        return f"emite {self.como_emisor}, recibe {self.como_receptor}"
+
+
+@dataclass
+class Analisis:
+    candidatos: List["Candidato"]
+    dudoso: bool
+
+    @property
+    def mejor(self) -> "Candidato | None":
+        return self.candidatos[0] if self.candidatos else None
+
+
+def analizar_cliente(lista_datos: List[dict]) -> Analisis:
+    """Quien es el cliente de la asesoria en este lote, y con que seguridad.
+
+    El "NIF que mas se repite" NO basta: un taco de facturas de la misma
+    gasolinera tiene las dos partes repetidas EXACTAMENTE las mismas veces, y
+    entonces se elegia una al azar (y salia el proveedor como cliente, con todo
+    lo demas del reves). Por eso se mira ademas:
+      - si a alguno ya lo confirmo una persona como cliente (manda),
+      - si a alguno se le conoce como proveedor (entonces no es el cliente),
+      - y si aun asi hay empate, se marca DUDOSO para preguntarlo.
+    """
+    cuenta: Dict[str, Candidato] = {}
     nombres: Dict[str, list] = defaultdict(list)
     for d in lista_datos:
-        for campo_nif, campo_nom in (("emisor_nif", "emisor_nombre"),
-                                     ("receptor_nif", "receptor_nombre")):
+        for campo_nif, campo_nom, papel in (
+                ("emisor_nif", "emisor_nombre", "e"),
+                ("receptor_nif", "receptor_nombre", "r")):
             nif = normaliza_nif(d.get(campo_nif))
-            if nif:
-                cuenta[nif] += 1
-                if d.get(campo_nom):
-                    nombres[nif].append(d[campo_nom])
-    if not cuenta:
-        return ("", "")
-    nif_cliente, _ = cuenta.most_common(1)[0]
-    # nombre mas frecuente (y si empatan, el mas largo/completo)
-    lista_nombres = nombres.get(nif_cliente, [])
-    if lista_nombres:
-        nombre = Counter(lista_nombres).most_common(1)[0][0]
-    else:
-        nombre = ""
-    return (nombre, nif_cliente)
+            if not nif:
+                continue
+            c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
+            c.veces += 1
+            if papel == "e":
+                c.como_emisor += 1
+            else:
+                c.como_receptor += 1
+            if d.get(campo_nom):
+                nombres[nif].append(d[campo_nom])
+
+    for nif, c in cuenta.items():
+        lista = nombres.get(nif, [])
+        c.nombre = Counter(lista).most_common(1)[0][0] if lista else ""
+        c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
+        c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
+
+    # Con empate se propone al que RECIBE las facturas: un taco de facturas
+    # iguales suele ser de compras (gasolinera, proveedor de la tienda...). Es
+    # solo la propuesta del dialogo; decide la persona, y se recuerda.
+    orden = sorted(cuenta.values(),
+                   key=lambda c: (-c.puntos, -c.como_receptor, c.nif))
+    dudoso = len(orden) > 1 and orden[0].puntos == orden[1].puntos
+    return Analisis(candidatos=orden, dudoso=dudoso)
+
+
+def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
+    """Si ya se le ha comprado alguna vez, no es el cliente de la asesoria."""
+    ficha = proveedores.leer(clave_proveedor(nombre)) if nombre else None
+    if ficha and normaliza_nif(ficha.get("nif")) == nif:
+        return True
+    return any(normaliza_nif(f.get("nif")) == nif
+               for f in proveedores.leer_todo().values() if isinstance(f, dict))
+
+
+def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
+    """(nombre, nif) del cliente del lote. Compatible con lo de siempre."""
+    mejor = analizar_cliente(lista_datos).mejor
+    return (mejor.nombre, mejor.nif) if mejor else ("", "")
 
 
 @dataclass
@@ -383,3 +455,21 @@ def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
             completados += 1
 
     return completados
+
+
+def preparar_lote(registros: List[tuple], cliente_nombre: str,
+                  cliente_nif: str) -> List[tuple]:
+    """De lo leido por Gemini a las facturas listas para la tabla.
+
+    `registros` son (imagen, origen, pagina, datos_crudos). Se guarda tal cual
+    en cada bloque: asi, si el cliente estaba mal detectado, se puede rehacer
+    todo con el cliente bueno SIN volver a pagar otra lectura a Gemini.
+    """
+    procesadas = [(img, construir(datos, cliente_nif, cliente_nombre, origen, pag))
+                  for img, origen, pag, datos in registros]
+    solo = [pr for _, pr in procesadas]
+    propagar_nifs(solo)              # 1º la prueba del propio lote
+    completar_desde_memoria(solo)    # 2º lo sabido de otras veces
+    aprender_nifs(solo)              # 3º memorizar lo leido bien
+    marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
+    return procesadas

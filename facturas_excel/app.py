@@ -27,12 +27,13 @@ from facturas_excel import (
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
+from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.clientes import (
-    en_recargo_equivalencia, guardar_recargo_equivalencia, nombres_conocidos,
-    recordar_nombre,
+    en_recargo_equivalencia, guardar_recargo_equivalencia, marcar_cliente,
+    nombres_conocidos, recordar_nombre,
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
@@ -41,9 +42,8 @@ from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import (
-    a_total_factura, aprender_nifs, clave_proveedor, completar_desde_memoria,
-    construir, detectar_cliente, marcar_sustituidas, normaliza_nif,
-    propagar_nifs, recordar_nif,
+    a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
+    normaliza_nif, preparar_lote, recordar_nif,
 )
 from facturas_excel.resumen import eur, resumir, resumir_por_bloque
 from facturas_excel.rutas import ruta_config
@@ -139,7 +139,7 @@ def fmt(v):
 
 class Worker(QThread):
     progreso = Signal(int, int)
-    terminado = Signal(object, str, str)   # lista[(png, FacturaProcesada)], nombre, nif
+    terminado = Signal(object, str, str, object)  # procesadas, nombre, nif, crudos
     gasto = Signal(str, float)             # modelo real, coste del lote en euros
     fallo = Signal(str)
 
@@ -193,17 +193,8 @@ class Worker(QThread):
                 self.gasto.emit(modelo, round(coste_lote, 6))
 
             nombre, nif = detectar_cliente([d for *_, d in registros])
-            procesadas = [(img, construir(datos, nif, nombre, origen, pag))
-                          for img, origen, pag, datos in registros]
-            # Rellenar los NIF ilegibles con los de otras facturas del mismo
-            # proveedor (necesita el lote entero, por eso va aqui al final).
-            solo_pr = [pr for _, pr in procesadas]
-            propagar_nifs(solo_pr)              # 1º la prueba del propio lote
-            completar_desde_memoria(solo_pr)    # 2º lo sabido de otras veces
-            aprender_nifs(solo_pr)              # 3º memorizar lo leido bien
-            # Post-facturaciones que rehacen un albaran anterior del lote.
-            marcar_sustituidas(solo_pr)
-            self.terminado.emit(procesadas, nombre, nif)
+            procesadas = preparar_lote(registros, nombre, nif)
+            self.terminado.emit(procesadas, nombre, nif, registros)
         except Exception as e:  # noqa
             self.fallo.emit(str(e))
 
@@ -331,6 +322,13 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_cliente.setObjectName("cliente")
         bloque_cliente.addWidget(etiqueta)
         bloque_cliente.addWidget(self.lbl_cliente)
+        self.btn_cliente = QPushButton("Cambiar cliente…")
+        self.btn_cliente.setToolTip(
+            "Quién es SU cliente en estas facturas. Si se detectó mal, se "
+            "cambia aquí y el lote se rehace sin volver a pasar por Gemini.")
+        self.btn_cliente.setEnabled(False)
+        self.btn_cliente.clicked.connect(self._cambiar_cliente)
+        bloque_cliente.addWidget(self.btn_cliente)
         self.chk_recargo = QCheckBox("En recargo de equivalencia (gastos por el total)")
         self.chk_recargo.setToolTip(
             "El cliente no deduce IVA: cada gasto se registra por el total de la\n"
@@ -856,7 +854,7 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText("No se pudo procesar el lote.")
         QMessageBox.critical(self, "Error al procesar", msg)
 
-    def _on_terminado(self, procesadas, nombre, nif):
+    def _on_terminado(self, procesadas, nombre, nif, crudos=None):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
         # Si el escaneo salió sin saber de quién era, ahora ya se sabe: el PDF
@@ -867,6 +865,9 @@ class VentanaPrincipal(QMainWindow):
         self._bloques.append({
             "nombre": self._nombre_bloque(),
             "procesadas": procesadas,
+            # Lo leido por Gemini, tal cual: permite rehacer el lote con otro
+            # cliente sin gastar otra lectura.
+            "crudos": list(crudos or []),
             "cliente": nombre,
             "nif": nif,
         })
@@ -886,8 +887,13 @@ class VentanaPrincipal(QMainWindow):
         hay_datos = self.tabla.rowCount() > 0
         self.btn_gastos.setEnabled(hay_datos)
         self.btn_ventas.setEnabled(hay_datos)
+        self.btn_cliente.setEnabled(bool(self._bloques))
         if hay_datos:
             self.tabla.selectRow(0)
+        # Un taco del mismo proveedor al mismo cliente deja las dos partes
+        # empatadas: hay que preguntarlo o sale todo del reves.
+        if self._analisis_del_lote().dudoso:
+            self._cambiar_cliente(automatico=True)
 
     def _recolocar_escaneo(self, cliente, procesadas):
         """Muda el PDF recién escaneado a la carpeta de su cliente.
@@ -914,6 +920,56 @@ class VentanaPrincipal(QMainWindow):
             for f in pr.facturas:
                 f.origen_imagen = nueva
         self.lbl_estado.setText(f"Escaneo guardado como {os.path.basename(nueva)}")
+
+    def _analisis_del_lote(self):
+        """Las partes que salen en TODO el lote (todos los bloques)."""
+        datos = [d for bloque in self._bloques for *_, d in bloque.get("crudos", [])]
+        return analizar_cliente(datos)
+
+    def _cambiar_cliente(self, automatico: bool = False):
+        """Quien es el cliente de la asesoria en este lote.
+
+        Al cambiarlo se rehace todo desde lo que ya leyo Gemini: no se vuelve a
+        pagar ninguna lectura.
+        """
+        analisis = self._analisis_del_lote()
+        if len(analisis.candidatos) < 2:
+            if not automatico:
+                QMessageBox.information(
+                    self, "Cliente del lote",
+                    "En estas facturas solo se ha identificado una parte con "
+                    "NIF, así que no hay entre quién elegir.")
+            return
+        dialogo = DialogoCliente(analisis.candidatos, self,
+                                 elegido=getattr(self, "_cliente_nif", ""))
+        if dialogo.exec() != QDialog.Accepted:
+            return
+        elegido = dialogo.elegido()
+        if not elegido or not elegido.nif:
+            return
+        # Lo que dice una persona manda y se recuerda; y a los demas del lote
+        # se les apunta como proveedores, que es lo que son.
+        marcar_cliente(elegido.nif, elegido.nombre)
+        for otro in analisis.candidatos:
+            if otro.nif != elegido.nif and otro.nombre and otro.nif:
+                recordar_nif(otro.nombre, otro.nif, manual=True)
+        self._rehacer_con_cliente(elegido.nombre, elegido.nif)
+
+    def _rehacer_con_cliente(self, nombre, nif):
+        """Vuelve a montar todos los bloques con otro cliente, sin Gemini."""
+        for bloque in self._bloques:
+            if bloque.get("crudos"):
+                bloque["procesadas"] = preparar_lote(bloque["crudos"], nombre, nif)
+                bloque["cliente"], bloque["nif"] = nombre, nif
+        self._cliente_nif, self._cliente_nombre = nif, nombre
+        self._pintar_cliente()
+        self.chk_recargo.blockSignals(True)
+        self.chk_recargo.setEnabled(bool(nif))
+        self.chk_recargo.setChecked(en_recargo_equivalencia(nif))
+        self.chk_recargo.blockSignals(False)
+        self._rellenar_tabla()
+        self._revalidar_todo()
+        self.lbl_estado.setText(f"Lote rehecho con {nombre or nif} como cliente.")
 
     def _nombre_bloque(self) -> str:
         """Nombre corto del bloque: el del PDF cargado, sin repetirse."""
