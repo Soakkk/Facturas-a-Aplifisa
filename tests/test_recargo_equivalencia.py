@@ -32,7 +32,7 @@ def test_el_recargo_se_extrae_y_el_total_cuadra():
     # y toda factura de un cliente en recargo salia con un descuadre falso.
     f = procesar(datos_coca()).facturas[0]
     assert (f.base_requiv, f.pct_requiv, f.cuota_requiv) == (114.98, 5.2, 5.98)
-    assert validar(f, (2026, 2)).estado == OK
+    assert validar(f).estado == OK
 
 
 def test_cada_tipo_de_iva_lleva_su_propio_recargo():
@@ -65,7 +65,7 @@ def test_con_varios_tipos_de_iva_ninguna_fila_descuadra_ella_sola():
                        {"base": 8.44, "tipo_iva": 4.0, "cuota_iva": 0.34,
                         "pct_requiv": 0.5, "cuota_requiv": 0.04}]
     pr = procesar(d)
-    assert all(validar(f, (2026, 2)).estado == OK for f in pr.facturas)
+    assert all(validar(f).estado == OK for f in pr.facturas)
     assert not pr.aviso          # 19,96+2,00+0,28+8,44+0,34+0,04 = 31,06
 
 
@@ -96,7 +96,7 @@ def test_total_factura_deja_un_solo_apunte_por_el_total():
     assert f.base_iva == 145.11          # 114,98 + 24,15 + 5,98
     assert f.pct_iva is None and f.cuota_iva is None
     assert f.cuota_requiv is None
-    assert validar(f, (2026, 2)).estado == OK
+    assert validar(f).estado == OK
 
 
 def test_total_factura_no_toca_el_lote_original():

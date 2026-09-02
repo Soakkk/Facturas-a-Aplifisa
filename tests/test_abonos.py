@@ -43,7 +43,7 @@ def test_el_abono_se_lee_entero_y_en_negativo():
     f = abono().facturas[0]
     assert (f.base_iva, f.cuota_iva, f.cuota_requiv) == (-12.29, -2.58, -0.64)
     assert f.total_impreso == -15.51
-    assert validar(f, (2026, 2)).estado == OK
+    assert validar(f).estado == OK
 
 
 def test_el_total_factura_de_un_abono_es_negativo():
@@ -53,6 +53,6 @@ def test_el_total_factura_de_un_abono_es_negativo():
 def test_un_abono_con_el_signo_perdido_da_error():
     pr = abono(lineas_iva=[{"base": 12.29, "tipo_iva": 21.0, "cuota_iva": 2.58,
                             "pct_requiv": 5.20, "cuota_requiv": 0.64}])
-    res = validar(pr.facturas[0], (2026, 2))
+    res = validar(pr.facturas[0])
     assert res.estado == ERROR
     assert any("signo no cuadra" in m for m in res.mensajes)

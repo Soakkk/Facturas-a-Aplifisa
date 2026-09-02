@@ -1,10 +1,15 @@
-"""Trimestre que se trabaja y cuadre del lote."""
+"""Fecha de la factura y cuadre del lote.
+
+El programa NO trabaja por trimestres: se usa igual para un trimestre que para
+un requerimiento de varios años, asi que la fecha solo se comprueba para saber
+si la lectura es buena, y el resumen suma TODO lo cargado.
+"""
+
+from datetime import date
 
 from facturas_excel.modelo import Factura
 from facturas_excel.resumen import describir, resumir
-from facturas_excel.validacion import (
-    OK, REVISAR, detectar_periodo, periodo_de, validar,
-)
+from facturas_excel.validacion import OK, REVISAR, fecha_de, validar
 
 
 def factura(fecha, base=100.0, iva=21.0, irpf=None):
@@ -16,38 +21,29 @@ def factura(fecha, base=100.0, iva=21.0, irpf=None):
     return f
 
 
-def test_periodo_de_reconoce_el_trimestre():
-    assert periodo_de("04/06/2026") == (2026, 2)
-    assert periodo_de("31/03/2026") == (2026, 1)
-    assert periodo_de("01/10/2026") == (2026, 4)
-    assert periodo_de("2026-06-04") == (2026, 2)
-    assert periodo_de("no es fecha") is None
-    assert periodo_de(None) is None
+def test_fecha_de_entiende_los_formatos_habituales():
+    assert fecha_de("04/06/2026") == date(2026, 6, 4)
+    assert fecha_de("04-06-2026") == date(2026, 6, 4)
+    assert fecha_de("2026-06-04") == date(2026, 6, 4)
+    assert fecha_de("no es fecha") is None
+    assert fecha_de(None) is None
 
 
-def test_detectar_periodo_coge_el_mayoritario():
-    lote = [factura("04/06/2026"), factura("12/05/2026"), factura("15/03/2026")]
-    assert detectar_periodo(lote) == (2026, 2)
-    assert detectar_periodo([]) is None
+def test_una_factura_vieja_no_se_marca():
+    # Antes salia en ambar por "fuera del trimestre" y confundia: en un
+    # requerimiento las facturas son de cualquier fecha y todas valen.
+    assert validar(factura("15/03/2019")).estado == OK
 
 
-def test_factura_de_otro_trimestre_se_marca_para_revisar():
-    res = validar(factura("15/03/2026"), (2026, 2))
+def test_fecha_ilegible_se_marca_para_revisar():
+    res = validar(factura("1//2026"))
     assert res.estado == REVISAR
-    assert any("FUERA DEL 2T 2026" in m for m in res.mensajes)
-
-
-def test_factura_del_trimestre_no_se_marca():
-    assert validar(factura("04/06/2026"), (2026, 2)).estado == OK
-
-
-def test_sin_periodo_no_se_comprueba_el_trimestre():
-    assert validar(factura("15/03/2026")).estado == OK
+    assert any("No se entiende la fecha" in m for m in res.mensajes)
 
 
 def test_resumen_suma_base_iva_y_retencion():
     t = resumir([factura("04/06/2026", 53.02, 11.13),
-                 factura("12/05/2026", 200.0, 42.0),
+                 factura("12/05/2025", 200.0, 42.0),
                  factura("30/06/2026", 100.0, 21.0, irpf=15.0)])
     assert (t.base, t.iva, t.irpf) == (353.02, 74.13, 15.0)
     assert t.total == 412.15  # base + IVA - retencion

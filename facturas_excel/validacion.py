@@ -6,15 +6,11 @@ cuentas de la factura. Un digito mal leido casi siempre rompe alguna cuenta.
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime
+from typing import Dict, List, Optional
 
 from .modelo import Factura
-
-# Un periodo es (año, trimestre): (2026, 2) = 2T 2026.
-Periodo = Tuple[int, int]
 
 # Estados (semaforo)
 OK = "ok"            # verde: todo cuadra
@@ -30,33 +26,22 @@ class Resultado:
     mensajes: List[str]
 
 
-def periodo_de(fecha: str) -> Optional[Periodo]:
-    """(año, trimestre) de una fecha dd/mm/aaaa. None si no se entiende."""
+def fecha_de(fecha: str) -> Optional[date]:
+    """Fecha de la factura. None si no se entiende lo leido.
+
+    El programa NO trabaja por trimestres (se usa igual para un trimestre que
+    para un requerimiento de varios años), asi que la fecha solo se comprueba
+    para saber si la lectura es buena.
+    """
     if not fecha:
         return None
     texto = str(fecha).strip()
     for formato in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d", "%d/%m/%y"):
         try:
-            d = datetime.strptime(texto, formato)
+            return datetime.strptime(texto, formato).date()
         except ValueError:
             continue
-        return (d.year, (d.month - 1) // 3 + 1)
     return None
-
-
-def detectar_periodo(facturas: List[Factura]) -> Optional[Periodo]:
-    """Trimestre que se esta trabajando: el mas repetido del lote. Empate ->
-    el mas reciente (lo normal es colar facturas viejas, no futuras)."""
-    periodos = [p for p in (periodo_de(f.fecha) for f in facturas) if p]
-    if not periodos:
-        return None
-    cuenta = Counter(periodos)
-    tope = max(cuenta.values())
-    return max(p for p, n in cuenta.items() if n == tope)
-
-
-def fmt_periodo(periodo: Optional[Periodo]) -> str:
-    return f"{periodo[1]}T {periodo[0]}" if periodo else "—"
 
 
 def validar_nif(nif: str) -> bool:
@@ -93,7 +78,7 @@ def validar_nif(nif: str) -> bool:
     return False
 
 
-def validar(f: Factura, periodo: Optional[Periodo] = None) -> Resultado:
+def validar(f: Factura) -> Resultado:
     msgs: List[str] = []
     estado = OK
 
@@ -112,16 +97,11 @@ def validar(f: Factura, periodo: Optional[Periodo] = None) -> Resultado:
     # Concepto y Nombre. Si falta alguno, el registro da error al importar.
     if not f.fecha:
         marcar_error("Falta la fecha (obligatorio)")
-    elif periodo:
-        # Facturas de otro trimestre coladas en el lote: no son un error (se
-        # pueden registrar mas tarde), pero hay que verlas antes de exportar.
-        suyo = periodo_de(f.fecha)
-        if suyo is None:
-            marcar_revisar(f"No se entiende la fecha «{f.fecha}»: "
-                           f"no se puede comprobar el trimestre")
-        elif suyo != periodo:
-            marcar_revisar(f"FUERA DEL {fmt_periodo(periodo)}: esta factura es "
-                           f"del {fmt_periodo(suyo)} ({f.fecha})")
+    elif fecha_de(f.fecha) is None:
+        # Fecha ilegible: Aplifisa la rechazaria y ademas delata una mala
+        # lectura de la factura entera.
+        marcar_revisar(f"No se entiende la fecha «{f.fecha}»: "
+                       f"debe ser dd/mm/aaaa")
     if not f.num_factura:
         marcar_error("Falta el nº de factura (obligatorio)")
     if not f.nombre:

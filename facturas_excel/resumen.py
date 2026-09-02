@@ -8,7 +8,7 @@ Si el impreso no coincide, validacion ya lo marca factura a factura.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 from .modelo import Factura
 
@@ -35,20 +35,40 @@ class Totales:
         return abs(self.requiv) > 0.005
 
 
-def resumir(facturas: Iterable[Factura]) -> Totales:
-    t = Totales()
-    for f in facturas:
-        t.lineas += 1
-        t.base += f.base_iva or 0.0
-        t.iva += f.cuota_iva or 0.0
-        t.irpf += f.cuota_irpf or 0.0
-        t.requiv += f.cuota_requiv or 0.0
+def _acumular(t: Totales, f: Factura) -> None:
+    t.lineas += 1
+    t.base += f.base_iva or 0.0
+    t.iva += f.cuota_iva or 0.0
+    t.irpf += f.cuota_irpf or 0.0
+    t.requiv += f.cuota_requiv or 0.0
+
+
+def _redondear(t: Totales) -> Totales:
     for campo in ("base", "iva", "irpf", "requiv"):
         setattr(t, campo, round(getattr(t, campo), 2))
     return t
 
 
-def _eur(v: float) -> str:
+def resumir(facturas: Iterable[Factura]) -> Totales:
+    t = Totales()
+    for f in facturas:
+        _acumular(t, f)
+    return _redondear(t)
+
+
+def resumir_por_bloque(filas: Iterable[Tuple[str, Factura]]) -> Dict[str, Totales]:
+    """Suma cada bloque escaneado por separado, en el orden en que se cargaron.
+
+    Es lo que hace falta para cuadrar: cada PDF del escaner se comprueba contra
+    el taco de papel que se metio en el alimentador, no contra el lote entero.
+    """
+    grupos: Dict[str, Totales] = {}
+    for bloque, f in filas:
+        _acumular(grupos.setdefault(bloque, Totales()), f)
+    return {nombre: _redondear(t) for nombre, t in grupos.items()}
+
+
+def eur(v: float) -> str:
     entero, dec = f"{abs(v):.2f}".split(".")
     grupos = []
     while len(entero) > 3:
@@ -65,11 +85,11 @@ def describir(t: Totales, solo_total: bool = False) -> str:
     if not t.lineas:
         return "—"
     if solo_total:
-        return f"total factura {_eur(t.total)}"
-    partes: List[str] = [f"base {_eur(t.base)}", f"IVA {_eur(t.iva)}"]
+        return f"total factura {eur(t.total)}"
+    partes: List[str] = [f"base {eur(t.base)}", f"IVA {eur(t.iva)}"]
     if t.tiene_requiv:
-        partes.append(f"recargo {_eur(t.requiv)}")
+        partes.append(f"recargo {eur(t.requiv)}")
     if t.tiene_irpf:  # solo si la factura lleva retencion
-        partes.append(f"IRPF −{_eur(t.irpf)}")
-    partes.append(f"total factura {_eur(t.total)}")
+        partes.append(f"IRPF −{eur(t.irpf)}")
+    partes.append(f"total factura {eur(t.total)}")
     return "  ·  ".join(partes)

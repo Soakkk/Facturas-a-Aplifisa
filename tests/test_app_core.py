@@ -34,7 +34,7 @@ def test_arrastre_filtra_archivos_no_compatibles(tmp_path):
     assert rutas == [os.path.normpath(str(pdf))]
 
 
-def test_la_rueda_del_raton_no_cambia_gasto_venta_ni_el_trimestre():
+def test_la_rueda_del_raton_no_cambia_gasto_venta():
     # Bajando por el listado con la rueda, al pasar por encima del desplegable
     # se cambiaba gasto<->venta en silencio. Solo debe cambiarse con un clic.
     from PySide6.QtCore import QPoint, QPointF, Qt
@@ -58,11 +58,6 @@ def test_la_rueda_del_raton_no_cambia_gasto_venta_ni_el_trimestre():
     combo = v.tabla.cellWidget(0, C_TIPO)
     rueda(combo)
     assert combo.currentData() == "gasto"
-
-    trim, anio = v.combo_trim.currentText(), v.spin_anio.value()
-    rueda(v.combo_trim)
-    rueda(v.spin_anio)
-    assert (v.combo_trim.currentText(), v.spin_anio.value()) == (trim, anio)
 
     combo.setCurrentIndex(combo.findData("venta"))      # elegirlo a mano si funciona
     assert combo.currentData() == "venta"

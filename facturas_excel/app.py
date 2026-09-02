@@ -11,14 +11,12 @@ import argparse
 import os
 import sys
 
-from datetime import date
-
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-    QPushButton, QProgressDialog, QSpinBox, QSplitter, QTableWidget,
+    QPushButton, QProgressDialog, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -41,11 +39,10 @@ from facturas_excel.procesar import (
     construir, detectar_cliente, marcar_sustituidas, normaliza_nif,
     propagar_nifs, recordar_nif,
 )
-from facturas_excel.resumen import describir, resumir
+from facturas_excel.resumen import eur, resumir, resumir_por_bloque
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
-    ERROR, OK, REVISAR, detectar_periodo, encontrar_duplicados, fmt_periodo,
-    periodo_de, validar, validar_nif,
+    ERROR, OK, REVISAR, encontrar_duplicados, validar, validar_nif,
 )
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -57,18 +54,23 @@ HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Total"]
+        "NIF", "Base", "% IVA", "Cuota", "Total", "Bloque"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_TOTAL = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
+
+# Columnas del resumen por bloque (punto de control antes de exportar).
+COLS_RESUMEN = ["Bloque", "Tipo", "Líneas", "Base", "IVA", "Recargo", "IRPF",
+                "Total factura"]
+TODOS_LOS_BLOQUES = "Todos los bloques"
 
 
 class _SinRueda:
     """Ignora la rueda del raton para que no cambie el valor sin querer.
 
     Bajando por el listado con la rueda, al pasar por encima de un desplegable
-    este se tragaba el giro y cambiaba gasto<->venta en silencio (y el año del
-    trimestre igual). El valor solo debe cambiarse haciendo clic; la rueda tiene
-    que seguir moviendo la tabla, asi que el evento se deja pasar al padre.
+    este se tragaba el giro y cambiaba gasto<->venta en silencio. El valor solo
+    debe cambiarse haciendo clic; la rueda tiene que seguir moviendo la tabla,
+    asi que el evento se deja pasar al padre.
     """
 
     def wheelEvent(self, evento):
@@ -76,10 +78,6 @@ class _SinRueda:
 
 
 class ComboSinRueda(_SinRueda, QComboBox):
-    pass
-
-
-class SpinSinRueda(_SinRueda, QSpinBox):
     pass
 
 
@@ -225,7 +223,11 @@ class VentanaPrincipal(QMainWindow):
         self.resize(1420, 820)
         self.setMinimumSize(1080, 680)
         self.setAcceptDrops(True)
-        self.filas = []  # por fila: dict(png, factura, aviso)
+        self.filas = []  # por fila: dict(png, factura, aviso, bloque)
+        # Un bloque = un escaneo/carga. Se acumulan para poder meter en un solo
+        # Excel varios PDF (un requerimiento no cabe en un escaneo de 25 hojas).
+        # Cada uno: dict(nombre, procesadas, cliente, nif)
+        self._bloques = []
         self._ultimo_borrado = []
         self._duplicados = set()
         self._rutas_actuales = []
@@ -245,33 +247,10 @@ class VentanaPrincipal(QMainWindow):
         raiz.setContentsMargins(0, 0, 0, 0)
         raiz.setSpacing(0)
 
-        cabecera = QFrame()
-        cabecera.setObjectName("cabecera")
-        cabecera.setFixedHeight(68)
-        lc = QHBoxLayout(cabecera)
-        lc.setContentsMargins(24, 14, 24, 14)
-        logo = QLabel()
-        logo.setPixmap(QPixmap(ruta_recurso("app.png")).scaled(
-            52, 52, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation))
-        logo.setFixedSize(56, 56)
-        lc.addWidget(logo)
-        marca = QVBoxLayout()
-        titulo = QLabel("Facturas a Aplifisa")
-        titulo.setObjectName("marca")
-        subtitulo = QLabel("Clasificación automática y exportación para captura masiva")
-        subtitulo.setObjectName("marcaSubtitulo")
-        marca.addWidget(titulo)
-        marca.addWidget(subtitulo)
-        lc.addLayout(marca)
-        lc.addStretch()
-        estado_auto = QLabel("Gastos e ingresos se clasifican automáticamente")
-        estado_auto.setObjectName("estadoCabecera")
-        lc.addWidget(estado_auto)
-        raiz.addWidget(cabecera)
-
+        # Sin banner de cabecera: la marca y la version ya salen en el titulo de
+        # la ventana, y el espacio se aprovecha para la tabla.
         cuerpo = QVBoxLayout()
-        cuerpo.setContentsMargins(18, 16, 18, 12)
+        cuerpo.setContentsMargins(18, 14, 18, 12)
         cuerpo.setSpacing(12)
 
         acciones = QFrame()
@@ -303,25 +282,6 @@ class VentanaPrincipal(QMainWindow):
         bloque_cliente.addWidget(self.chk_recargo)
         la.addLayout(bloque_cliente, 1)
 
-        bloque_periodo = QVBoxLayout()
-        etiqueta_per = QLabel("TRIMESTRE QUE SE TRABAJA")
-        etiqueta_per.setObjectName("textoSuave")
-        fila_per = QHBoxLayout()
-        fila_per.setSpacing(4)
-        self.combo_trim = ComboSinRueda()
-        self.combo_trim.addItems(["1T", "2T", "3T", "4T"])
-        self.combo_trim.setFixedWidth(60)
-        self.spin_anio = SpinSinRueda()
-        self.spin_anio.setRange(2000, 2100)
-        self.spin_anio.setValue(date.today().year)
-        self.spin_anio.setFixedWidth(72)
-        for w in (self.combo_trim, self.spin_anio):
-            fila_per.addWidget(w)
-        self.combo_trim.currentIndexChanged.connect(self._revalidar_todo)
-        self.spin_anio.valueChanged.connect(self._revalidar_todo)
-        bloque_periodo.addWidget(etiqueta_per)
-        bloque_periodo.addLayout(fila_per)
-        la.addLayout(bloque_periodo)
         self.btn_gastos = QPushButton("Exportar a Aplifisa…")
         self.btn_gastos.setObjectName("exito")
         self.btn_gastos.setEnabled(False)
@@ -372,10 +332,28 @@ class VentanaPrincipal(QMainWindow):
             ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
         herramientas.addWidget(self.combo_filtro_estado)
+        self.combo_filtro_bloque = ComboSinRueda()
+        self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
+        self.combo_filtro_bloque.setToolTip(
+            "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
+            "en uno y exportarlos todos juntos.")
+        self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
+        herramientas.addWidget(self.combo_filtro_bloque)
         btn_siguiente = QPushButton("Siguiente incidencia")
         btn_siguiente.clicked.connect(self._siguiente_incidencia)
         herramientas.addWidget(btn_siguiente)
         herramientas.addStretch(1)
+        self.btn_quitar_bloque = QPushButton("Quitar este bloque")
+        self.btn_quitar_bloque.setObjectName("peligro")
+        self.btn_quitar_bloque.setToolTip(
+            "Quita del lote el bloque elegido en el desplegable (p.ej. si se ha "
+            "cargado un PDF que no tocaba).")
+        self.btn_quitar_bloque.clicked.connect(self._quitar_bloque)
+        herramientas.addWidget(self.btn_quitar_bloque)
+        self.btn_vaciar = QPushButton("Vaciar todo")
+        self.btn_vaciar.setObjectName("peligro")
+        self.btn_vaciar.clicked.connect(self._vaciar_todo)
+        herramientas.addWidget(self.btn_vaciar)
         self.btn_deshacer_borrado = QPushButton("Deshacer eliminación")
         self.btn_deshacer_borrado.setEnabled(False)
         self.btn_deshacer_borrado.clicked.connect(self._deshacer_borrado)
@@ -422,15 +400,29 @@ class VentanaPrincipal(QMainWindow):
         lr = QVBoxLayout(resumen_card)
         lr.setContentsMargins(12, 10, 12, 10)
         lr.setSpacing(2)
-        self.lbl_resumen_titulo = QLabel("Resumen del trimestre")
+        fila_titulo = QHBoxLayout()
+        self.lbl_resumen_titulo = QLabel("Comprobación de totales por bloque")
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
-        self.lbl_resumen_gastos = QLabel("Gastos: —")
-        self.lbl_resumen_ventas = QLabel("Ventas: —")
-        self.lbl_resumen_fuera = QLabel("")
-        self.lbl_resumen_fuera.setObjectName("textoSuave")
-        for w in (self.lbl_resumen_titulo, self.lbl_resumen_gastos,
-                  self.lbl_resumen_ventas, self.lbl_resumen_fuera):
-            lr.addWidget(w)
+        fila_titulo.addWidget(self.lbl_resumen_titulo)
+        fila_titulo.addStretch(1)
+        btn_copiar = QPushButton("Copiar resumen")
+        btn_copiar.setToolTip(
+            "Copia el resumen al portapapeles para pegarlo donde haga falta.")
+        btn_copiar.clicked.connect(self._copiar_resumen)
+        fila_titulo.addWidget(btn_copiar)
+        lr.addLayout(fila_titulo)
+        self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN))
+        self.tabla_resumen.setHorizontalHeaderLabels(COLS_RESUMEN)
+        self.tabla_resumen.verticalHeader().setVisible(False)
+        self.tabla_resumen.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla_resumen.setSelectionMode(QTableWidget.NoSelection)
+        self.tabla_resumen.setAlternatingRowColors(True)
+        # Sin ajuste de linea: un nombre de PDF largo no debe estirar la fila.
+        self.tabla_resumen.setWordWrap(False)
+        self.tabla_resumen.verticalHeader().setDefaultSectionSize(26)
+        self.tabla_resumen.setMaximumHeight(190)
+        self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        lr.addWidget(self.tabla_resumen)
         cuerpo.addWidget(resumen_card)
 
         self.lbl_estado = QLabel("Cargue un lote de facturas para empezar.")
@@ -624,19 +616,23 @@ class VentanaPrincipal(QMainWindow):
     def _on_terminado(self, procesadas, nombre, nif):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
-        self.lbl_cliente.setText(
-            f"{nombre or 'Cliente no identificado'}"
-            + (f"  ·  {nif}" if nif else ""))
-        # El lote crudo se guarda tal cual: al marcar/desmarcar el recargo la
-        # tabla se rehace desde aqui, sin volver a llamar a Gemini.
-        self._procesadas = procesadas
+        # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
+        # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
+        self._bloques.append({
+            "nombre": self._nombre_bloque(),
+            "procesadas": procesadas,
+            "cliente": nombre,
+            "nif": nif,
+        })
+        self._avisar_si_otro_cliente(nombre, nif)
         self._cliente_nif, self._cliente_nombre = nif, nombre
+        self._pintar_cliente()
         self.chk_recargo.blockSignals(True)
         self.chk_recargo.setEnabled(bool(nif))
         self.chk_recargo.setChecked(en_recargo_equivalencia(nif))
         self.chk_recargo.blockSignals(False)
+        self._actualizar_combo_bloques()
         self._rellenar_tabla()
-        self._autoseleccionar_periodo()
         self._revalidar_todo()
         hay_datos = self.tabla.rowCount() > 0
         self.btn_gastos.setEnabled(hay_datos)
@@ -644,16 +640,116 @@ class VentanaPrincipal(QMainWindow):
         if hay_datos:
             self.tabla.selectRow(0)
 
+    def _nombre_bloque(self) -> str:
+        """Nombre corto del bloque: el del PDF cargado, sin repetirse."""
+        rutas = self._rutas_actuales
+        if not rutas:
+            base = f"Bloque {len(self._bloques) + 1}"
+        elif len(rutas) == 1:
+            base = os.path.splitext(os.path.basename(rutas[0]))[0]
+        else:
+            base = f"{os.path.splitext(os.path.basename(rutas[0]))[0]} +{len(rutas) - 1}"
+        usados = {b["nombre"] for b in self._bloques}   # aun no se ha añadido
+        nombre, n = base, 2
+        while nombre in usados:
+            nombre, n = f"{base} ({n})", n + 1
+        return nombre
+
+    def _avisar_si_otro_cliente(self, nombre, nif):
+        """Mezclar clientes en un mismo Excel es un lio gordo: hay que verlo."""
+        anteriores = {b["nif"] for b in self._bloques[:-1] if b["nif"]}
+        if not anteriores or not nif or nif in anteriores:
+            return
+        previo = next(b for b in self._bloques[:-1] if b["nif"])
+        QMessageBox.warning(
+            self, "¿Facturas de otro cliente?",
+            f"Este bloque parece de OTRO cliente:\n\n"
+            f"  · Bloques anteriores: {previo['cliente'] or '?'} "
+            f"({previo['nif']})\n"
+            f"  · Bloque nuevo: {nombre or '?'} ({nif})\n\n"
+            "Se ha añadido igualmente, pero el Excel saldría con facturas de "
+            "los dos. Si es un error, use «Quitar este bloque».")
+
+    def _pintar_cliente(self):
+        """Cliente del lote. Si hay bloques de varios, se dice claramente."""
+        nifs = {b["nif"] for b in self._bloques if b["nif"]}
+        if len(nifs) > 1:
+            self.lbl_cliente.setText(f"⚠ VARIOS CLIENTES en el lote ({len(nifs)})")
+            return
+        self.lbl_cliente.setText(
+            f"{self._cliente_nombre or 'Cliente no identificado'}"
+            + (f"  ·  {self._cliente_nif}" if self._cliente_nif else ""))
+
+    def _actualizar_combo_bloques(self):
+        actual = self.combo_filtro_bloque.currentText()
+        self.combo_filtro_bloque.blockSignals(True)
+        self.combo_filtro_bloque.clear()
+        self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
+        for b in self._bloques:
+            self.combo_filtro_bloque.addItem(b["nombre"])
+        i = self.combo_filtro_bloque.findText(actual)
+        self.combo_filtro_bloque.setCurrentIndex(max(0, i))
+        self.combo_filtro_bloque.blockSignals(False)
+
+    def _quitar_bloque(self):
+        nombre = self.combo_filtro_bloque.currentText()
+        if nombre == TODOS_LOS_BLOQUES or not self._bloques:
+            QMessageBox.information(
+                self, "Quitar un bloque",
+                "Elija primero un bloque en el desplegable de al lado.")
+            return
+        if QMessageBox.question(
+                self, "Quitar el bloque",
+                f"¿Quitar del lote el bloque «{nombre}» y todas sus facturas?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self._bloques = [b for b in self._bloques if b["nombre"] != nombre]
+        self._ultimo_borrado = []
+        self.btn_deshacer_borrado.setEnabled(False)
+        self.combo_filtro_bloque.setCurrentIndex(0)
+        self._actualizar_combo_bloques()
+        self._rellenar_tabla()
+        self._revalidar_todo()
+        hay_datos = self.tabla.rowCount() > 0
+        self.btn_gastos.setEnabled(hay_datos)
+        self.lbl_estado.setText(f"Bloque «{nombre}» quitado del lote.")
+
+    def _vaciar_todo(self):
+        if not self._bloques:
+            return
+        if QMessageBox.question(
+                self, "Vaciar todo",
+                f"¿Vaciar el lote entero ({len(self._bloques)} bloque(s), "
+                f"{self.tabla.rowCount()} línea(s)) y empezar de cero?\n\n"
+                "Lo leído se perderá y habría que volver a pasarlo por Gemini.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self._bloques = []
+        self._ultimo_borrado = []
+        self._cliente_nif = self._cliente_nombre = ""
+        self.btn_deshacer_borrado.setEnabled(False)
+        self.chk_recargo.blockSignals(True)
+        self.chk_recargo.setChecked(False)
+        self.chk_recargo.setEnabled(False)
+        self.chk_recargo.blockSignals(False)
+        self._actualizar_combo_bloques()
+        self._rellenar_tabla()
+        self._revalidar_todo()
+        self.btn_gastos.setEnabled(False)
+        self.lbl_cliente.setText("Cliente pendiente de detectar")
+        self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
+
     def _rellenar_tabla(self):
         recargo = self.chk_recargo.isChecked()
         self.tabla.blockSignals(True)
         self.tabla.setRowCount(0)
         self.filas = []
-        for png, pr in getattr(self, "_procesadas", []):
-            vista = a_total_factura(pr) if recargo else pr
-            for f in vista.facturas:
-                self._anadir_fila(png, f, vista.tipo, vista.cuenta, vista.gxx,
-                                  vista.aviso)
+        for bloque in self._bloques:
+            for png, pr in bloque["procesadas"]:
+                vista = a_total_factura(pr) if recargo else pr
+                for f in vista.facturas:
+                    self._anadir_fila(png, f, vista.tipo, vista.cuenta,
+                                      vista.gxx, vista.aviso, bloque["nombre"])
         self.tabla.blockSignals(False)
 
     def _on_recargo(self, activo):
@@ -663,12 +759,13 @@ class VentanaPrincipal(QMainWindow):
         self._rellenar_tabla()
         self._revalidar_todo()
 
-    def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso):
+    def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque=""):
         senales_bloqueadas = self.tabla.signalsBlocked()
         self.tabla.blockSignals(True)
         r = self.tabla.rowCount()
         self.tabla.insertRow(r)
-        self.filas.append({"png": png, "factura": f, "aviso": aviso})
+        self.filas.append({"png": png, "factura": f, "aviso": aviso,
+                           "bloque": bloque})
 
         est = QTableWidgetItem("")
         est.setFlags(Qt.ItemIsEnabled)
@@ -692,12 +789,16 @@ class VentanaPrincipal(QMainWindow):
             C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
             C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
             C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva), C_TOTAL: fmt(f.total_impreso),
+            C_BLOQUE: bloque,
         }
         for col, val in valores.items():
             item = QTableWidgetItem("" if val is None else str(val))
             if col == C_GXX:
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 item.setToolTip("Subclave orientativa; Aplifisa la recuerda por proveedor.")
+            if col == C_BLOQUE:
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setToolTip("Escaneo o PDF del que salió esta factura.")
             self.tabla.setItem(r, col, item)
         self.tabla.setRowHeight(r, 34)
         self.tabla.blockSignals(senales_bloqueadas)
@@ -776,6 +877,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _aplicar_filtro(self) -> None:
         opcion = self.combo_filtro_estado.currentIndex()
+        bloque = self.combo_filtro_bloque.currentText()
         for fila in range(self.tabla.rowCount()):
             estado = self._estado_fila(fila)
             visible = (
@@ -784,6 +886,8 @@ class VentanaPrincipal(QMainWindow):
                 or (opcion == 2 and estado == ICONO_ESTADO[ERROR])
                 or (opcion == 3 and estado == ICONO_ESTADO[OK])
             )
+            if bloque != TODOS_LOS_BLOQUES and self.filas[fila]["bloque"] != bloque:
+                visible = False
             self.tabla.setRowHidden(fila, not visible)
 
     def _siguiente_incidencia(self) -> None:
@@ -832,7 +936,8 @@ class VentanaPrincipal(QMainWindow):
             registro = borrada["registro"]
             self._anadir_fila(
                 registro["png"], registro["factura"], borrada["tipo"],
-                borrada["cuenta"], borrada["gxx"], registro["aviso"])
+                borrada["cuenta"], borrada["gxx"], registro["aviso"],
+                registro.get("bloque", ""))
         cantidad = len(self._ultimo_borrado)
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
@@ -840,29 +945,11 @@ class VentanaPrincipal(QMainWindow):
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
 
-    def _periodo(self):
-        """Trimestre que se esta trabajando, segun los selectores."""
-        return (self.spin_anio.value(), self.combo_trim.currentIndex() + 1)
-
-    def _autoseleccionar_periodo(self):
-        """Propone el trimestre mayoritario del lote (el que se esta trabajando);
-        asi las descolgadas saltan solas. Se puede cambiar a mano."""
-        periodo = detectar_periodo([d["factura"] for d in self.filas])
-        if not periodo:
-            return
-        anio, trim = periodo
-        for w in (self.combo_trim, self.spin_anio):
-            w.blockSignals(True)
-        self.spin_anio.setValue(anio)
-        self.combo_trim.setCurrentIndex(trim - 1)
-        for w in (self.combo_trim, self.spin_anio):
-            w.blockSignals(False)
-
     def _revalidar_fila(self, r):
         if r < 0 or r >= len(self.filas):
             return
         f = self._leer_fila(r)
-        res = validar(f, self._periodo())
+        res = validar(f)
         estado = res.estado
         msgs = list(res.mensajes)
         if self.filas[r]["aviso"]:
@@ -923,11 +1010,10 @@ class VentanaPrincipal(QMainWindow):
         self.alerta.setVisible(True)
 
     def _resumen(self):
-        periodo = self._periodo()
         estados = []
         for r in range(self.tabla.rowCount()):
             f = self.filas[r]["factura"]
-            e = validar(f, periodo).estado
+            e = validar(f).estado
             if self.filas[r]["aviso"] and e == OK:
                 e = REVISAR
             if r in self._duplicados:
@@ -937,33 +1023,70 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText(
             f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
             f"🟢 {estados.count(OK)}  🟡 {estados.count(REVISAR)}  🔴 {estados.count(ERROR)}")
-        self._pintar_resumen(periodo)
+        self._pintar_resumen()
 
-    def _pintar_resumen(self, periodo):
-        """Suma solo lo del trimestre que se trabaja: es lo que se declara.
-        Lo de fuera se cuenta aparte para que se vea que esta ahi."""
-        dentro = {"gasto": [], "venta": []}
-        fuera = 0
+    def _pintar_resumen(self):
+        """Listado para cuadrar: una linea por bloque escaneado y tipo, mas el
+        total general. Suma TODO lo cargado (el programa vale igual para un
+        trimestre que para un requerimiento de varios años, no se filtra por
+        fechas). Es el punto de control contra el taco de papel."""
+        filas_por_tipo = {"gasto": [], "venta": []}
         for r in range(self.tabla.rowCount()):
-            f = self.filas[r]["factura"]
-            if periodo_de(f.fecha) == periodo:
-                dentro[self._tipo_fila(r)].append(f)
-            else:
-                fuera += 1
+            filas_por_tipo[self._tipo_fila(r)].append(
+                (self.filas[r]["bloque"] or "—", self.filas[r]["factura"]))
         # En recargo el gasto no tiene desglose de IVA: solo el total factura.
         recargo = self.chk_recargo.isChecked()
         self.lbl_resumen_titulo.setText(
-            f"Resumen del {fmt_periodo(periodo)}"
+            "Comprobación de totales por bloque"
             + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
-        self.lbl_resumen_gastos.setText(
-            f"Gastos:  {describir(resumir(dentro['gasto']), solo_total=recargo)}")
-        self.lbl_resumen_ventas.setText(f"Ventas:  {describir(resumir(dentro['venta']))}")
-        if fuera:
-            self.lbl_resumen_fuera.setText(
-                f"⚠ {fuera} línea(s) fuera del {fmt_periodo(periodo)} o sin fecha "
-                f"válida: NO suman en este resumen (mírelas en la tabla, en ámbar).")
-        else:
-            self.lbl_resumen_fuera.setText("")
+
+        lineas = []   # (bloque, tipo, Totales, es_total)
+        for tipo, etiqueta in (("gasto", "Gastos"), ("venta", "Ingresos")):
+            pares = filas_por_tipo[tipo]
+            if not pares:
+                continue
+            por_bloque = resumir_por_bloque(pares)
+            for nombre, t in por_bloque.items():
+                lineas.append((nombre, etiqueta, t, False))
+            if len(por_bloque) > 1:
+                lineas.append(("TODOS LOS BLOQUES", etiqueta,
+                               resumir([f for _, f in pares]), True))
+        self._volcar_resumen(lineas, recargo)
+
+    def _volcar_resumen(self, lineas, recargo):
+        self.tabla_resumen.setRowCount(len(lineas))
+        for r, (bloque, tipo, t, es_total) in enumerate(lineas):
+            # En recargo el gasto va por el total factura: el desglose de IVA
+            # no existe y ponerlo a 0,00 despistaria.
+            solo_total = recargo and tipo == "Gastos"
+            valores = [
+                bloque, tipo, str(t.lineas),
+                "" if solo_total else eur(t.base),
+                "" if solo_total else eur(t.iva),
+                eur(t.requiv) if t.tiene_requiv and not solo_total else "",
+                f"−{eur(t.irpf)}" if t.tiene_irpf else "",
+                eur(t.total),
+            ]
+            for c, texto in enumerate(valores):
+                item = QTableWidgetItem(texto)
+                if c >= 2:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if es_total:
+                    fuente = item.font()
+                    fuente.setBold(True)
+                    item.setFont(fuente)
+                self.tabla_resumen.setItem(r, c, item)
+
+    def _copiar_resumen(self):
+        """El resumen al portapapeles, para pegarlo al comprobar los totales."""
+        filas = ["\t".join(COLS_RESUMEN)]
+        for r in range(self.tabla_resumen.rowCount()):
+            filas.append("\t".join(
+                (self.tabla_resumen.item(r, c).text() if self.tabla_resumen.item(r, c)
+                 else "")
+                for c in range(self.tabla_resumen.columnCount())))
+        QApplication.clipboard().setText("\n".join(filas))
+        self.lbl_estado.setText("Resumen copiado al portapapeles.")
 
     # ---------- miniatura ----------
     def _mostrar_miniatura(self):
@@ -995,23 +1118,15 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Sin datos", "No hay facturas que exportar.")
             return
 
-        periodo = self._periodo()
         problemas = []
         if self._duplicados:
             problemas.append(
                 f"{len(self._duplicados)} factura(s) duplicada(s) que se registrarían dos veces")
         errores = sum(
             1 for facturas in por_tipo.values() for factura in facturas
-            if validar(factura, periodo).estado == ERROR)
+            if validar(factura).estado == ERROR)
         if errores:
             problemas.append(f"{errores} línea(s) con errores")
-        fuera = [
-            factura for facturas in por_tipo.values() for factura in facturas
-            if periodo_de(factura.fecha) != periodo
-        ]
-        if fuera:
-            problemas.append(
-                f"{len(fuera)} línea(s) fuera del {fmt_periodo(periodo)} o sin fecha válida")
         if problemas:
             respuesta = QMessageBox.question(
                 self, "Revisión pendiente",
@@ -1042,59 +1157,6 @@ class VentanaPrincipal(QMainWindow):
             "Archivos preparados para Aplifisa:\n\n  · "
             + "\n  · ".join(generados)
             + f"\n\nCarpeta: {carpeta}")
-
-    def _exportar(self, tipo):
-        facturas = [self.filas[r]["factura"] for r in range(self.tabla.rowCount())
-                    if self._tipo_fila(r) == tipo]
-        if not facturas:
-            QMessageBox.warning(self, "Sin datos", f"No hay {tipo}s que exportar.")
-            return
-        periodo = self._periodo()
-        dups = [r for r in self._duplicados if r < len(self.filas)
-                and self._tipo_fila(r) == tipo]
-        if dups:
-            lineas = "\n".join(
-                f"  · Línea {r + 1}: {self.filas[r]['factura'].num_factura or '?'} — "
-                f"{self.filas[r]['factura'].nombre or '?'}" for r in sorted(dups)[:8])
-            r = QMessageBox.question(
-                self, "⚠ Hay facturas duplicadas",
-                f"{len(dups)} línea(s) están REPETIDAS en el lote:\n\n{lineas}\n\n"
-                "Si las exportas, el registro se hará DOS VECES.\n"
-                "¿Exportar de todas formas?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
-                return
-        errores = sum(1 for f in facturas if validar(f, periodo).estado == ERROR)
-        if errores:
-            r = QMessageBox.question(
-                self, "Hay errores",
-                f"{errores} línea(s) con errores (rojo). ¿Exportar de todas formas?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
-                return
-        fuera = [f for f in facturas if periodo_de(f.fecha) != periodo]
-        if fuera:
-            detalle = "\n".join(
-                f"  · {f.fecha or '(sin fecha)'} — {f.nombre or '?'}" for f in fuera[:8])
-            if len(fuera) > 8:
-                detalle += f"\n  · … y {len(fuera) - 8} más"
-            r = QMessageBox.question(
-                self, f"Hay facturas fuera del {fmt_periodo(periodo)}",
-                f"{len(fuera)} línea(s) NO son del {fmt_periodo(periodo)} "
-                f"(o no tienen fecha válida):\n\n{detalle}\n\n"
-                "Se exportarán igualmente. ¿Continuar?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
-                return
-        xml = "gastos.xml" if tipo == "gasto" else "ingresos.xml"
-        cfg = leer_config(ruta_config(xml))
-        nombre = "gastos.xlsx" if tipo == "gasto" else "ventas.xlsx"
-        ruta, _ = QFileDialog.getSaveFileName(
-            self, "Guardar Excel", os.path.join(ESCRITORIO, nombre), "Excel (*.xlsx)")
-        if not ruta:
-            return
-        exportar_excel(facturas, cfg, ruta)
-        QMessageBox.information(self, "Exportado", f"Generado:\n{ruta}")
 
 
 def _argumentos(argv):
