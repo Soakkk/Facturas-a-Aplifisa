@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import unicodedata
 from datetime import date
 from typing import Callable, List, Optional, Tuple
+
+from . import ajustes
 
 # --- Constantes de WIA (las de la documentacion de Microsoft) ---
 TIPO_ESCANER = 1
@@ -33,7 +37,13 @@ P_RES_H, P_RES_V = 6147, 6148
 P_INI_H, P_INI_V = 6149, 6150
 P_ANCHO, P_ALTO = 6151, 6152
 P_TIPO_DATO = 4103          # 0=B/N, 2=grises, 3=color
-COLOR, GRISES = 3, 2
+BLANCO_NEGRO, GRISES, COLOR = 0, 2, 3
+
+# Modos de color, del mas rapido y ligero al mas fiel. El color no siempre es
+# lo mejor: en grises la hoja pesa un tercio y se escanea antes, y a Gemini le
+# da igual (lo que cuenta ahi son los puntos de la imagen, no los colores).
+MODOS_COLOR = {"color": COLOR, "grises": GRISES, "bn": BLANCO_NEGRO}
+PPP_HABITUALES = [75, 150, 200, 300]
 
 # Formatos de imagen de WIA. OJO: muchos escaneres (la HP M148 entre ellos)
 # SOLO entregan BMP; pedirles JPEG da "El parametro no es correcto". Se pide lo
@@ -56,6 +66,21 @@ MAX_PAGINAS = 200           # tope de seguridad por si el alimentador se atasca
 
 SIN_PAPEL = ("El alimentador está vacío: ponga las facturas en la bandeja de "
              "arriba y vuelva a intentarlo.")
+
+# --- NAPS2: el que sabe sacar el taco entero ---------------------------------
+# El escaneo de Windows (WIA) no vale para el alimentador con esta HP: pasa las
+# 13 hojas de una tacada pero solo entrega la PRIMERA imagen, asi que un taco
+# acababa en un PDF de una pagina. NAPS2 (libre, gratuito) si encadena las
+# paginas y devuelve el PDF hecho. Se usa para el alimentador; el cristal se
+# sigue haciendo con WIA, que ahi funciona y no obliga a tener nada instalado.
+NAPS2_EXE = "NAPS2.Console.exe"
+NAPS2_DESCARGA = "https://www.naps2.com/download"
+BITS_NAPS2 = {"color": "color", "grises": "gray", "bn": "bw"}
+TIEMPO_MAXIMO = 45 * 60      # segundos: un taco largo a 300 ppp puede tardar
+
+
+class FaltaNAPS2(Exception):
+    """Hace falta NAPS2 para escanear por el alimentador y no esta instalado."""
 
 
 class SinEscaner(Exception):
@@ -196,7 +221,7 @@ def _formato_de(item) -> str:
     return formatos[0] if formatos else FORMATO_BMP
 
 
-def _a_jpeg(ruta: str) -> str:
+def _a_jpeg(ruta: str, modo_color: str = "color") -> str:
     """Convierte a JPEG lo que no lo sea (un BMP de A4 a 200 ppp son 10 MB:
     un taco de 30 hojas dejaria un PDF imposible de mandar)."""
     if ruta.lower().endswith((".jpg", ".jpeg")):
@@ -205,7 +230,9 @@ def _a_jpeg(ruta: str) -> str:
         from PIL import Image
         destino = os.path.splitext(ruta)[0] + ".jpg"
         with Image.open(ruta) as imagen:
-            imagen.convert("RGB").save(destino, "JPEG", quality=80, optimize=True)
+            # En grises o B/N el JPEG pesa la mitad guardandolo en un solo canal.
+            modo = "RGB" if modo_color == "color" else "L"
+            imagen.convert(modo).save(destino, "JPEG", quality=80, optimize=True)
         os.remove(ruta)
         return destino
     except Exception:
@@ -213,7 +240,7 @@ def _a_jpeg(ruta: str) -> str:
 
 
 def _preparar(dispositivo, dpi: int, alimentador: bool, duplex: bool,
-              color: bool):
+              modo_color: str = "color"):
     """Deja el escaner listo. Se toca lo MINIMO imprescindible.
 
     Comprobado con la HP LJ Pro M148: tocar la propiedad "Pages" (3096) hace
@@ -225,7 +252,7 @@ def _preparar(dispositivo, dpi: int, alimentador: bool, duplex: bool,
     modo = (ALIMENTADOR | (DUPLEX if duplex else 0)) if alimentador else CRISTAL
     _poner(dispositivo.Properties, P_MANEJO_PAPEL, modo)
     item = dispositivo.Items[1]
-    _poner(item.Properties, P_TIPO_DATO, COLOR if color else GRISES)
+    _poner(item.Properties, P_TIPO_DATO, MODOS_COLOR.get(modo_color, COLOR))
     _poner(item.Properties, P_RES_H, dpi)
     _poner(item.Properties, P_RES_V, dpi)
     if not alimentador:
@@ -261,7 +288,7 @@ def _es_sin_papel(error) -> bool:
 
 def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFECTO,
                      alimentador: bool = True, duplex: bool = False,
-                     color: bool = True,
+                     modo_color: str = "color",
                      progreso: Optional[Callable[[int], None]] = None) -> List[str]:
     """Pasa el taco entero y devuelve las rutas de las paginas (JPEG).
 
@@ -269,7 +296,7 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
     """
     if alimentador and _hay_papel(dispositivo) is False:
         raise ErrorEscaneo(SIN_PAPEL)
-    item = _preparar(dispositivo, dpi, alimentador, duplex, color)
+    item = _preparar(dispositivo, dpi, alimentador, duplex, modo_color)
     formato = _formato_de(item)
     extension = EXTENSION.get(formato, "bmp")
     paginas: List[str] = []
@@ -292,7 +319,7 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
         ruta = os.path.join(carpeta_temporal,
                             f"pag_{len(paginas) + 1:03d}.{extension}")
         imagen.SaveFile(ruta)
-        paginas.append(_a_jpeg(ruta))
+        paginas.append(_a_jpeg(ruta, modo_color))
         if progreso:
             progreso(len(paginas))
         if not alimentador:
@@ -318,12 +345,91 @@ def armar_pdf(paginas: List[str], destino: str) -> str:
     return destino
 
 
+# ---------------------------------------------------------------- NAPS2
+def naps2() -> Optional[str]:
+    """Donde esta NAPS2.Console.exe, si esta."""
+    guardado = ajustes.leer("naps2_exe", "")
+    if guardado and os.path.exists(guardado):
+        return guardado
+    encontrado = shutil.which(NAPS2_EXE)
+    if encontrado:
+        return encontrado
+    for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", ""),
+                 os.environ.get("ProgramFiles(x86)", "")):
+        for sub in (("Microsoft", "WindowsApps"), ("NAPS2",)):
+            ruta = os.path.join(base, *sub, NAPS2_EXE) if base else ""
+            if ruta and os.path.exists(ruta):
+                return ruta
+    return None
+
+
+def _sin_ventana() -> dict:
+    """Que no parpadee una consola negra por delante del programa."""
+    if os.name != "nt":
+        return {}
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return {"startupinfo": info,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
+def escanear_naps2(destino: str, dispositivo: str = "", dpi: int = DPI_POR_DEFECTO,
+                   modo_color: str = "color", duplex: bool = False,
+                   progreso: Optional[Callable[[int], None]] = None) -> str:
+    """Pasa el taco entero por el alimentador y deja el PDF hecho."""
+    exe = naps2()
+    if not exe:
+        raise FaltaNAPS2(
+            "Para escanear el taco entero por el alimentador hace falta NAPS2 "
+            "(gratuito).\n\nInstálelo desde " + NAPS2_DESCARGA +
+            " y vuelva a intentarlo.\nMientras tanto puede escanear hoja a hoja "
+            "por el cristal.")
+    os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
+    orden = [exe, "--noprofile", "--driver", "wia",
+             "--source", "duplex" if duplex else "feeder",
+             "--dpi", str(dpi), "--bitdepth", BITS_NAPS2.get(modo_color, "color"),
+             "--pagesize", "a4", "--deskew", "--force", "--verbose",
+             "-o", destino]
+    if dispositivo:
+        orden += ["--device", dispositivo]
+    try:
+        proceso = subprocess.Popen(orden, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   **_sin_ventana())
+    except OSError as e:
+        raise ErrorEscaneo(f"No se pudo arrancar NAPS2: {e}") from e
+    salida = []
+    for linea in proceso.stdout:
+        salida.append(linea.rstrip())
+        hoja = re.search(r"(?:page|p.gina)\s+(\d+)", linea, re.IGNORECASE)
+        if hoja and progreso:
+            progreso(int(hoja.group(1)))
+    proceso.wait(timeout=TIEMPO_MAXIMO)
+    texto = "\n".join(salida)
+    if proceso.returncode != 0 or not os.path.exists(destino):
+        if re.search(r"no (?:hay|documents?)|empty|vac", texto, re.IGNORECASE):
+            raise ErrorEscaneo(SIN_PAPEL)
+        raise ErrorEscaneo(
+            "El escaneo no terminó bien.\n\n" + (texto[-400:] or "Sin detalles."))
+    return destino
+
+
 def escanear(destino: str, device_id: Optional[str] = None,
              dpi: int = DPI_POR_DEFECTO, alimentador: bool = True,
-             duplex: bool = False, color: bool = True,
-             progreso: Optional[Callable[[int], None]] = None) -> str:
-    """Escanea el taco y deja el PDF en `destino`. Devuelve la ruta."""
+             duplex: bool = False, modo_color: str = "color",
+             progreso: Optional[Callable[[int], None]] = None,
+             nombre_dispositivo: str = "") -> str:
+    """Escanea y deja el PDF en `destino`. Devuelve la ruta.
+
+    Por el ALIMENTADOR manda NAPS2 (es el unico que encadena las hojas); por el
+    cristal, WIA, que va de serie en Windows.
+    """
     import tempfile
+
+    if alimentador:
+        return escanear_naps2(destino, nombre_dispositivo, dpi, modo_color,
+                              duplex, progreso)
 
     try:
         import pythoncom
@@ -333,5 +439,5 @@ def escanear(destino: str, device_id: Optional[str] = None,
     dispositivo = _conectar(device_id)
     with tempfile.TemporaryDirectory(prefix="escaneo_") as tmp:
         paginas = capturar_paginas(dispositivo, tmp, dpi, alimentador, duplex,
-                                   color, progreso)
+                                   modo_color, progreso)
         return armar_pdf(paginas, destino)

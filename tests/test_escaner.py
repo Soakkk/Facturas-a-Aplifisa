@@ -209,7 +209,7 @@ def test_no_se_toca_la_propiedad_pages():
     # Ponerle "Pages" a la HP M148 hacia fallar el escaneo por alimentador
     # entero con "El parametro no es correcto", aunque diga que admite 0..50.
     dev = DispositivoFalso()
-    escaner._preparar(dev, 200, alimentador=True, duplex=False, color=True)
+    escaner._preparar(dev, 200, alimentador=True, duplex=False, modo_color="color")
 
     paginas = next(p for p in dev.Properties if p.PropertyID == escaner.P_PAGINAS)
     assert paginas.Value == 7          # intacta
@@ -223,13 +223,13 @@ def test_por_el_alimentador_no_se_tocan_los_margenes():
 
     dev = DispositivoFalso()
     ancho_de(dev).Value = 999          # centinela: no debe cambiar
-    escaner._preparar(dev, 200, alimentador=True, duplex=False, color=True)
+    escaner._preparar(dev, 200, alimentador=True, duplex=False, modo_color="color")
     assert ancho_de(dev).Value == 999
 
     # Por el cristal si se pide el A4 entero.
     dev2 = DispositivoFalso()
     ancho_de(dev2).Value = 999
-    escaner._preparar(dev2, 200, alimentador=False, duplex=False, color=True)
+    escaner._preparar(dev2, 200, alimentador=False, duplex=False, modo_color="color")
     assert ancho_de(dev2).Value == int(escaner.A4_PULGADAS[0] * 200)
 
 
@@ -238,3 +238,42 @@ def test_si_la_primera_hoja_falta_se_dice_que_esta_vacio(tmp_path):
     with pytest.raises(escaner.ErrorEscaneo) as e:
         escaner.capturar_paginas(EscanerFalso(hojas=0), str(tmp_path))
     assert str(e.value) == escaner.SIN_PAPEL
+
+
+# ---------------- el alimentador lo hace NAPS2 (v1.6.0) ----------------------
+def test_por_el_alimentador_se_llama_a_naps2(tmp_path, monkeypatch):
+    # WIA con esta HP pasa el taco entero y solo devuelve la primera imagen:
+    # 13 facturas acababan en un PDF de una pagina. NAPS2 si las encadena.
+    ordenes = []
+
+    def falso_naps2(destino, dispositivo="", dpi=200, modo_color="color",
+                    duplex=False, progreso=None):
+        ordenes.append((destino, dispositivo, dpi, modo_color, duplex))
+        return destino
+
+    monkeypatch.setattr(escaner, "escanear_naps2", falso_naps2)
+    ruta = escaner.escanear(str(tmp_path / "x.pdf"), alimentador=True, dpi=150,
+                            modo_color="grises", nombre_dispositivo="HP")
+    assert ordenes == [(str(tmp_path / "x.pdf"), "HP", 150, "grises", False)]
+    assert ruta == str(tmp_path / "x.pdf")
+
+
+def test_si_falta_naps2_se_dice_como_instalarlo(monkeypatch):
+    monkeypatch.setattr(escaner, "naps2", lambda: None)
+    with pytest.raises(escaner.FaltaNAPS2) as e:
+        escaner.escanear_naps2("x.pdf")
+    assert "NAPS2" in str(e.value) and escaner.NAPS2_DESCARGA in str(e.value)
+
+
+def test_los_modos_de_color_se_traducen_para_naps2():
+    assert escaner.BITS_NAPS2 == {"color": "color", "grises": "gray", "bn": "bw"}
+
+
+def test_por_el_cristal_se_sigue_usando_wia(tmp_path, monkeypatch):
+    # Asi el cristal funciona aunque no haya nada instalado.
+    monkeypatch.setattr(escaner, "escanear_naps2",
+                        lambda *a, **k: pytest.fail("no debia usar NAPS2"))
+    monkeypatch.setattr(escaner, "_conectar", lambda _id: EscanerFalso(hojas=1))
+    monkeypatch.setattr(escaner, "armar_pdf", lambda paginas, destino: destino)
+    assert escaner.escanear(str(tmp_path / "y.pdf"),
+                            alimentador=False) == str(tmp_path / "y.pdf")

@@ -172,3 +172,46 @@ def aviso_tope() -> str:
         return (f"Lleva gastado el {pct:.0f} % del tope del mes "
                 f"({_eur(gasto_del_mes())} de {_eur(tope())}).")
     return ""
+
+
+# ------------------------------------------------- cuanto ocupa una factura
+# Gemini cobra las imagenes por "baldosas": una imagen pequeña (menos de 384 px
+# de lado) son 258 tokens, y si no, se parte en cuadros de 768x768 y cada uno
+# cuenta 258. Por eso mandar la pagina a mas puntos por pulgada multiplica el
+# gasto, mientras que el color o el tamaño del PDF no cambian nada.
+TOKENS_BALDOSA = 258
+LADO_BALDOSA = 768
+LADO_MINIMO = 384
+
+A4_PULGADAS = (8.27, 11.69)
+SALIDA_POR_FACTURA = 400      # tokens de respuesta, medidos con facturas reales
+
+
+def tokens_imagen(ancho: int, alto: int) -> int:
+    if ancho <= LADO_MINIMO and alto <= LADO_MINIMO:
+        return TOKENS_BALDOSA
+    columnas = -(-ancho // LADO_BALDOSA)      # division redondeando hacia arriba
+    filas = -(-alto // LADO_BALDOSA)
+    return columnas * filas * TOKENS_BALDOSA
+
+
+def tokens_de_pagina(ppp: int) -> int:
+    """Tokens de una factura A4 mandada a Gemini a esos puntos por pulgada."""
+    return tokens_imagen(int(A4_PULGADAS[0] * ppp), int(A4_PULGADAS[1] * ppp))
+
+
+def coste_por_factura(ppp: int, modelo: str = "") -> float:
+    """Lo que cuesta leer UNA factura a esa calidad, con el ultimo modelo que
+    haya contestado (o el mas caro de los Flash si aun no se sabe)."""
+    modelo = modelo or ultimo_modelo()
+    return coste(modelo, tokens_de_pagina(ppp), SALIDA_POR_FACTURA)
+
+
+def ultimo_modelo() -> str:
+    """El modelo que contesto la ultima vez (para estimar con lo que se paga)."""
+    meses = _leer().get("meses", {})
+    for clave in sorted(meses, reverse=True):
+        modelo = meses[clave].get("ultimo_modelo")
+        if modelo:
+            return modelo
+    return ""

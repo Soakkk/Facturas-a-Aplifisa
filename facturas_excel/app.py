@@ -26,6 +26,7 @@ from facturas_excel import (
     __version__, ajustes, archivo, costes, escaner, pendientes, updater,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
+from facturas_excel.dialogo_calidad import DialogoCalidad
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
@@ -149,7 +150,8 @@ class Worker(QThread):
     def run(self):
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            imagenes = cargar_imagenes(self.rutas, dpi=150)
+            imagenes = cargar_imagenes(
+                self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
             if not imagenes:
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
@@ -223,6 +225,8 @@ class HiloEscaneo(QThread):
                 dpi=self.opciones["dpi"],
                 alimentador=self.opciones["alimentador"],
                 duplex=self.opciones["duplex"],
+                modo_color=self.opciones.get("modo_color", "color"),
+                nombre_dispositivo=self.opciones.get("nombre_dispositivo", ""),
                 progreso=self.progreso.emit)
             self.terminado.emit(ruta)
         except Exception as e:
@@ -458,6 +462,11 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
         fila_titulo.addWidget(self.lbl_resumen_titulo)
         fila_titulo.addStretch(1)
+        btn_cerrar_resumen = QPushButton("Ocultar")
+        btn_cerrar_resumen.setToolTip(
+            "Es solo una comprobación. Se vuelve a ver en el menú Ver.")
+        btn_cerrar_resumen.clicked.connect(lambda: self._ver_resumen(False))
+        fila_titulo.addWidget(btn_cerrar_resumen)
         btn_copiar = QPushButton("Copiar resumen")
         btn_copiar.setToolTip(
             "Copia el resumen al portapapeles para pegarlo donde haga falta.")
@@ -476,7 +485,9 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_resumen.setMaximumHeight(190)
         self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         lr.addWidget(self.tabla_resumen)
+        self.resumen_card = resumen_card
         cuerpo.addWidget(resumen_card)
+        resumen_card.setVisible(bool(ajustes.leer("ver_resumen", True)))
 
         pie = QHBoxLayout()
         self.lbl_estado = QLabel("Cargue o escanee un lote de facturas para empezar.")
@@ -527,12 +538,18 @@ class VentanaPrincipal(QMainWindow):
         escaneos.addAction("Abrir la carpeta de escaneos",
                            lambda: archivo.abrir(archivo.carpeta_escaneos()))
 
+        ver = self.menuBar().addMenu("Ver")
+        self.accion_resumen = ver.addAction("Comprobación de totales por bloque")
+        self.accion_resumen.setCheckable(True)
+        self.accion_resumen.setChecked(bool(ajustes.leer("ver_resumen", True)))
+        self.accion_resumen.toggled.connect(self._ver_resumen)
+
         config = self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
         config.addAction("Carpeta donde se guardan los escaneos…",
                          self._configurar_carpeta_escaneos)
-        config.addAction("Calidad del escaneo (ppp)…", self._configurar_dpi)
+        config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
 
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
@@ -671,6 +688,14 @@ class VentanaPrincipal(QMainWindow):
             self._aviso_tope_dado = True
             QMessageBox.warning(self, "Gasto de Gemini", aviso)
 
+    def _ver_resumen(self, visible: bool):
+        """El resumen es solo un punto de control: si estorba, se quita."""
+        ajustes.guardar("ver_resumen", bool(visible))
+        if hasattr(self, "resumen_card"):
+            self.resumen_card.setVisible(bool(visible))
+        if hasattr(self, "accion_resumen") and self.accion_resumen.isChecked() != visible:
+            self.accion_resumen.setChecked(bool(visible))
+
     def _configurar_carpeta_escaneos(self):
         actual = ajustes.leer("carpeta_escaneos", escaner.carpeta_por_defecto())
         carpeta = QFileDialog.getExistingDirectory(
@@ -679,20 +704,15 @@ class VentanaPrincipal(QMainWindow):
             ajustes.guardar("carpeta_escaneos", carpeta)
             self.lbl_estado.setText(f"Los escaneos se guardarán en {carpeta}")
 
-    def _configurar_dpi(self):
-        opciones = ["150 ppp (archivos pequeños)",
-                    "200 ppp (recomendado)",
-                    "300 ppp (facturas con letra muy pequeña)"]
-        valores = [150, 200, 300]
-        actual = int(ajustes.leer("escaneo_dpi", escaner.DPI_POR_DEFECTO))
-        i = valores.index(actual) if actual in valores else 1
-        texto, ok = QInputDialog.getItem(
-            self, "Calidad del escaneo",
-            "A más ppp se lee mejor la letra pequeña, pero el PDF pesa más.\n"
-            "No cambia lo que cuesta leer la factura con Gemini.",
-            opciones, i, False)
-        if ok and texto:
-            ajustes.guardar("escaneo_dpi", valores[opciones.index(texto)])
+    def _configurar_calidad(self):
+        """Con qué detalle se le manda cada factura a Gemini: es lo único que
+        cambia el coste. La calidad del ESCANEO se elige al escanear."""
+        dialogo = DialogoCalidad(self)
+        if dialogo.exec() == QDialog.Accepted:
+            dialogo.guardar()
+            self.lbl_estado.setText(
+                f"Las facturas se leerán a {dialogo.ppp()} ppp "
+                f"({costes._eur(costes.coste_por_factura(dialogo.ppp()))} cada una).")
 
     # ---------- escaneo ----------
     def _escanear(self):
@@ -713,6 +733,7 @@ class VentanaPrincipal(QMainWindow):
             return
         dialogo.recordar()
         opciones = dialogo.valores()
+        opciones["nombre_dispositivo"] = dialogo.combo_escaner.currentText()
         # Sin cliente no se para: el PDF nace en "Sin identificar" y se muda
         # solo a su carpeta cuando el programa averigua de quién es por el NIF.
         if opciones["cliente"]:
