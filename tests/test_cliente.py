@@ -147,3 +147,48 @@ def test_con_empate_se_propone_al_que_recibe():
         [factura_gasolinera(f"FA-{n}") for n in range(4)])
     assert analisis.mejor.nif == CLIENTE[0]
     assert analisis.dudoso          # se sigue preguntando
+
+
+# ------------------------------------------- gasto o ingreso, con red de segur.
+def test_avisa_si_una_factura_sale_del_reves_de_lo_declarado():
+    from facturas_excel.app import C_ESTADO, ICONO_ESTADO
+    from facturas_excel.validacion import REVISAR
+    v = VentanaPrincipal(comprobar_updates=False)
+    crudos = _crudos(2)
+    v._rutas_actuales = ["taco.pdf"]
+    v._tipo_escaneo = "ingresos"          # el usuario dijo: taco de ventas
+    v._escaneo_reciente = True
+    # ...pero son compras a la gasolinera
+    v._on_terminado(procesar.preparar_lote(crudos, CLIENTE[1], CLIENTE[0]),
+                    CLIENTE[1], CLIENTE[0], crudos)
+
+    assert v.tabla.item(0, C_ESTADO).text() == ICONO_ESTADO[REVISAR]
+    assert "INGRESOS" in v.tabla.item(0, C_ESTADO).toolTip()
+
+
+def test_si_coincide_con_lo_declarado_no_molesta():
+    from facturas_excel.app import C_ESTADO
+    v = VentanaPrincipal(comprobar_updates=False)
+    crudos = _crudos(2)
+    v._rutas_actuales = ["taco.pdf"]
+    v._tipo_escaneo = "gastos"
+    v._escaneo_reciente = True
+    v._on_terminado(procesar.preparar_lote(crudos, CLIENTE[1], CLIENTE[0]),
+                    CLIENTE[1], CLIENTE[0], crudos)
+
+    assert "taco" not in v.tabla.item(0, C_ESTADO).toolTip()
+
+
+def test_la_unica_del_bloque_que_va_al_reves_se_marca():
+    from facturas_excel.app import C_ESTADO, C_TIPO
+    v = VentanaPrincipal(comprobar_updates=False)
+    crudos = _crudos(6)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(procesar.preparar_lote(crudos, CLIENTE[1], CLIENTE[0]),
+                    CLIENTE[1], CLIENTE[0], crudos)
+    # Se cambia una a mano a ingreso: es la unica de las 6
+    combo = v.tabla.cellWidget(0, C_TIPO)
+    combo.setCurrentIndex(combo.findData("venta"))
+    v._revalidar_todo()
+
+    assert "única factura de su bloque" in v.tabla.item(0, C_ESTADO).toolTip()

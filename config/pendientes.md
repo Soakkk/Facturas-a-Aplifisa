@@ -70,6 +70,18 @@ facturas del reves. Ahora:
 - Boton **«Cambiar cliente...»** junto al nombre: si se detecto mal, lo cambias
   y **el lote se rehace al momento sin volver a pagar a Gemini**.
 
+### Lo nuevo de la 1.10.0: ingresos y gasto/ingreso mas seguro
+
+- **Las cuentas de ingresos ya estan** (700 ventas, 705 prestacion de
+  servicios, 710 autoconsumo, 740/741/746 subvenciones, 750, 760, 770) con sus
+  subclaves I01, I02... El 700 lleva **I01**, que antes iba sin subclave.
+- Gemini elige tambien la cuenta de ingreso: una factura de trabajos o reparto
+  deberia ir a **705 (I01) PRESTACION DE SERVICIOS**, no al 700 generico.
+  **Dime si prefieres que todo vaya al 700.**
+- **Dos redes para el gasto/ingreso**: si dices al escanear que el taco es de
+  gastos y una factura sale como ingreso (o al reves), se marca en ambar; y si
+  una factura es la unica de su bloque que va al reves, tambien.
+
 ### Lo nuevo de la 1.9.0: el catalogo entero de Aplifisa
 
 Me pasaste la lista completa de conceptos (200, 600...682) con sus subclaves.

@@ -278,6 +278,7 @@ class VentanaPrincipal(QMainWindow):
         self._hilo_descarga_update = None
         self._hilo_escaneo = None
         self._tipo_escaneo = "gastos"
+        self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
@@ -758,6 +759,7 @@ class VentanaPrincipal(QMainWindow):
             destino = archivo.ruta_provisional(opciones["carpeta"],
                                                opciones["tipo"])
         self._tipo_escaneo = opciones["tipo"]
+        self._escaneo_reciente = True
         self._hojas_puestas = opciones.get("hojas", 0)
         self._escaneo_sin_identificar = not opciones["cliente"]
         self.btn_escanear.setEnabled(False)
@@ -886,7 +888,12 @@ class VentanaPrincipal(QMainWindow):
             "crudos": list(crudos or []),
             "cliente": nombre,
             "nif": nif,
+            # Lo que dijo el usuario al escanear ("gastos" o "ingresos"): sirve
+            # para cazar una factura que sale del reves.
+            "tipo_declarado": (self._tipo_escaneo
+                               if self._escaneo_reciente else ""),
         })
+        self._escaneo_reciente = False
         self._avisar_si_otro_cliente(nombre, nif)
         # El nombre del cliente se guarda para proponerlo al escanear el
         # proximo taco suyo, sin tener que escribirlo otra vez.
@@ -1307,6 +1314,11 @@ class VentanaPrincipal(QMainWindow):
             msgs.append(self.filas[r]["aviso"])
             if estado == OK:
                 estado = REVISAR
+        aviso_tipo = self._aviso_tipo(r)
+        if aviso_tipo:
+            msgs.append(aviso_tipo)
+            if estado == OK:
+                estado = REVISAR
         if r in self._duplicados:
             # Rojo, no ambar: importar dos veces la misma factura la paga dos
             # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
@@ -1322,6 +1334,34 @@ class VentanaPrincipal(QMainWindow):
         celda.setToolTip("\n".join(msgs) if msgs else "Todo correcto")
         self.tabla.blockSignals(False)
         self._resumen()
+
+    def _aviso_tipo(self, r) -> str:
+        """Comprueba por dos vias que la fila esta bien clasificada.
+
+        Gasto o ingreso se decide por el NIF del cliente, que es lo fiable,
+        pero si el NIF viene mal leido la factura se va al lado contrario sin
+        que nadie se entere. Se contrasta con lo que dijo el usuario al
+        escanear el taco y con lo que hace el resto de su bloque.
+        """
+        if r >= len(self.filas):
+            return ""
+        tipo = self._tipo_fila(r)
+        bloque = self.filas[r]["bloque"]
+        declarado = next((b.get("tipo_declarado", "") for b in self._bloques
+                          if b["nombre"] == bloque), "")
+        esperado = {"gastos": "gasto", "ingresos": "venta"}.get(declarado)
+        if esperado and tipo != esperado:
+            return (f"Dijo que este taco era de "
+                    f"{'GASTOS' if esperado == 'gasto' else 'INGRESOS'} y esta "
+                    f"factura sale como {'gasto' if tipo == 'gasto' else 'ingreso'}: "
+                    f"compruebe si está bien")
+        # Sin taco declarado: la que se sale de lo que hace todo su bloque.
+        tipos = [self._tipo_fila(i) for i in range(len(self.filas))
+                 if self.filas[i]["bloque"] == bloque]
+        if len(tipos) >= 5 and tipos.count(tipo) == 1:
+            return ("Es la única factura de su bloque que sale como "
+                    f"{'gasto' if tipo == 'gasto' else 'ingreso'}: compruébela")
+        return ""
 
     def _revalidar_todo(self):
         self._duplicados = encontrar_duplicados(

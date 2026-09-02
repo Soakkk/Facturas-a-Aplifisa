@@ -18,7 +18,7 @@ from typing import Dict, List, Tuple
 
 from . import clientes, proveedores
 from .conceptos import (
-    DEFAULT_VENTA, asignar_concepto, subclave_628, subclaves_de,
+    DEFAULT_VENTA, asignar_concepto, es_valido, subclave_628, subclaves_de,
 )
 from .extraccion import _num
 from .modelo import Factura
@@ -217,8 +217,13 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
 
     # Cuenta contable
     if tipo == "venta":
-        cuenta = DEFAULT_VENTA
-        gxx = None
+        # Los ingresos tienen su propia lista en Aplifisa (700 ventas, 705
+        # servicios, 740/741 subvenciones...). Si Gemini propone una de ellas
+        # se respeta; si no, la de siempre.
+        cuenta = str(datos.get("cuenta_ingreso") or "").strip()
+        gxx = str(datos.get("subclave_ingreso") or "").strip().upper() or None
+        if not es_valido(cuenta, gxx):
+            cuenta, gxx = DEFAULT_VENTA, None
     else:
         cuenta = str(datos.get("cuenta_gasto") or "").strip()
         texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"

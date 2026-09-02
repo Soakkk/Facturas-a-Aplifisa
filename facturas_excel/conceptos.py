@@ -19,7 +19,7 @@ import unicodedata
 # --- cuentas base (ajustables por criterio de la asesoria) ---
 CUENTA_COMBUSTIBLE = "628"   # carburante como suministro; subclave G16 (gas)
 DEFAULT_GASTO = "600"        # Aplifisa asigna 600 por defecto en compras
-DEFAULT_VENTA = "700"        # y 700 en ventas
+DEFAULT_VENTA = "700"        # y 700 en ventas (subclave I01)
 
 # Reglas ordenadas por PRIORIDAD (la primera que coincide gana). El orden importa:
 # los tributos y suministros van antes que reparacion/combustible para evitar
@@ -166,8 +166,12 @@ def tabla_textos() -> list:
 _CATALOGO: list | None = None
 
 
-def catalogo() -> list:
-    """[(cuenta, gxx, descripcion)] tal como los ofrece Aplifisa."""
+def catalogo(tipo=None) -> list:
+    """[(cuenta, gxx, descripcion)] tal como los ofrece Aplifisa.
+
+    `tipo` filtra por "gasto" o "ingreso" (los conceptos de cada lado son
+    distintos: los gastos llevan subclaves GXX y los ingresos IXX).
+    """
     global _CATALOGO
     if _CATALOGO is None:
         from .rutas import ruta_config
@@ -178,13 +182,14 @@ def catalogo() -> list:
                     if not linea.strip():
                         continue
                     partes = linea.split(";")
-                    if len(partes) >= 3:
-                        filas.append((partes[0].strip(), partes[1].strip().upper(),
-                                      partes[2].strip()))
+                    if len(partes) >= 4:
+                        filas.append((partes[0].strip().lower(), partes[1].strip(),
+                                      partes[2].strip().upper(), partes[3].strip()))
         except OSError:
             filas = []
         _CATALOGO = filas
-    return _CATALOGO
+    return [(c, g, d) for t, c, g, d in _CATALOGO
+            if tipo is None or t in (tipo, "ambos")]
 
 
 def descripcion_de(cuenta, gxx=None) -> str | None:

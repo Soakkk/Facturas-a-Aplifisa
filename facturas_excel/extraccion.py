@@ -38,16 +38,19 @@ class SinCredito(Exception):
 # La lista de conceptos NO es libre: es la que ofrece Aplifisa (catalogo en
 # config/conceptos_aplifisa.csv). Se le da entera para que elija de ahi y no se
 # invente cuentas que luego no existen al importar.
-def _lista_conceptos() -> str:
+def _lista_conceptos(tipo: str) -> str:
     from .conceptos import catalogo
-    lineas = [f"  {c} ({g}) {d}" for c, g, d in catalogo()
-              if c not in ("700", "200")]
-    return chr(10).join(lineas)
+    return chr(10).join(f"  {c} ({g}) {d}" for c, g, d in catalogo(tipo)
+                        if c != "200")
 
 
-_CRITERIO_CUENTAS = """CONCEPTOS DE GASTO. Elige UNO de esta lista EXACTA y
-devuelve su cuenta y su subclave. No uses ninguna cuenta que no este aqui:
+_CRITERIO_CUENTAS = """CONCEPTOS DE GASTO (si la factura es una COMPRA del
+cliente). Elige UNO de esta lista EXACTA y devuelve su cuenta y su subclave.
+No uses ninguna cuenta que no este aqui:
 {conceptos}
+
+CONCEPTOS DE INGRESO (si la factura la EMITE el cliente). Misma norma:
+{ingresos}
 
 CRITERIO DE LA ASESORIA (importante):
 - COMBUSTIBLE (gasoleo, gasoil, gasolina, diesel, AdBlue) y gasolineras o areas
@@ -63,8 +66,11 @@ CRITERIO DE LA ASESORIA (importante):
 - Mensajeria y portes -> 624 (G22).  Material de oficina -> 629 (G22).
 - Impuestos y tasas municipales (IVTM, basuras) -> 631 (G26).
 - Mercaderia para revender -> 600 (G01).
-- Si no encaja en ninguno con claridad, usa 629 (G22) OTROS SERVICIOS.""".format(
-    conceptos=_lista_conceptos())
+- Si no encaja en ninguno con claridad, usa 629 (G22) OTROS SERVICIOS.
+- En los INGRESOS: venta de genero -> 700 (I01); trabajos, obras, reparto,
+  alquileres y demas servicios -> 705 (I01); subvenciones -> 740/741/746;
+  intereses cobrados -> 760 (I02).""".format(
+    conceptos=_lista_conceptos("gasto"), ingresos=_lista_conceptos("ingreso"))
 
 _PROMPT = f"""Eres un experto en contabilidad espanola. Analiza esta factura escaneada.
 
@@ -93,8 +99,10 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "total": 0.0,
   "sustituye_a": null,
   "hay_anotaciones_manuscritas": false,
-  "cuenta_gasto": "la cuenta del concepto elegido de la lista (si fuese gasto)",
+  "cuenta_gasto": "cuenta del concepto de GASTO que le corresponderia",
   "subclave_gxx": "la subclave GXX de ESE MISMO concepto (siempre, no solo en la 628)",
+  "cuenta_ingreso": "cuenta del concepto de INGRESO que le corresponderia",
+  "subclave_ingreso": "la subclave IXX de ese concepto de ingreso",
   "concepto_texto": "descripcion breve del gasto/venta",
   "confianza": "alta/media/baja segun lo legible que este la factura"
 }}
