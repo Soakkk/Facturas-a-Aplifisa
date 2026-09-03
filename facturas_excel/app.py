@@ -33,6 +33,9 @@ from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
+from facturas_excel.dialogo_orden import (
+    PDF as ORDEN_PDF, DialogoOrden,
+)
 from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_registro import DialogoRegistro
 from facturas_excel.dialogo_textos import DialogoTextos
@@ -49,7 +52,7 @@ from facturas_excel.ficha_incidencias import (
     TITULOS as TITULOS_ESTADO, FichaIncidencias,
 )
 from facturas_excel.exportar import (
-    exportar_excel, totales_del_excel, verificar_excel,
+    exportar_excel, ordenar_para_exportar, totales_del_excel, verificar_excel,
 )
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
@@ -1865,6 +1868,16 @@ class VentanaPrincipal(QMainWindow):
                 self._siguiente_incidencia()
                 return
 
+        # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
+        # asi que este orden es el que tendran en el registro.
+        dialogo_orden = DialogoOrden(self)
+        if dialogo_orden.exec() != QDialog.Accepted:
+            return
+        dialogo_orden.recordar()
+        orden = dialogo_orden.orden()
+        for tipo in por_tipo:
+            por_tipo[tipo] = ordenar_para_exportar(por_tipo[tipo], orden)
+
         carpeta = QFileDialog.getExistingDirectory(
             self, "Carpeta para los Excel de Aplifisa", ESCRITORIO)
         if not carpeta:
@@ -1906,8 +1919,10 @@ class VentanaPrincipal(QMainWindow):
         QMessageBox.information(
             self, "Exportación terminada",
             f"Archivos preparados para Aplifisa en {carpeta}:\n\n{detalle}\n\n"
-            "Comprobado: lo escrito en los archivos coincide con lo que ve en "
-            "pantalla, línea por línea.")
+            + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
+               else "Por fecha de factura.\n")
+            + "Comprobado: lo escrito en los archivos coincide con lo que ve "
+              "en pantalla, línea por línea.")
 
 
 def _argumentos(argv):

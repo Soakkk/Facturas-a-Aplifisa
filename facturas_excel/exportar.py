@@ -4,6 +4,7 @@ colocando cada campo en la columna que indica la configuracion (ConfigColumnas).
 
 from __future__ import annotations
 
+from datetime import date
 from typing import List
 
 from openpyxl import Workbook
@@ -207,3 +208,41 @@ def totales_del_excel(config: ConfigColumnas, ruta: str) -> dict:
     for campo in list(suma)[1:]:
         suma[campo] = round(suma[campo], 2)
     return suma
+
+
+def ordenar_para_exportar(facturas: List[Factura], orden: str) -> List[Factura]:
+    """Ordena los apuntes para el Excel.
+
+    Aplifisa numera las facturas recibidas SEGUN ENTRAN, asi que el orden del
+    archivo decide con que numero queda registrada cada factura:
+
+    - "pdf": tal como estan (el orden del escaneo). El apunte nº 3 es la hoja 3.
+      Es lo que hace falta en un requerimiento.
+    - "fecha": de la mas antigua a la mas reciente, para el registro trimestral.
+
+    Las lineas de una misma factura (varios tipos de IVA, o el suplido) NO se
+    separan nunca: se ordenan juntas, por la primera.
+    """
+    if orden != "fecha":
+        return list(facturas)
+
+    from .validacion import fecha_de
+
+    grupos: List[List[Factura]] = []
+    indice = {}
+    for f in facturas:
+        clave = ((f.num_factura or "").strip().upper(), (f.nif or "").strip().upper())
+        if clave in indice and grupos[indice[clave]]:
+            grupos[indice[clave]].append(f)
+        else:
+            indice[clave] = len(grupos)
+            grupos.append([f])
+
+    def orden_grupo(par):
+        i, grupo = par
+        dia = fecha_de(grupo[0].fecha)
+        # Sin fecha entendible: al final, sin cambiar su orden entre ellas.
+        return (dia is None, dia or date.max, i)
+
+    ordenados = sorted(enumerate(grupos), key=orden_grupo)
+    return [f for _, grupo in ordenados for f in grupo]
