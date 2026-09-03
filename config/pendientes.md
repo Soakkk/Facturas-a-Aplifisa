@@ -36,6 +36,14 @@ igual que Gemini conteste `628` o `628 (G16) SUMINISTROS GAS`. El gasóleo va a
 solo la venta de género), y también cuando el respaldo por palabras clave tiene
 que decidir sin Gemini.
 
+**Recargo de equivalencia.** Si el lote trae facturas con recargo, aparece
+arriba un desplegable para decir cómo se registran las de ese cliente:
+**minorista** (sin 303: cada gasto por el TOTAL de la factura) o **mayorista en
+estimación directa** (con su desglose de IVA y recargo). Se pregunta la primera
+vez, se recuerda por NIF y se puede cambiar cuando quiera: el lote se rehace al
+momento sin volver a leer nada. Si el lote no tiene recargo, el desplegable ni
+aparece. Además se comprueban los pares 21→5,2 / 10→1,4 / 4→0,5.
+
 **Suplidos.** Se registran **como tú los contabilizas**: una segunda línea de
 base imponible del mismo apunte, sin % ni cuota de IVA, repitiendo fecha, número
 y concepto. Ejemplo real: base 100 + IVA 21 + línea de 109,08 = importe neto
@@ -56,18 +64,14 @@ lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.
 
 1. **¿Te falta alguna cuenta** de las que usas en el catálogo?
 
-2. **Los pares de tipo y recargo.** ¿Son siempre IVA 21 % → 5,2 %, 10 % → 1,4 %
-   y 4 % → 0,5 %? Si me lo confirmas, el programa caza solo los errores de
-   lectura del recargo.
-
-3. **Una factura que pone «Copia duplicada»**: ¿se registra igual o se descarta?
+2. **Una factura que pone «Copia duplicada»**: ¿se registra igual o se descarta?
    Si se descarta, el programa puede detectar ese sello y avisarte, como ya hace
    con las sustituidas.
 
-4. **Un proveedor que factura sin recargo** a un cliente que está en recargo de
+3. **Un proveedor que factura sin recargo** a un cliente que está en recargo de
    equivalencia: entiendo que también va por el total factura. ¿Correcto?
 
-5. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
+4. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
    para la cuenta?
 
 ---

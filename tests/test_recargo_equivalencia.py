@@ -142,3 +142,128 @@ def test_avisa_de_las_anotaciones_a_mano():
     pr = procesar(datos_coca(hay_anotaciones_manuscritas=True))
     assert "escrito a mano" in pr.aviso
     assert pr.facturas[0].base_iva == 114.98  # manda lo impreso
+
+
+# --------------------------------------- pares tipo -> recargo (2026-09-02)
+def test_el_recargo_que_no_toca_a_su_tipo_de_iva_se_avisa():
+    """El regimen fija los pares: 21->5,2 / 10->1,4 / 4->0,5, siempre."""
+    from facturas_excel.modelo import Factura
+    from facturas_excel.validacion import REVISAR, validar
+
+    def con(pct_iva, pct_req, base=100.0):
+        f = Factura(nombre="PROVEEDOR", nif="B12345674", fecha="31/01/2025",
+                    num_factura="1", concepto="600", subclave="G01",
+                    base_iva=base, pct_iva=pct_iva,
+                    cuota_iva=round(base * pct_iva / 100, 2),
+                    base_requiv=base, pct_requiv=pct_req,
+                    cuota_requiv=round(base * pct_req / 100, 2))
+        f.total_impreso = round(base + (f.cuota_iva or 0) + (f.cuota_requiv or 0), 2)
+        return f
+
+    for tipo, recargo in ((21.0, 5.2), (10.0, 1.4), (4.0, 0.5)):
+        assert validar(con(tipo, recargo)).estado == "ok"
+
+    res = validar(con(21.0, 1.4))
+    assert res.estado == REVISAR
+    assert any("es 5,2%, no 1,4%" in m for m in res.mensajes)
+
+
+def test_una_cuota_de_recargo_mal_calculada_es_error():
+    from facturas_excel.modelo import Factura
+    from facturas_excel.validacion import ERROR, validar
+
+    f = Factura(nombre="PROVEEDOR", nif="B12345674", fecha="31/01/2025",
+                num_factura="1", concepto="600", subclave="G01", base_iva=100.0,
+                pct_iva=21.0, cuota_iva=21.0, base_requiv=100.0, pct_requiv=5.2,
+                cuota_requiv=9.99)
+    assert validar(f).estado == ERROR
+
+
+# ------------------------- minorista o mayorista: como se registra el recargo
+def _preparar_ventana(monkeypatch, tmp_path, regimen_guardado=""):
+    """Ventana lista para probar, sin que salte ningun dialogo modal."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from facturas_excel import clientes
+    from facturas_excel.dialogo_cliente import DialogoCliente
+    from facturas_excel.dialogo_recargo import DialogoRecargo
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(clientes, "dir_datos", lambda: str(tmp_path))
+    monkeypatch.setattr(DialogoRecargo, "exec", lambda self: 0)
+    monkeypatch.setattr(DialogoCliente, "exec", lambda self: 0)
+    if regimen_guardado:
+        clientes.guardar_regimen_recargo("12345678Z", regimen_guardado, "TIENDA")
+
+
+def _ventana_con_recargo(monkeypatch, tmp_path, regimen_guardado=""):
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.procesar import preparar_lote
+
+    _preparar_ventana(monkeypatch, tmp_path, regimen_guardado)
+
+    crudos = [(b"", "taco.pdf", 1, datos_coca())]
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(preparar_lote(crudos, "TIENDA", "12345678Z"),
+                    "TIENDA", "12345678Z", crudos)
+    return v
+
+
+def test_sin_facturas_con_recargo_la_eleccion_ni_aparece(monkeypatch, tmp_path):
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.procesar import preparar_lote
+
+    _preparar_ventana(monkeypatch, tmp_path)
+    datos = dict(datos_coca())
+    datos["lineas_iva"] = [{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}]
+    datos["total"] = 121.0
+    for campo in ("base_requiv", "pct_requiv", "cuota_requiv"):
+        datos[campo] = None
+    crudos = [(b"", "taco.pdf", 1, datos)]
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(preparar_lote(crudos, "TIENDA", "12345678Z"),
+                    "TIENDA", "12345678Z", crudos)
+
+    assert not v._hay_recargo
+    assert v._facturas_con_recargo() == 0
+
+
+def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
+    from facturas_excel.app import C_BASE, C_CUOTA, C_PCT
+    from facturas_excel.clientes import TOTAL
+
+    v = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
+
+    assert v._por_el_total()
+    assert v.tabla.rowCount() == 1                     # un solo apunte
+    assert v.tabla.item(0, C_PCT).text() == ""         # sin desglose de IVA
+    assert v.tabla.item(0, C_CUOTA).text() == ""
+    assert v.tabla.item(0, C_BASE).text() == "145,11"  # base + IVA + recargo
+
+
+def test_el_mayorista_registra_con_desglose(monkeypatch, tmp_path):
+    from facturas_excel.app import C_BASE, C_PCT
+    from facturas_excel.clientes import DESGLOSE
+
+    v = _ventana_con_recargo(monkeypatch, tmp_path, DESGLOSE)
+
+    assert not v._por_el_total()
+    assert v.tabla.item(0, C_PCT).text() == "21,00"
+    assert v.tabla.item(0, C_BASE).text() == "114,98"
+
+
+def test_cambiar_de_regimen_rehace_el_lote_sin_volver_a_leer(monkeypatch, tmp_path):
+    from facturas_excel.app import C_BASE
+    from facturas_excel.clientes import DESGLOSE, TOTAL
+
+    v = _ventana_con_recargo(monkeypatch, tmp_path, DESGLOSE)
+    assert v.tabla.item(0, C_BASE).text() == "114,98"
+
+    v.combo_recargo.setCurrentIndex(v.combo_recargo.findData(TOTAL))
+
+    assert v.tabla.item(0, C_BASE).text() == "145,11"
+    assert v._hay_recargo

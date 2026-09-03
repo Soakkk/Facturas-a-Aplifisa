@@ -16,7 +16,7 @@ from dataclasses import replace
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
@@ -33,10 +33,11 @@ from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
+from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
-    en_recargo_equivalencia, guardar_recargo_equivalencia, marcar_cliente,
-    nombres_conocidos, recordar_nombre,
+    DESGLOSE, TOTAL, guardar_regimen_recargo, marcar_cliente, nombres_conocidos,
+    recordar_nombre, regimen_recargo,
 )
 from facturas_excel.conceptos import SUBCLAVES_628, texto_para
 from facturas_excel.config_columnas import leer_config
@@ -360,13 +361,31 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
         bloque_cliente.addWidget(self.btn_cliente)
-        self.chk_recargo = QCheckBox("En recargo de equivalencia")
-        self.chk_recargo.setToolTip(
-            "El cliente no deduce IVA: cada gasto se registra por el total de la\n"
-            "factura (base + IVA + recargo), sin desglose. Se recuerda por NIF.")
-        self.chk_recargo.setEnabled(False)
-        self.chk_recargo.toggled.connect(self._on_recargo)
-        bloque_cliente.addWidget(self.chk_recargo)
+        # Solo aparece si el lote trae facturas con recargo de equivalencia:
+        # para el resto de clientes no significa nada y estorba.
+        self.fila_recargo = QWidget()
+        lr_recargo = QHBoxLayout(self.fila_recargo)
+        lr_recargo.setContentsMargins(0, 0, 0, 0)
+        lr_recargo.setSpacing(6)
+        lbl_recargo = QLabel("Recargo de equivalencia:")
+        lbl_recargo.setObjectName("textoSuave")
+        lr_recargo.addWidget(lbl_recargo)
+        self.combo_recargo = ComboSinRueda()
+        self.combo_recargo.addItem(
+            "registrar por el TOTAL factura (minorista)", TOTAL)
+        self.combo_recargo.addItem(
+            "registrar con DESGLOSE de IVA y recargo (mayorista)", DESGLOSE)
+        self.combo_recargo.setToolTip(
+            "Lo decide el régimen del cliente, no la factura:\n"
+            "  · Minorista en recargo (sin modelo 303): no deduce IVA, así que "
+            "el gasto va por el total.\n"
+            "  · Mayorista en estimación directa: registra el IVA y el recargo "
+            "por separado.\n"
+            "Se recuerda por NIF.")
+        self.combo_recargo.currentIndexChanged.connect(self._on_recargo)
+        lr_recargo.addWidget(self.combo_recargo, 1)
+        self.fila_recargo.setVisible(False)
+        bloque_cliente.addWidget(self.fila_recargo)
         la.addLayout(bloque_cliente, 1)
 
         self.btn_gastos = QPushButton("Exportar a Aplifisa…")
@@ -932,10 +951,7 @@ class VentanaPrincipal(QMainWindow):
         recordar_nombre(nif, nombre)
         self._cliente_nif, self._cliente_nombre = nif, nombre
         self._pintar_cliente()
-        self.chk_recargo.blockSignals(True)
-        self.chk_recargo.setEnabled(bool(nif))
-        self.chk_recargo.setChecked(en_recargo_equivalencia(nif))
-        self.chk_recargo.blockSignals(False)
+        self._preparar_recargo()
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
         self._revalidar_todo()
@@ -1018,10 +1034,7 @@ class VentanaPrincipal(QMainWindow):
                 bloque["cliente"], bloque["nif"] = nombre, nif
         self._cliente_nif, self._cliente_nombre = nif, nombre
         self._pintar_cliente()
-        self.chk_recargo.blockSignals(True)
-        self.chk_recargo.setEnabled(bool(nif))
-        self.chk_recargo.setChecked(en_recargo_equivalencia(nif))
-        self.chk_recargo.blockSignals(False)
+        self._preparar_recargo()
         self._rellenar_tabla()
         self._revalidar_todo()
         self.lbl_estado.setText(f"Lote rehecho con {nombre or nif} como cliente.")
@@ -1114,10 +1127,8 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado = []
         self._cliente_nif = self._cliente_nombre = ""
         self.btn_deshacer_borrado.setEnabled(False)
-        self.chk_recargo.blockSignals(True)
-        self.chk_recargo.setChecked(False)
-        self.chk_recargo.setEnabled(False)
-        self.chk_recargo.blockSignals(False)
+        self._hay_recargo = False
+        self.fila_recargo.setVisible(False)
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
         self._revalidar_todo()
@@ -1125,8 +1136,13 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_cliente.setText("Cliente pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
 
+    def _por_el_total(self) -> bool:
+        """El cliente registra sus compras con recargo por el total factura."""
+        return (getattr(self, "_hay_recargo", False)
+                and self.combo_recargo.currentData() == TOTAL)
+
     def _rellenar_tabla(self):
-        recargo = self.chk_recargo.isChecked()
+        recargo = self._por_el_total()
         self.tabla.blockSignals(True)
         self.tabla.setRowCount(0)
         self.filas = []
@@ -1138,12 +1154,44 @@ class VentanaPrincipal(QMainWindow):
                                       vista.gxx, vista.aviso, bloque["nombre"])
         self.tabla.blockSignals(False)
 
-    def _on_recargo(self, activo):
-        """Marcar el recargo rehace la tabla: cambia como se registra cada gasto."""
-        guardar_recargo_equivalencia(getattr(self, "_cliente_nif", ""), activo,
-                                     getattr(self, "_cliente_nombre", ""))
+    def _on_recargo(self):
+        """Cambiar el régimen rehace la tabla: cambia como se registra el gasto."""
+        guardar_regimen_recargo(getattr(self, "_cliente_nif", ""),
+                                self.combo_recargo.currentData(),
+                                getattr(self, "_cliente_nombre", ""))
         self._rellenar_tabla()
         self._revalidar_todo()
+
+    def _facturas_con_recargo(self) -> int:
+        """Cuantas lineas del lote traen recargo de equivalencia."""
+        return sum(1 for bloque in self._bloques
+                   for _, pr in bloque["procesadas"]
+                   for f in pr.facturas if f.cuota_requiv)
+
+    def _preparar_recargo(self):
+        """Enseña la eleccion solo si hace falta, y la pregunta la primera vez.
+
+        Dos clientes con recargo se llevan distinto segun SU regimen (minorista
+        sin 303 -> por el total; mayorista en estimacion directa -> con
+        desglose), y eso no se ve en la factura: hay que preguntarlo.
+        """
+        cuantas = self._facturas_con_recargo()
+        self._hay_recargo = bool(cuantas)
+        self.fila_recargo.setVisible(self._hay_recargo)
+        if not cuantas:
+            return
+        nif = getattr(self, "_cliente_nif", "")
+        guardado = regimen_recargo(nif)
+        if not guardado and nif:
+            dialogo = DialogoRecargo(getattr(self, "_cliente_nombre", ""),
+                                     cuantas, self)
+            guardado = dialogo.elegido() if dialogo.exec() == QDialog.Accepted                 else DESGLOSE
+            guardar_regimen_recargo(nif, guardado,
+                                    getattr(self, "_cliente_nombre", ""))
+        self.combo_recargo.blockSignals(True)
+        self.combo_recargo.setCurrentIndex(
+            max(0, self.combo_recargo.findData(guardado or DESGLOSE)))
+        self.combo_recargo.blockSignals(False)
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque=""):
         senales_bloqueadas = self.tabla.signalsBlocked()
@@ -1472,7 +1520,7 @@ class VentanaPrincipal(QMainWindow):
             filas_por_tipo[self._tipo_fila(r)].append(
                 (self.filas[r]["bloque"] or "—", self.filas[r]["factura"]))
         # En recargo el gasto no tiene desglose de IVA: solo el total factura.
-        recargo = self.chk_recargo.isChecked()
+        recargo = self._por_el_total()
         self.lbl_resumen_titulo.setText(
             "Comprobación de totales por bloque"
             + ("  ·  cliente en recargo de equivalencia" if recargo else ""))

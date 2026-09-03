@@ -20,6 +20,10 @@ ERROR = "error"      # rojo: una cuenta no cuadra
 
 TOLERANCIA = 0.02  # euros de margen por redondeos
 
+# El recargo de equivalencia va SIEMPRE emparejado con su tipo de IVA: es el
+# regimen quien lo fija, no el proveedor (confirmado por el usuario 2026-09-02).
+RECARGO_DE_IVA = {21.0: 5.2, 10.0: 1.4, 4.0: 0.5}
+
 
 @dataclass
 class Resultado:
@@ -110,6 +114,12 @@ def marcar_revisar_concepto(f: Factura, marcar_revisar) -> None:
         f.descripcion_concepto = descripcion_de(cuenta, gxx)
 
 
+def porcentaje(v) -> str:
+    """21, 10, 5,2... como se escribe, sin ceros de sobra."""
+    v = float(v)
+    return str(int(v)) if v.is_integer() else f"{v:g}".replace(".", ",")
+
+
 def validar(f: Factura) -> Resultado:
     msgs: List[str] = []
     estado = OK
@@ -159,6 +169,24 @@ def validar(f: Factura) -> Resultado:
             marcar_error(
                 f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}"
             )
+
+    # Recargo de equivalencia: su tipo lo fija el del IVA, y la cuota sale de
+    # la base. Un recargo mal leido no descuadra siempre el total (son céntimos),
+    # asi que hay que comprobarlo aparte.
+    if f.pct_requiv is not None and f.pct_iva is not None:
+        esperado = RECARGO_DE_IVA.get(round(float(f.pct_iva), 2))
+        if esperado is not None and abs(f.pct_requiv - esperado) > 0.01:
+            marcar_revisar(
+                f"El recargo del {porcentaje(f.pct_iva)}% de IVA es "
+                f"{porcentaje(esperado)}%, no {porcentaje(f.pct_requiv)}%")
+    if f.base_requiv is not None and f.pct_requiv is not None:
+        esperada = round(f.base_requiv * f.pct_requiv / 100.0, 2)
+        if f.cuota_requiv is None:
+            marcar_revisar("Falta la cuota del recargo de equivalencia")
+        elif abs(f.cuota_requiv - esperada) > TOLERANCIA:
+            marcar_error(
+                f"Cuota del recargo descuadra: {f.cuota_requiv} pero "
+                f"base×% = {esperada}")
 
     # Aritmetica del IRPF
     if f.base_irpf is not None and f.pct_irpf is not None and f.cuota_irpf is not None:
