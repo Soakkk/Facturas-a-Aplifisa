@@ -55,8 +55,16 @@ REGLAS_GASTOS = [
     ("624", ["mensajeria", "porte", "paqueteria"]),
     ("629", ["papeleria", "material de oficina"]),
 ]
+# Criterio del usuario (2026-09-02): la PRESTACION DE SERVICIOS es la 705. Al
+# 700 solo la venta de genero. Esto es el respaldo por palabras clave para
+# cuando Gemini no propone cuenta de ingreso.
 REGLAS_VENTAS = [
-    # normalmente todas al 700; se puede afinar por actividad del cliente
+    ("705", ["servicio", "servicios", "trabajo", "trabajos", "mano de obra",
+             "reparto", "transporte", "portes", "obra", "reforma", "montaje",
+             "instalacion", "reparacion", "mantenimiento", "asesoramiento",
+             "honorarios", "alquiler", "arrendamiento", "limpieza"]),
+    ("760", ["intereses", "interes"]),
+    ("740", ["subvencion", "subvenciones"]),
 ]
 
 

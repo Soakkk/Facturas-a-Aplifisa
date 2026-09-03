@@ -1,0 +1,17 @@
+# Fin de linea normalizado para todo el proyecto.
+#
+# Sin esto, dos personas (o dos IA) editando con herramientas distintas hacen
+# que un cambio de tres lineas aparezca como si hubieran reescrito el fichero
+# entero: los diff se vuelven ilegibles y cualquier merge choca en todas las
+# lineas. En el repositorio se guarda siempre con LF; en Windows cada uno lo ve
+# como quiera.
+* text=auto eol=lf
+
+# Binarios: que git no los toque.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.exe binary

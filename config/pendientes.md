@@ -32,7 +32,9 @@ lote sin volver a pagar la lectura.
 (gastos e ingresos, con sus subclaves) y Gemini elige de esa lista, no de una
 idea general del PGC. Se comprueba que la pareja cuenta+subclave exista, y da
 igual que Gemini conteste `628` o `628 (G16) SUMINISTROS GAS`. El gasóleo va a
-628 (G16), como tú lo tienes.
+628 (G16), como tú lo tienes. **La prestación de servicios va al 705** (al 700
+solo la venta de género), y también cuando el respaldo por palabras clave tiene
+que decidir sin Gemini.
 
 **Suplidos.** Se leen los que la factura identifica como tales, van en su
 columna, se suman al total sin mezclarse con la base ni el IVA, y se exportan al
@@ -50,29 +52,20 @@ lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.
 
 ### Lo que me falta saber de ti
 
-1. **Los ingresos: ¿700 o 705?** Ahora una factura de trabajos, reparto u obra
-   se va a 705 (I01) PRESTACIÓN DE SERVICIOS, y solo la venta de género al 700.
-   Si prefieres que todo vaya al 700, dímelo y lo dejo fijo.
+1. **¿Te falta alguna cuenta** de las que usas en el catálogo?
 
-2. **Los textos de conceptos.** En Configuración → «Textos de conceptos para
-   Aplifisa» tienes la lista para parametrizar una vez en tu programa. Con eso,
-   cada apunte entra con su cuenta Y su subclave, sin tocar nada. Cuando lo
-   hagas, marca la casilla y dime qué tal.
-
-3. **¿Te falta alguna cuenta** de las que usas en el catálogo?
-
-4. **Los pares de tipo y recargo.** ¿Son siempre IVA 21 % → 5,2 %, 10 % → 1,4 %
+2. **Los pares de tipo y recargo.** ¿Son siempre IVA 21 % → 5,2 %, 10 % → 1,4 %
    y 4 % → 0,5 %? Si me lo confirmas, el programa caza solo los errores de
    lectura del recargo.
 
-5. **Una factura que pone «Copia duplicada»**: ¿se registra igual o se descarta?
+3. **Una factura que pone «Copia duplicada»**: ¿se registra igual o se descarta?
    Si se descarta, el programa puede detectar ese sello y avisarte, como ya hace
    con las sustituidas.
 
-6. **Un proveedor que factura sin recargo** a un cliente que está en recargo de
+4. **Un proveedor que factura sin recargo** a un cliente que está en recargo de
    equivalencia: entiendo que también va por el total factura. ¿Correcto?
 
-7. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
+5. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
    para la cuenta?
 
 ---
