@@ -34,6 +34,7 @@ from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.dialogo_recargo import DialogoRecargo
+from facturas_excel.dialogo_registro import DialogoRegistro
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
     DESGLOSE, TOTAL, guardar_regimen_recargo, marcar_cliente, nombres_conocidos,
@@ -55,6 +56,7 @@ from facturas_excel.procesar import (
     normaliza_nif, preparar_lote, recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor,
 )
+from facturas_excel.registro import contrastar, leer_registro
 from facturas_excel.resumen import (
     eur, porcentaje_iva, resumir, resumir_por_bloque,
 )
@@ -598,6 +600,10 @@ class VentanaPrincipal(QMainWindow):
         escaneos.addAction("Abrir la carpeta de escaneos",
                            lambda: archivo.abrir(archivo.carpeta_escaneos()))
 
+        comprobar = self.menuBar().addMenu("Comprobar")
+        comprobar.addAction("Contrastar con el registro de Aplifisa…",
+                            self._contrastar_registro)
+
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales por bloque")
         self.accion_resumen.setCheckable(True)
@@ -748,6 +754,43 @@ class VentanaPrincipal(QMainWindow):
             # Una vez por sesion: recordarlo en cada lote seria un incordio.
             self._aviso_tope_dado = True
             QMessageBox.warning(self, "Gasto de Gemini", aviso)
+
+    def _contrastar_registro(self):
+        """El cuadre a tres bandas: factura -> Excel -> lo que quedo en Aplifisa.
+
+        Se le pasa el PDF del "Listado de apuntes" de Aplifisa y se compara
+        apunte a apunte con el lote. Es la unica forma de ver si algo se quedo
+        sin importar o entro con otro importe.
+        """
+        if not self.tabla.rowCount():
+            QMessageBox.information(
+                self, "Contrastar con Aplifisa",
+                "Cargue primero el lote de facturas que quiere comprobar.")
+            return
+        ruta, _ = QFileDialog.getOpenFileName(
+            self, "Listado de apuntes de Aplifisa (PDF)", ESCRITORIO,
+            "Listado de Aplifisa (*.pdf)")
+        if not ruta:
+            return
+        try:
+            registro = leer_registro(ruta)
+        except Exception as e:
+            QMessageBox.critical(self, "No se pudo leer el listado", str(e))
+            return
+        if not registro.apuntes:
+            QMessageBox.warning(
+                self, "Sin apuntes",
+                "No se han encontrado apuntes en ese PDF.\n\n"
+                "Tiene que ser el listado que imprime Aplifisa. Un PDF de papel "
+                "escaneado no sirve: hay que sacarlo del propio programa.")
+            return
+        facturas = [self._leer_fila(r) for r in range(self.tabla.rowCount())]
+        informe = contrastar(facturas, registro)
+        DialogoRegistro(informe, registro, self).exec()
+        self.lbl_estado.setText(
+            f"Contraste con Aplifisa: {informe.emparejadas} cuadran, "
+            f"{len(informe.sin_registrar)} sin registrar, "
+            f"{len(informe.de_mas)} de más, {len(informe.distintas)} distintas.")
 
     def _ver_resumen(self, visible: bool):
         """El resumen es solo un punto de control: si estorba, se quita."""
