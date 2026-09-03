@@ -138,10 +138,15 @@ def test_no_marca_nada_si_la_sustituida_no_esta_en_el_lote():
     assert not nueva.aviso
 
 
-def test_avisa_de_las_anotaciones_a_mano():
-    pr = procesar(datos_coca(hay_anotaciones_manuscritas=True))
-    assert "escrito a mano" in pr.aviso
+def test_avisa_solo_si_lo_escrito_a_mano_toca_a_los_importes():
+    # El asesor anota el CIF y numera las facturas para los requerimientos de
+    # Hacienda: avisar de eso pondria TODAS en ambar y el semaforo no serviria.
+    pr = procesar(datos_coca(manuscrito_en_importes=True))
+    assert "escritos a mano" in pr.aviso
     assert pr.facturas[0].base_iva == 114.98  # manda lo impreso
+
+    tranquila = procesar(datos_coca(manuscrito_en_importes=False))
+    assert not tranquila.aviso
 
 
 # --------------------------------------- pares tipo -> recargo (2026-09-02)

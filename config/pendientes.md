@@ -44,6 +44,18 @@ vez, se recuerda por NIF y se puede cambiar cuando quiera: el lote se rehace al
 momento sin volver a leer nada. Si el lote no tiene recargo, el desplegable ni
 aparece. Además se comprueban los pares 21→5,2 / 10→1,4 / 4→0,5.
 
+**Tus anotaciones a mano.** El programa ya distingue: el CIF que anotas cuando
+no se lee, y la numeración que pones para los requerimientos, **se usan y no dan
+aviso**. Solo avisa si lo escrito a mano toca a los IMPORTES (un total corregido
+o una línea tachada), que ahí sí manda lo impreso. Antes avisaba de cualquier
+anotación, y por eso te salían todas las facturas en ámbar.
+
+**El mismo proveedor, escrito igual.** El NIF se guarda siempre sin guiones ni
+puntos (venía «A-82018474» y «A82018474» del mismo proveedor), y el nombre se
+unifica al que ya tenga guardado ese NIF. Importa: Aplifisa busca la cuenta por
+NIF y luego por nombre EXACTO, así que dos formas de escribirlo pueden acabar en
+dos cuentas distintas.
+
 **Suplidos.** Se registran **como tú los contabilizas**: una segunda línea de
 base imponible del mismo apunte, sin % ni cuota de IVA, repitiendo fecha, número
 y concepto. Ejemplo real: base 100 + IVA 21 + línea de 109,08 = importe neto

@@ -92,3 +92,39 @@ def test_un_proveedor_desconocido_no_hereda_nada():
     pr = factura("PANADERIA LOS HERMANOS", None)
     assert completar_desde_memoria([pr]) == 0
     assert pr.facturas[0].nif is None
+
+
+# ------------------------------- el mismo proveedor, escrito y leido igual ---
+def test_el_nif_se_guarda_sin_guiones(tmp_path, monkeypatch):
+    """El mismo proveedor venia "A-82018474" y "A82018474": con el guion se
+    contaba como otro distinto y ni se veia el duplicado."""
+    from facturas_excel.procesar import construir
+
+    datos = {"emisor_nif": "A-82018474", "emisor_nombre": "TELEFONICA SA",
+             "receptor_nif": "12345678Z", "receptor_nombre": "CLIENTE",
+             "num_factura": "1", "fecha": "13/06/2025",
+             "lineas_iva": [{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}],
+             "total": 121.0, "cuenta_gasto": "628", "subclave_gxx": "G17"}
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    assert pr.facturas[0].nif == "A82018474"
+
+
+def test_el_mismo_proveedor_se_escribe_siempre_igual(tmp_path, monkeypatch):
+    """Aplifisa busca la cuenta por NIF y luego por NOMBRE EXACTO: dos formas
+    de escribir el mismo proveedor pueden acabar en dos cuentas."""
+    from facturas_excel import proveedores
+    from facturas_excel.procesar import (
+        construir, recordar_nif, unificar_nombres,
+    )
+
+    monkeypatch.setattr(proveedores, "dir_datos", lambda: str(tmp_path))
+    recordar_nif("TELEFÓNICA DE ESPAÑA, S.A.U.", "A82018474", manual=True)
+
+    datos = {"emisor_nif": "A82018474", "emisor_nombre": "Telefonica de España, S.A.U.",
+             "receptor_nif": "12345678Z", "receptor_nombre": "CLIENTE",
+             "num_factura": "2", "fecha": "13/07/2025",
+             "lineas_iva": [{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}],
+             "total": 121.0, "cuenta_gasto": "628", "subclave_gxx": "G17"}
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    assert unificar_nombres([pr]) == 1
+    assert pr.facturas[0].nombre == "TELEFÓNICA DE ESPAÑA, S.A.U."

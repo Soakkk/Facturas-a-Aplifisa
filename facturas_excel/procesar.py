@@ -242,7 +242,10 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         fecha=datos.get("fecha") or None,
         fecha_operacion=datos.get("fecha_operacion") or None,
         nombre=nombre or None,
-        nif=nif or None,
+        # El NIF, siempre limpio: el mismo proveedor viene unas veces
+        # "A-82018474" y otras "A82018474", y con el guion se contaba como otro
+        # distinto (ni se detectaba el duplicado ni valia la memoria de NIF).
+        nif=normaliza_nif(nif) or None,
         concepto=cuenta or None,
         total_impreso=_num(datos.get("total")),
         origen_imagen=origen,
@@ -293,8 +296,11 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
 
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
-    if datos.get("hay_anotaciones_manuscritas"):
-        aviso = f"{aviso} Tiene algo escrito a mano: se han usado los importes " \
+    # Solo se avisa si lo escrito a mano toca a los IMPORTES. El asesor anota
+    # el CIF y numera las facturas para los requerimientos de Hacienda: si se
+    # avisara de eso, saldrian todas en ambar y el semaforo no serviria.
+    if datos.get("manuscrito_en_importes"):
+        aviso = f"{aviso} Hay importes escritos a mano: se han usado los " \
                 f"IMPRESOS (lo manuscrito no cuenta). Compruébala.".strip()
 
     # Si la cuenta solo tiene una subclave posible en Aplifisa, se pone sola:
@@ -510,6 +516,33 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     propagar_nifs(solo)              # 1º la prueba del propio lote
     completar_desde_memoria(solo)    # 2º lo sabido de otras veces
     aprender_nifs(solo)              # 3º memorizar lo leido bien
+    unificar_nombres(solo)           # 4º el mismo proveedor, escrito igual
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
 
+
+
+def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
+    """El mismo proveedor, escrito siempre igual.
+
+    Una vez llega "TELEFONICA DE ESPAÑA, S.A.U." y otra "Telefónica de España,
+    S.A.U.". Es el mismo, pero Aplifisa busca la cuenta por NIF y luego por
+    NOMBRE EXACTO, asi que dos formas de escribirlo pueden acabar en dos
+    cuentas. Se usa el nombre que ya esta guardado para ese NIF.
+    """
+    por_nif = {}
+    for ficha in proveedores.leer_todo().values():
+        if not isinstance(ficha, dict):
+            continue
+        nif = normaliza_nif(ficha.get("nif"))
+        if nif and ficha.get("nombre"):
+            por_nif.setdefault(nif, ficha["nombre"])
+
+    cambiados = 0
+    for pr in procesadas:
+        for f in pr.facturas:
+            bueno = por_nif.get(normaliza_nif(f.nif))
+            if bueno and f.nombre and f.nombre != bueno:
+                f.nombre = bueno
+                cambiados += 1
+    return cambiados

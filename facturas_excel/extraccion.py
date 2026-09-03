@@ -80,11 +80,19 @@ Identifica las DOS partes de la factura, cada una con su nombre y NIF/CIF:
 
 {_CRITERIO_CUENTAS}
 
-MUY IMPORTANTE — SOLO LO IMPRESO. Usa siempre los importes IMPRESOS por el
-emisor. IGNORA por completo cualquier anotacion manuscrita: totales escritos a
-mano, cifras rodeadas con un circulo, lineas tachadas, "NO" junto a un articulo
-o el total impreso tachado con una raya. Aunque el total impreso este tachado y
-al lado haya otro escrito a mano, devuelve SIEMPRE el impreso.
+MUY IMPORTANTE — LOS IMPORTES, SOLO LOS IMPRESOS. Usa siempre los IMPORTES
+impresos por el emisor. IGNORA cualquier importe escrito a mano: totales
+manuscritos, cifras rodeadas con un circulo, lineas tachadas, "NO" junto a un
+articulo o el total impreso tachado con una raya. Aunque el total impreso este
+tachado y al lado haya otro a mano, devuelve SIEMPRE el impreso.
+
+EN CAMBIO, EL NIF Y EL NUMERO SI PUEDEN VENIR A MANO. El asesor anota a mano el
+CIF/NIF cuando el impreso no se lee o es confuso, y numera las facturas para los
+requerimientos de Hacienda. Asi que:
+- Si el NIF/CIF impreso falta o esta borroso y hay uno escrito a mano
+  (normalmente al pie, tipo "CIF: A78923125"), USA EL ESCRITO A MANO.
+- Si el numero de factura impreso falta y hay uno a mano, usalo.
+- Esas anotaciones NO son un error de la factura: estan puestas a proposito.
 
 Devuelve SOLO un JSON con esta estructura exacta:
 {{
@@ -99,7 +107,7 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "suplidos": null,
   "total": 0.0,
   "sustituye_a": null,
-  "hay_anotaciones_manuscritas": false,
+  "manuscrito_en_importes": false,
   "cuenta_gasto": "cuenta del concepto de GASTO que le corresponderia",
   "subclave_gxx": "la subclave GXX de ESE MISMO concepto (siempre, no solo en la 628)",
   "cuenta_ingreso": "cuenta del concepto de INGRESO que le corresponderia",
@@ -138,9 +146,11 @@ menos detras), devuelve TODOS los importes en NEGATIVO con el signo delante:
 base, cuota_iva, cuota_requiv y total. NUNCA los pases a positivo: un abono
 registrado en positivo cobra al cliente lo que habia que devolverle.
 
-ANOTACIONES A MANO: pon "hay_anotaciones_manuscritas" a true si ves cualquier
-cosa escrita a mano sobre la factura (aunque la ignores para los importes), para
-que una persona la revise. Las firmas de "RECIBI MERCANCIAS" no cuentan."""
+ANOTACIONES A MANO: pon "manuscrito_en_importes" a true SOLO si lo escrito a
+mano toca a los IMPORTES (un total corregido, una cifra tachada, un articulo
+marcado con "NO"): eso si hay que revisarlo. Un CIF anotado, una numeracion o
+una firma de "RECIBI MERCANCIAS" NO cuentan: son normales y no se avisa de
+ellas."""
 
 
 @dataclass
