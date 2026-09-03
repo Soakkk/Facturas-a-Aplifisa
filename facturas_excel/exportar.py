@@ -124,3 +124,86 @@ def exportar_excel(
 
     wb.save(ruta_salida)
     return ruta_salida
+
+
+def verificar_excel(
+    facturas: List[Factura],
+    config: ConfigColumnas,
+    ruta: str,
+    modo_numeros: str = MODO_TEXTO,
+) -> List[str]:
+    """Vuelve a LEER el Excel escrito y lo compara con lo que hay en pantalla.
+
+    Es el ultimo paso antes de que los apuntes entren en Aplifisa, y hasta
+    ahora era el unico que nadie comprobaba: si una columna se escribiera
+    corrida, un importe se perdiera o faltara una linea, no se enteraba nadie
+    hasta tener el problema dentro de la contabilidad.
+
+    Devuelve la lista de diferencias (vacia = el archivo dice exactamente lo
+    mismo que la tabla).
+    """
+    from openpyxl import load_workbook
+
+    problemas: List[str] = []
+    try:
+        hoja = load_workbook(ruta, data_only=True).active
+    except Exception as e:  # archivo abierto en Excel, disco lleno...
+        return [f"No se pudo volver a abrir el archivo para comprobarlo: {e}"]
+
+    escritas = hoja.max_row - config.primera_fila + 1
+    if escritas != len(facturas):
+        problemas.append(
+            f"El archivo tiene {max(escritas, 0)} línea(s) y deberían ser "
+            f"{len(facturas)}.")
+
+    for i, factura in enumerate(facturas):
+        fila = config.primera_fila + i
+        datos = factura.campos_dict()
+        for campo, letra in config.columnas.items():
+            esperado = _valor_celda(campo, datos.get(campo), modo_numeros)
+            escrito = hoja[f"{letra}{fila}"].value
+            if esperado is None and (escrito is None or escrito == ""):
+                continue
+            if str(escrito) != str(esperado):
+                problemas.append(
+                    f"Línea {i + 1} ({factura.num_factura or 'sin nº'}), "
+                    f"{ETIQUETA_CABECERA.get(campo, campo)}: el archivo pone "
+                    f"«{escrito}» y debería poner «{esperado}».")
+    return problemas
+
+
+def totales_del_excel(config: ConfigColumnas, ruta: str) -> dict:
+    """Suma los importes TAL COMO HAN QUEDADO en el archivo.
+
+    Sirve para el contraste final: estos totales tienen que ser los mismos que
+    los del resumen en pantalla.
+    """
+    from openpyxl import load_workbook
+
+    suma = {"lineas": 0, "base_iva": 0.0, "cuota_iva": 0.0,
+            "cuota_requiv": 0.0, "cuota_irpf": 0.0}
+    try:
+        hoja = load_workbook(ruta, data_only=True).active
+    except Exception:
+        return suma
+    fila = config.primera_fila
+    while fila <= hoja.max_row:
+        vacia = True
+        for campo in list(suma)[1:]:
+            letra = config.columnas.get(campo)
+            if not letra:
+                continue
+            valor = hoja[f"{letra}{fila}"].value
+            if valor in (None, ""):
+                continue
+            vacia = False
+            try:
+                suma[campo] += float(str(valor).replace(".", "").replace(",", "."))
+            except ValueError:
+                pass
+        if not vacia or hoja[f"{config.columnas.get('fecha', 'B')}{fila}"].value:
+            suma["lineas"] += 1
+        fila += 1
+    for campo in list(suma)[1:]:
+        suma[campo] = round(suma[campo], 2)
+    return suma

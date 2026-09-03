@@ -50,6 +50,18 @@ aviso**. Solo avisa si lo escrito a mano toca a los IMPORTES (un total corregido
 o una línea tachada), que ahí sí manda lo impreso. Antes avisaba de cualquier
 anotación, y por eso te salían todas las facturas en ámbar.
 
+**Lo que corriges a mano se queda guardado.** Si cambias el **nombre**, el
+**NIF** o la **cuenta y subclave** de un proveedor, el programa lo recuerda para
+ese proveedor y lo aplica al resto de sus facturas del lote y a las de los
+próximos. Es lo mismo que hace Aplifisa cuando le dices el concepto de una
+cuenta la primera vez. Lo escrito a mano manda: no lo pisa ninguna lectura.
+
+**Doble contraste al exportar.** Después de escribir el Excel, el programa lo
+**vuelve a leer y lo compara con la pantalla**, línea por línea y celda por
+celda. Si algo no coincide (una línea de menos, un importe cambiado), avisa en
+rojo y te dice que NO lo importes. Si todo cuadra, te enseña cuántas líneas y
+qué totales han quedado en cada archivo, para que los compares con el resumen.
+
 **El mismo proveedor, escrito igual.** El NIF se guarda siempre sin guiones ni
 puntos (venía «A-82018474» y «A82018474» del mismo proveedor), y el nombre se
 unifica al que ya tenga guardado ese NIF. Importa: Aplifisa busca la cuenta por

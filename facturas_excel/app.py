@@ -39,16 +39,21 @@ from facturas_excel.clientes import (
     DESGLOSE, TOTAL, guardar_regimen_recargo, marcar_cliente, nombres_conocidos,
     recordar_nombre, regimen_recargo,
 )
-from facturas_excel.conceptos import SUBCLAVES_628, texto_para
+from facturas_excel.conceptos import (
+    SUBCLAVES_628, descripcion_de, es_valido, texto_para,
+)
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
-from facturas_excel.exportar import exportar_excel
+from facturas_excel.exportar import (
+    exportar_excel, totales_del_excel, verificar_excel,
+)
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
-    normaliza_nif, preparar_lote, recordar_nif,
+    normaliza_nif, preparar_lote, recordar_cuenta_proveedor, recordar_nif,
+    recordar_nombre_proveedor,
 )
 from facturas_excel.resumen import (
     eur, porcentaje_iva, resumir, resumir_por_bloque,
@@ -1247,11 +1252,70 @@ class VentanaPrincipal(QMainWindow):
 
     # ---------- edicion / validacion ----------
     def _on_celda(self, item):
-        aviso = self._nif_escrito_a_mano(item.row()) \
-            if item.column() == C_NIF else ""
+        """Lo que se corrige a mano se guarda para ese proveedor.
+
+        Si no, habria que volver a corregir lo mismo en cada lote: el nombre
+        con el que se le llama, su NIF y la cuenta que le toca.
+        """
+        columna = item.column()
+        if columna == C_NIF:
+            aviso = self._nif_escrito_a_mano(item.row())
+        elif columna == C_NOMBRE:
+            aviso = self._nombre_escrito_a_mano(item.row())
+        elif columna in (C_CUENTA, C_GXX):
+            aviso = self._cuenta_escrita_a_mano(item.row())
+        else:
+            aviso = ""
         self._revalidar_todo()
         if aviso:
             self.lbl_estado.setText(aviso)  # despues: _resumen pisa la barra
+
+    def _nombre_escrito_a_mano(self, r) -> str:
+        """El nombre que pone una persona manda, y se copia al resto de
+        facturas de ese proveedor (Aplifisa busca la cuenta por nombre EXACTO,
+        asi que dos formas de escribirlo pueden acabar en dos cuentas)."""
+        if r >= len(self.filas):
+            return ""
+        f = self._leer_fila(r)
+        nif = normaliza_nif(f.nif)
+        if not f.nombre or not nif:
+            return ""
+        if not recordar_nombre_proveedor(nif, f.nombre):
+            return ""
+        iguales = self._poner_en_las_del_mismo_nif(r, nif, C_NOMBRE, f.nombre)
+        aviso = (f"Guardado: este proveedor se llamará «{f.nombre}» "
+                 f"a partir de ahora.")
+        return aviso + (f"  Puesto en {iguales} línea(s) más." if iguales else "")
+
+    def _cuenta_escrita_a_mano(self, r) -> str:
+        """La cuenta que se le pone a un proveedor se le queda puesta, igual
+        que hace Aplifisa: sus proximas facturas ya entran con ese concepto."""
+        if r >= len(self.filas) or self._tipo_fila(r) != "gasto":
+            return ""
+        f = self._leer_fila(r)
+        cuenta = (self.tabla.item(r, C_CUENTA).text() or "").strip()
+        gxx = (self.tabla.item(r, C_GXX).text() or "").strip().upper() or None
+        if not f.nombre or not es_valido(cuenta, gxx):
+            return ""
+        if not recordar_cuenta_proveedor(normaliza_nif(f.nif), f.nombre,
+                                         cuenta, gxx):
+            return ""
+        return (f"Guardado: las facturas de {f.nombre} irán a "
+                f"{cuenta}{f' ({gxx})' if gxx else ''} "
+                f"{descripcion_de(cuenta, gxx) or ''}".strip())
+
+    def _poner_en_las_del_mismo_nif(self, r, nif, columna, valor) -> int:
+        """Aplica un valor al resto de facturas del mismo proveedor del lote."""
+        puestas = 0
+        self.tabla.blockSignals(True)
+        for otra in range(self.tabla.rowCount()):
+            if otra == r or normaliza_nif(self._leer_fila(otra).nif) != nif:
+                continue
+            if self.tabla.item(otra, columna).text() != valor:
+                self.tabla.item(otra, columna).setText(valor)
+                puestas += 1
+        self.tabla.blockSignals(False)
+        return puestas
 
     def _nif_escrito_a_mano(self, r) -> str:
         """Un NIF escrito por una persona vale mas que cualquier lectura: se
@@ -1688,6 +1752,8 @@ class VentanaPrincipal(QMainWindow):
         if not carpeta:
             return
         generados = []
+        problemas_export = []      # lo que no cuadre entre archivo y pantalla
+        resumen_archivos = []      # (archivo, lineas, totales) para enseñarlo
         for tipo, nombre, xml in (
             ("gasto", "gastos.xlsx", "gastos.xml"),
             ("venta", "ingresos.xlsx", "ingresos.xml"),
@@ -1695,14 +1761,35 @@ class VentanaPrincipal(QMainWindow):
             if not por_tipo[tipo]:
                 continue
             ruta = os.path.join(carpeta, nombre)
-            exportar_excel(self._para_aplifisa(por_tipo[tipo]),
-                           leer_config(ruta_config(xml)), ruta)
+            config = leer_config(ruta_config(xml))
+            listas = self._para_aplifisa(por_tipo[tipo])
+            exportar_excel(listas, config, ruta)
+            # DOBLE CONTRASTE: se vuelve a leer el archivo escrito y se compara
+            # con lo que hay en pantalla. Es el ultimo paso antes de que los
+            # apuntes entren en la contabilidad, y era el unico sin comprobar.
+            fallos = verificar_excel(listas, config, ruta)
+            problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
+            resumen_archivos.append(
+                (nombre, len(listas), totales_del_excel(config, ruta)))
             generados.append(nombre)
+
+        if problemas_export:
+            QMessageBox.critical(
+                self, "El archivo NO coincide con la pantalla",
+                "Al volver a leer lo escrito, esto no cuadra:\n\n  · "
+                + "\n  · ".join(problemas_export)
+                + "\n\nNO importe estos archivos en Aplifisa sin revisarlos.")
+            return
+
+        detalle = "\n".join(
+            f"  · {nombre}: {lineas} línea(s), base {eur(t['base_iva'])}, "
+            f"IVA {eur(t['cuota_iva'])}"
+            for nombre, lineas, t in resumen_archivos)
         QMessageBox.information(
             self, "Exportación terminada",
-            "Archivos preparados para Aplifisa:\n\n  · "
-            + "\n  · ".join(generados)
-            + f"\n\nCarpeta: {carpeta}")
+            f"Archivos preparados para Aplifisa en {carpeta}:\n\n{detalle}\n\n"
+            "Comprobado: lo escrito en los archivos coincide con lo que ve en "
+            "pantalla, línea por línea.")
 
 
 def _argumentos(argv):

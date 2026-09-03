@@ -128,3 +128,40 @@ def test_el_mismo_proveedor_se_escribe_siempre_igual(tmp_path, monkeypatch):
     pr = construir(datos, "12345678Z", "CLIENTE")
     assert unificar_nombres([pr]) == 1
     assert pr.facturas[0].nombre == "TELEFÓNICA DE ESPAÑA, S.A.U."
+
+
+def test_lo_corregido_a_mano_se_queda_guardado(tmp_path, monkeypatch):
+    """Nombre y cuenta que pone una persona valen para los proximos lotes."""
+    from facturas_excel import proveedores
+    from facturas_excel.procesar import (
+        aplicar_recordado, construir, recordar_cuenta_proveedor,
+        recordar_nombre_proveedor, unificar_nombres,
+    )
+
+    monkeypatch.setattr(proveedores, "dir_datos", lambda: str(tmp_path))
+    recordar_nombre_proveedor("B73283798", "AREA DE SERVICIO DE MOLINA, S.L.")
+    recordar_cuenta_proveedor("B73283798", "AREA DE SERVICIO DE MOLINA, S.L.",
+                              "628", "G16")
+
+    datos = {"emisor_nif": "B73283798", "emisor_nombre": "area servicio molina",
+             "receptor_nif": "12345678Z", "receptor_nombre": "CLIENTE",
+             "num_factura": "FA-1", "fecha": "31/01/2025",
+             "lineas_iva": [{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}],
+             "total": 121.0, "cuenta_gasto": "600", "subclave_gxx": "G01"}
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    unificar_nombres([pr])
+    assert aplicar_recordado([pr]) == 1
+
+    assert pr.facturas[0].nombre == "AREA DE SERVICIO DE MOLINA, S.L."
+    assert (pr.cuenta, pr.gxx) == ("628", "G16")
+    assert pr.facturas[0].concepto == "628"
+    assert pr.facturas[0].subclave == "G16"
+
+
+def test_una_cuenta_que_no_existe_en_aplifisa_no_se_guarda(tmp_path, monkeypatch):
+    from facturas_excel import proveedores
+    from facturas_excel.procesar import recordar_cuenta_proveedor
+
+    monkeypatch.setattr(proveedores, "dir_datos", lambda: str(tmp_path))
+    assert not recordar_cuenta_proveedor("B73283798", "PROVEEDOR", "999")
+    assert not recordar_cuenta_proveedor("B73283798", "PROVEEDOR", "628", "G99")

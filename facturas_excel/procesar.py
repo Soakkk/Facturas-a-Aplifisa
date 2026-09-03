@@ -517,6 +517,7 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     completar_desde_memoria(solo)    # 2º lo sabido de otras veces
     aprender_nifs(solo)              # 3º memorizar lo leido bien
     unificar_nombres(solo)           # 4º el mismo proveedor, escrito igual
+    aplicar_recordado(solo)          # 5º lo que ya corrigio el usuario a mano
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
 
@@ -535,8 +536,11 @@ def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
         if not isinstance(ficha, dict):
             continue
         nif = normaliza_nif(ficha.get("nif"))
-        if nif and ficha.get("nombre"):
-            por_nif.setdefault(nif, ficha["nombre"])
+        if not nif or not ficha.get("nombre"):
+            continue
+        # El corregido a mano manda: se ponga antes o despues en el fichero.
+        if ficha.get("nombre_manual") or nif not in por_nif:
+            por_nif[nif] = ficha["nombre"]
 
     cambiados = 0
     for pr in procesadas:
@@ -546,3 +550,57 @@ def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
                 f.nombre = bueno
                 cambiados += 1
     return cambiados
+
+
+def recordar_nombre_proveedor(nif, nombre) -> bool:
+    """El nombre con el que el usuario quiere ver a este proveedor.
+
+    Aplifisa busca la cuenta por NIF y luego por nombre EXACTO, asi que como se
+    escriba importa. Si lo corrige a mano, se queda corregido para siempre.
+    """
+    nif, nombre = normaliza_nif(nif), str(nombre or "").strip()
+    if not nombre:
+        return False
+    ficha = proveedores.buscar_por_nif(nif) if nif else None
+    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
+        else clave_proveedor(nombre)
+    return proveedores.guardar_campos(clave, nif=nif or None, nombre=nombre,
+                                      nombre_manual=True)
+
+
+def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None) -> bool:
+    """La cuenta contable que el usuario le pone a este proveedor.
+
+    Es lo mismo que hace Aplifisa: la primera vez se dice, y las siguientes
+    facturas de ese proveedor entran ya con su concepto.
+    """
+    cuenta = str(cuenta or "").strip()
+    if not cuenta or not es_valido(cuenta, gxx):
+        return False
+    nif = normaliza_nif(nif)
+    ficha = proveedores.buscar_por_nif(nif) if nif else None
+    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
+        else clave_proveedor(nombre)
+    return proveedores.guardar_campos(clave, nif=nif or None,
+                                      nombre=str(nombre or "").strip() or None,
+                                      cuenta=cuenta, gxx=(gxx or None),
+                                      cuenta_manual=True)
+
+
+def aplicar_recordado(procesadas: List[FacturaProcesada]) -> int:
+    """Pone en el lote lo que el usuario ya corrigio de esos proveedores."""
+    puestos = 0
+    for pr in procesadas:
+        if pr.tipo != "gasto" or not pr.facturas:
+            continue
+        ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
+        if not ficha or not ficha.get("cuenta_manual"):
+            continue
+        cuenta, gxx = ficha.get("cuenta"), ficha.get("gxx")
+        if not es_valido(cuenta, gxx):
+            continue
+        pr.cuenta, pr.gxx = cuenta, gxx
+        for f in pr.facturas:
+            f.concepto, f.subclave = cuenta, gxx
+        puestos += 1
+    return puestos

@@ -62,3 +62,36 @@ def guardar(clave: str, nif: str, nombre: str = "", manual: bool = False) -> boo
         return True
     except OSError:
         return False  # no poder recordarlo no debe tumbar la app
+
+
+def guardar_campos(clave: str, **campos) -> bool:
+    """Anota lo que una PERSONA ha corregido de un proveedor.
+
+    El nombre con el que se le llama, o la cuenta contable que le corresponde:
+    lo que se escribe a mano vale para siempre y no lo pisa ninguna lectura
+    automatica. Sin esto habria que corregir lo mismo en cada lote.
+    """
+    if not clave:
+        return False
+    todo = leer_todo()
+    ficha = todo.get(clave)
+    ficha = dict(ficha) if isinstance(ficha, dict) else {}
+    ficha.update({k: v for k, v in campos.items() if v not in (None, "")})
+    todo[clave] = ficha
+    try:
+        with open(_ruta(), "w", encoding="utf-8") as fh:
+            json.dump(todo, fh, indent=2, ensure_ascii=False, sort_keys=True)
+        return True
+    except OSError:
+        return False
+
+
+def buscar_por_nif(nif: str) -> Optional[dict]:
+    """La ficha de un proveedor a partir de su NIF (la clave es el nombre, y el
+    nombre es justo lo que cambia de una factura a otra)."""
+    if not nif:
+        return None
+    for ficha in leer_todo().values():
+        if isinstance(ficha, dict) and str(ficha.get("nif", "")).upper() == nif.upper():
+            return ficha
+    return None
