@@ -96,12 +96,13 @@ porcentaje en la cabecera y solo el importe en la celda.
 Se puede ocultar (botón «Ocultar» o menú Ver). La miniatura del documento se
 pulsa para verla grande.
 
-**Los avisos de cada fila.** Pulsa el semáforo (la casilla verde/ámbar/roja) y
-se abre al lado una ficha con lo que le pasa a esa factura: el estado con su
-color, cada problema en su línea y qué significa. Se queda abierta hasta que
-pulses fuera, y el texto se puede seleccionar y copiar. Al pasar el ratón sigue
-saliendo el resumen rápido, ahora con mejor formato. La barra de desplazamiento
-de la tabla también se ha rehecho.
+**Los avisos de cada fila.** Pulsa la casilla ámbar o roja del semáforo y se
+abre al lado una ficha con banda de color, **de qué factura se trata** (línea,
+número y proveedor) y cada problema en su línea, con el mismo texto de siempre.
+Se queda abierta hasta que pulses fuera y el texto se puede copiar. En las filas
+verdes no sale nada: no hay nada que contar. Al pasar el ratón sigue apareciendo
+el aviso rápido, ahora con título en color. La barra de desplazamiento de la
+tabla también se ha rehecho.
 
 **Lo que cuesta.** Abajo a la derecha: el modelo de Gemini, lo que ha costado el
 lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.

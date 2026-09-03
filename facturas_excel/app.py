@@ -1566,9 +1566,14 @@ class VentanaPrincipal(QMainWindow):
         if columna != C_ESTADO or fila >= len(self.filas):
             return
         registro = self.filas[fila]
-        ficha = FichaIncidencias(registro.get("estado", OK),
-                                 registro.get("mensajes") or ["Todo correcto."],
-                                 self)
+        mensajes = registro.get("mensajes") or []
+        if registro.get("estado", OK) == OK or not mensajes:
+            return          # una fila correcta no tiene nada que contar
+        f = registro["factura"]
+        ficha = FichaIncidencias(
+            registro["estado"], mensajes, self,
+            referencia=f"Línea {fila + 1} · {f.num_factura or 'sin nº'} · "
+                       f"{f.nombre or 'sin nombre'}")
         ficha.mostrar_junto_a(self.tabla.viewport(),
                               self.tabla.visualItemRect(
                                   self.tabla.item(fila, C_ESTADO)))

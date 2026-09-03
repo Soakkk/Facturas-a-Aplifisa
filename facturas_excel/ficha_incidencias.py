@@ -30,19 +30,34 @@ ANCHO = 460
 class FichaIncidencias(QFrame):
     """Ficha flotante con los avisos de una fila."""
 
-    def __init__(self, estado: str, mensajes: List[str], parent=None):
+    def __init__(self, estado: str, mensajes: List[str], parent=None,
+                 referencia: str = ""):
         super().__init__(parent, Qt.Popup)
         self.setObjectName("ficha")
         self.setMaximumWidth(ANCHO)
         caja = QVBoxLayout(self)
-        caja.setContentsMargins(14, 12, 14, 12)
-        caja.setSpacing(7)
+        caja.setContentsMargins(0, 0, 0, 0)
+        caja.setSpacing(0)
 
         titulo_texto, color = TITULOS.get(estado, TITULOS[REVISAR])
-        titulo = QLabel(titulo_texto)
-        titulo.setObjectName("fichaTitulo")
-        titulo.setStyleSheet(f"color: {color};")
-        caja.addWidget(titulo)
+        # Banda de color arriba: se ve de un golpe si es un aviso o un error.
+        banda = QLabel(titulo_texto)
+        banda.setObjectName("fichaTitulo")
+        banda.setStyleSheet(
+            f"background: {color}; color: white; padding: 9px 14px;"
+            f"border-top-left-radius: 7px; border-top-right-radius: 7px;")
+        caja.addWidget(banda)
+
+        cuerpo = QVBoxLayout()
+        cuerpo.setContentsMargins(14, 10, 14, 12)
+        cuerpo.setSpacing(7)
+        caja.addLayout(cuerpo)
+        if referencia:
+            # De que factura se habla, para no tener que mirar la fila.
+            quien = QLabel(referencia)
+            quien.setObjectName("fichaPie")
+            quien.setWordWrap(True)
+            cuerpo.addWidget(quien)
 
         for mensaje in mensajes:
             linea = QLabel("•  " + mensaje)
@@ -50,12 +65,12 @@ class FichaIncidencias(QFrame):
             linea.setWordWrap(True)
             linea.setMaximumWidth(ANCHO - 28)
             linea.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            caja.addWidget(linea)
+            cuerpo.addWidget(linea)
 
         pie = QLabel(EXPLICACION.get(estado, ""))
         pie.setObjectName("fichaPie")
         pie.setWordWrap(True)
-        caja.addWidget(pie)
+        cuerpo.addWidget(pie)
         self.adjustSize()
 
     def mostrar_junto_a(self, widget, rect) -> None:
