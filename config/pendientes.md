@@ -42,7 +42,8 @@ y concepto. Ejemplo real: base 100 + IVA 21 + línea de 109,08 = importe neto
 230,08. En el resumen se ven aparte, para que no se confundan con la base.
 
 **El resumen.** «Comprobación de totales por bloque» suma cada PDF por separado
-y desglosa el IVA por tipos en la misma celda (`10%: 12,34 € · 21%: 56,78 €`).
+y pone **una columna por cada tipo de IVA** («IVA 21%», «IVA 10%»…), con el
+porcentaje en la cabecera y solo el importe en la celda.
 Se puede ocultar (botón «Ocultar» o menú Ver). La miniatura del documento se
 pulsa para verla grande.
 

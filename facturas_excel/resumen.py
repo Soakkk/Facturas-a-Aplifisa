@@ -98,19 +98,20 @@ def eur(v: float) -> str:
     return f"{signo}{'.'.join(grupos)},{dec} €"
 
 
+def porcentaje_iva(tipo: float) -> str:
+    """El tipo tal como se escribe: 21, 10, 4, o 4,5 si tuviera decimales."""
+    tipo = float(tipo)
+    if tipo.is_integer():
+        return str(int(tipo))
+    return f"{tipo:g}".replace(".", ",")
+
+
 def iva_desglosado(t: Totales) -> str:
-    """IVA compacto: muestra siempre porcentaje y cuota cuando se conoce."""
+    """IVA compacto en una sola linea, para donde no caben columnas."""
     if not t.iva_por_tipo:
         return eur(t.iva)
-
-    def porcentaje(tipo: float) -> str:
-        if tipo.is_integer():
-            return str(int(tipo))
-        return f"{tipo:g}".replace(".", ",")
-
-    return " · ".join(
-        f"{porcentaje(tipo)}%: {eur(cuota)}"
-        for tipo, cuota in sorted(t.iva_por_tipo.items()))
+    return " · ".join(f"{porcentaje_iva(tipo)}%: {eur(cuota)}"
+                      for tipo, cuota in sorted(t.iva_por_tipo.items()))
 
 
 def describir(t: Totales, solo_total: bool = False) -> str:

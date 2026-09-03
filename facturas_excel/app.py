@@ -49,7 +49,9 @@ from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
     normaliza_nif, preparar_lote, recordar_nif,
 )
-from facturas_excel.resumen import eur, iva_desglosado, resumir, resumir_por_bloque
+from facturas_excel.resumen import (
+    eur, porcentaje_iva, resumir, resumir_por_bloque,
+)
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
@@ -71,10 +73,21 @@ COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
 C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
 
-# Columnas del resumen por bloque (punto de control antes de exportar).
-COLS_RESUMEN = ["Bloque", "Tipo", "Líneas", "Base", "IVA", "Recargo", "IRPF",
-                "Suplidos", "Total factura"]
+# Columnas del resumen por bloque (punto de control antes de exportar). Las del
+# IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
+# la cabecera ("IVA 21%") en vez de repetirlo dentro de cada celda.
+COLS_RESUMEN_INICIO = ["Bloque", "Tipo", "Líneas", "Base"]
+COLS_RESUMEN_FIN = ["Recargo", "IRPF", "Suplidos", "Total factura"]
 TODOS_LOS_BLOQUES = "Todos los bloques"
+
+
+def _cabeceras_resumen(tipos_iva) -> list:
+    """Las columnas del resumen, con una de IVA por cada tipo que haya."""
+    if tipos_iva:
+        columnas_iva = [f"IVA {porcentaje_iva(p)}%" for p in tipos_iva]
+    else:
+        columnas_iva = ["IVA"]
+    return [*COLS_RESUMEN_INICIO, *columnas_iva, *COLS_RESUMEN_FIN]
 
 
 class _SinRueda:
@@ -347,7 +360,7 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
         bloque_cliente.addWidget(self.btn_cliente)
-        self.chk_recargo = QCheckBox("En recargo de equivalencia (gastos por el total)")
+        self.chk_recargo = QCheckBox("En recargo de equivalencia")
         self.chk_recargo.setToolTip(
             "El cliente no deduce IVA: cada gasto se registra por el total de la\n"
             "factura (base + IVA + recargo), sin desglose. Se recuerda por NIF.")
@@ -495,8 +508,9 @@ class VentanaPrincipal(QMainWindow):
         btn_copiar.clicked.connect(self._copiar_resumen)
         fila_titulo.addWidget(btn_copiar)
         lr.addLayout(fila_titulo)
-        self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN))
-        self.tabla_resumen.setHorizontalHeaderLabels(COLS_RESUMEN)
+        self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
+                                          + len(COLS_RESUMEN_FIN))
+        self.tabla_resumen.setHorizontalHeaderLabels(_cabeceras_resumen([]))
         self.tabla_resumen.verticalHeader().setVisible(False)
         self.tabla_resumen.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_resumen.setSelectionMode(QTableWidget.NoSelection)
@@ -1477,15 +1491,27 @@ class VentanaPrincipal(QMainWindow):
         self._volcar_resumen(lineas, recargo)
 
     def _volcar_resumen(self, lineas, recargo):
+        # Un IVA por columna, con su porcentaje en la cabecera: asi se leen los
+        # totales de cada tipo de un vistazo, en vez de todos en una celda.
+        tipos_iva = sorted({tipo for _, _, t, _ in lineas
+                            for tipo in t.iva_por_tipo})
+        self._tipos_iva_resumen = tipos_iva
+        cabeceras = _cabeceras_resumen(tipos_iva)
+        self.tabla_resumen.setColumnCount(len(cabeceras))
+        self.tabla_resumen.setHorizontalHeaderLabels(cabeceras)
         self.tabla_resumen.setRowCount(len(lineas))
         for r, (bloque, tipo, t, es_total) in enumerate(lineas):
             # En recargo el gasto va por el total factura: el desglose de IVA
             # no existe y ponerlo a 0,00 despistaria.
             solo_total = recargo and tipo == "Gastos"
+            cuotas = ["" if solo_total or p not in t.iva_por_tipo
+                      else eur(t.iva_por_tipo[p]) for p in tipos_iva]
+            if not tipos_iva:
+                cuotas = ["" if solo_total else eur(t.iva)]
             valores = [
                 bloque, tipo, str(t.lineas),
                 "" if solo_total else eur(t.base),
-                "" if solo_total else iva_desglosado(t),
+                *cuotas,
                 eur(t.requiv) if t.tiene_requiv and not solo_total else "",
                 f"−{eur(t.irpf)}" if t.tiene_irpf else "",
                 eur(t.suplidos) if t.tiene_suplidos and not solo_total else "",
@@ -1495,8 +1521,6 @@ class VentanaPrincipal(QMainWindow):
                 item = QTableWidgetItem(texto)
                 if c >= 2:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                if c == 4 and " · " in texto:
-                    item.setToolTip(texto)
                 if es_total:
                     fuente = item.font()
                     fuente.setBold(True)
@@ -1505,7 +1529,8 @@ class VentanaPrincipal(QMainWindow):
 
     def _copiar_resumen(self):
         """El resumen al portapapeles, para pegarlo al comprobar los totales."""
-        filas = ["\t".join(COLS_RESUMEN)]
+        filas = ["\t".join(
+            _cabeceras_resumen(getattr(self, "_tipos_iva_resumen", [])))]
         for r in range(self.tabla_resumen.rowCount()):
             filas.append("\t".join(
                 (self.tabla_resumen.item(r, c).text() if self.tabla_resumen.item(r, c)

@@ -136,21 +136,32 @@ def test_el_resumen_cuadra_bloque_a_bloque():
     assert v.tabla_resumen.item(2, 8).text() == "266,20 €"
 
 
-def test_la_celda_iva_desglosa_varios_porcentajes_sin_anadir_columnas():
+def _cabeceras(v):
+    return [v.tabla_resumen.horizontalHeaderItem(c).text()
+            for c in range(v.tabla_resumen.columnCount())]
+
+
+def test_cada_tipo_de_iva_tiene_su_columna_con_el_porcentaje_en_la_cabecera():
+    # Lo pidio el usuario: el porcentaje al lado de la palabra IVA, no dentro
+    # de cada celda repetido en todas las filas.
     v = VentanaPrincipal(comprobar_updates=False)
     cargar_bloque(v, r"C:\tmp\mixto.pdf",
                   [factura("F-1", 100, 10), factura("F-2", 200, 21)])
 
-    assert v.tabla_resumen.columnCount() == 9
-    assert v.tabla_resumen.item(0, 4).text() == (
-        "10%: 10,00 € · 21%: 42,00 €")
+    cabeceras = _cabeceras(v)
+    assert "IVA 10%" in cabeceras and "IVA 21%" in cabeceras
+    assert v.tabla_resumen.item(0, cabeceras.index("IVA 10%")).text() == "10,00 €"
+    assert v.tabla_resumen.item(0, cabeceras.index("IVA 21%")).text() == "42,00 €"
 
 
-def test_la_celda_iva_muestra_el_porcentaje_aunque_solo_haya_un_tipo():
+def test_con_un_solo_tipo_la_cabecera_lleva_ese_porcentaje():
     v = VentanaPrincipal(comprobar_updates=False)
     cargar_bloque(v, r"C:\tmp\un_tipo.pdf", [factura("F-1", 100, 21)])
 
-    assert v.tabla_resumen.item(0, 4).text() == "21%: 21,00 €"
+    cabeceras = _cabeceras(v)
+    assert "IVA 21%" in cabeceras
+    assert "IVA 10%" not in cabeceras
+    assert v.tabla_resumen.item(0, cabeceras.index("IVA 21%")).text() == "21,00 €"
 
 
 def test_el_resumen_muestra_los_suplidos_sin_mezclarlos_con_la_base():
@@ -160,9 +171,12 @@ def test_el_resumen_muestra_los_suplidos_sin_mezclarlos_con_la_base():
     f.total_impreso = 230.08
     cargar_bloque(v, r"C:\tmp\suplidos.pdf", [f])
 
-    assert v.tabla_resumen.item(0, 3).text() == "100,00 €"
-    assert v.tabla_resumen.item(0, 7).text() == "109,08 €"
-    assert v.tabla_resumen.item(0, 8).text() == "230,08 €"
+    cabeceras = _cabeceras(v)
+    assert v.tabla_resumen.item(0, cabeceras.index("Base")).text() == "100,00 €"
+    assert v.tabla_resumen.item(
+        0, cabeceras.index("Suplidos")).text() == "109,08 €"
+    assert v.tabla_resumen.item(
+        0, cabeceras.index("Total factura")).text() == "230,08 €"
 
 
 def test_resumir_por_bloque_agrupa_y_redondea():
