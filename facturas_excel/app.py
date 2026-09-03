@@ -64,10 +64,12 @@ ICONO_ESTADO = {OK: "OK", REVISAR: "!", ERROR: "X"}
 HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
+# Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
+# con su base y sin % ni cuota de IVA (es como lo registra Aplifisa).
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Suplidos", "Total", "Bloque"]
+        "NIF", "Base", "% IVA", "Cuota", "Total", "Bloque"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_SUPLIDOS, C_TOTAL, C_BLOQUE = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
 
 # Columnas del resumen por bloque (punto de control antes de exportar).
 COLS_RESUMEN = ["Bloque", "Tipo", "Líneas", "Base", "IVA", "Recargo", "IRPF",
@@ -1159,7 +1161,7 @@ class VentanaPrincipal(QMainWindow):
             C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
             C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
             C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva),
-            C_SUPLIDOS: fmt(f.suplidos), C_TOTAL: fmt(f.total_impreso),
+            C_TOTAL: fmt(f.total_impreso),
             C_BLOQUE: bloque,
         }
         for col, val in valores.items():
@@ -1170,6 +1172,10 @@ class VentanaPrincipal(QMainWindow):
                     "sin ella:\n"
                     + "\n".join(f"  {g} = {d}"
                                 for g, d in SUBCLAVES_628.items()))
+            if col == C_BASE and getattr(f, "es_suplido", False):
+                item.setToolTip(
+                    "SUPLIDO: se registra como una línea de base más del mismo "
+                    "apunte, sin IVA (así lo pide Aplifisa).")
             if col == C_BLOQUE:
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 item.setToolTip("Escaneo o PDF del que salió esta factura.")
@@ -1232,7 +1238,6 @@ class VentanaPrincipal(QMainWindow):
         f.base_iva = parse_numero(self.tabla.item(r, C_BASE).text())
         f.pct_iva = parse_numero(self.tabla.item(r, C_PCT).text())
         f.cuota_iva = parse_numero(self.tabla.item(r, C_CUOTA).text())
-        f.suplidos = parse_numero(self.tabla.item(r, C_SUPLIDOS).text())
         f.total_impreso = parse_numero(self.tabla.item(r, C_TOTAL).text())
         return f
 

@@ -45,6 +45,11 @@ class Totales:
 
 def _acumular(t: Totales, f: Factura) -> None:
     t.lineas += 1
+    if f.es_suplido:
+        # Su base es el suplido: se enseña en su columna y no se mezcla con la
+        # base imponible, aunque en Aplifisa vaya como una linea de base mas.
+        t.suplidos += f.base_iva or 0.0
+        return
     t.base += f.base_iva or 0.0
     t.iva += f.cuota_iva or 0.0
     if f.pct_iva is not None and f.cuota_iva is not None:
@@ -52,7 +57,7 @@ def _acumular(t: Totales, f: Factura) -> None:
         t.iva_por_tipo[tipo] = t.iva_por_tipo.get(tipo, 0.0) + f.cuota_iva
     t.irpf += f.cuota_irpf or 0.0
     t.requiv += f.cuota_requiv or 0.0
-    t.suplidos += f.suplidos or 0.0
+    t.suplidos += f.suplidos or 0.0    # respaldo por si viniera en su campo
 
 
 def _redondear(t: Totales) -> Totales:

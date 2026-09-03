@@ -180,7 +180,6 @@ def _cuadre_factura(facturas: List[Factura]) -> str:
         return ""
     suma = sum((f.base_iva or 0) + (f.cuota_iva or 0) + (f.cuota_requiv or 0)
                for f in facturas)
-    suma += facturas[0].suplidos or 0
     suma -= facturas[0].cuota_irpf or 0
     if abs(round(suma, 2) - total) <= TOLERANCIA_CUADRE:
         return ""
@@ -273,10 +272,24 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             f.base_irpf = _num(datos.get("base_irpf"))
             f.pct_irpf = _num(datos.get("pct_irpf"))
             f.cuota_irpf = _num(datos.get("cuota_irpf"))
-            # Los suplidos tambien son un importe unico de la factura. Van en
-            # su columna de Aplifisa y no forman parte de la base ni del IVA.
-            f.suplidos = _num(datos.get("suplidos"))
         facturas.append(f)
+
+    # EL SUPLIDO ES OTRA LINEA DEL MISMO APUNTE (criterio del usuario,
+    # 2026-09-02, con su pantalla de Aplifisa delante): se registra como una
+    # segunda BASE IMPONIBLE sin % ni cuota de IVA, repitiendo fecha, numero,
+    # nombre y concepto. No va en la columna Suplidos.
+    suplido = _num(datos.get("suplidos"))
+    if suplido and facturas:
+        linea = replace(facturas[0])
+        linea.base_iva = suplido
+        linea.pct_iva = linea.cuota_iva = None
+        linea.base_requiv = linea.pct_requiv = linea.cuota_requiv = None
+        linea.base_irpf = linea.pct_irpf = linea.cuota_irpf = None
+        linea.suplidos = None
+        linea.es_suplido = True
+        facturas.append(linea)
+        for f in facturas:
+            f.lineas_factura = len(facturas)
 
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
@@ -414,15 +427,16 @@ def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
                              "factura (la retención hay que declararla). Revísala.")
         return copia
 
+    # La linea del suplido ya entra aqui con su base: es una linea mas.
     total = sum((f.base_iva or 0) + (f.cuota_iva or 0) for f in pr.facturas)
     total += sum(f.cuota_requiv or 0 for f in pr.facturas)
-    total += pr.facturas[0].suplidos or 0
     base = replace(pr.facturas[0])
     base.base_iva = round(total, 2)
     base.pct_iva = None
     base.cuota_iva = None
     base.base_requiv = base.pct_requiv = base.cuota_requiv = None
-    base.suplidos = None  # ya esta incluido en el gasto por el total
+    base.suplidos = None
+    base.es_suplido = False   # el suplido ya esta dentro del total
     return replace(pr, facturas=[base])
 
 

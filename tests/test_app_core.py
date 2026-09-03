@@ -6,7 +6,7 @@ from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel.app import (
-    C_ESTADO, C_SUPLIDOS, VentanaPrincipal, VisorClicable, _argumentos,
+    C_ESTADO, VentanaPrincipal, VisorClicable, _argumentos,
     parse_numero, rutas_factura_de_mime,
 )
 from facturas_excel.modelo import Factura
@@ -103,17 +103,24 @@ def test_insertar_filas_es_atomico_y_marca_duplicados():
     assert "repetida" in v.lbl_alerta_texto.text()
 
 
-def test_los_suplidos_se_pueden_revisar_y_editar_en_la_tabla():
-    v = VentanaPrincipal(comprobar_updates=False)
-    v._anadir_fila(b"", Factura(
-        num_factura="F-1", fecha="16/07/2026", nombre="Proveedor",
-        nif="B30048276", concepto="623", base_iva=100, pct_iva=21,
-        cuota_iva=21, suplidos=109.08, total_impreso=230.08,
-    ), "gasto", "623", "G19", "")
+def test_el_suplido_es_una_linea_de_base_sin_iva():
+    """Como lo registra Aplifisa: una segunda linea de base, sin % ni cuota.
 
-    assert v.tabla.item(0, C_SUPLIDOS).text() == "109,08"
-    v.tabla.item(0, C_SUPLIDOS).setText("110,50")
-    assert v._leer_fila(0).suplidos == 110.50
+    Lo enseño el usuario con su pantalla delante (2026-09-02): el suplido no va
+    en la columna Suplidos, va como otra base imponible del mismo apunte.
+    """
+    from facturas_excel.app import C_BASE, C_CUOTA, C_PCT
+    v = VentanaPrincipal(comprobar_updates=False)
+    suplido = Factura(
+        num_factura="F-1", fecha="16/07/2026", nombre="Proveedor",
+        nif="B30048276", concepto="623", base_iva=109.08, total_impreso=230.08)
+    suplido.es_suplido = True
+    v._anadir_fila(b"", suplido, "gasto", "623", "G19", "")
+
+    assert v.tabla.item(0, C_BASE).text() == "109,08"
+    assert v.tabla.item(0, C_PCT).text() == ""
+    assert v.tabla.item(0, C_CUOTA).text() == ""
+    assert "SUPLIDO" in v.tabla.item(0, C_BASE).toolTip()
 
 
 def test_el_documento_original_es_clicable_y_abre_la_vista_grande(monkeypatch):

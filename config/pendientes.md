@@ -36,9 +36,10 @@ igual que Gemini conteste `628` o `628 (G16) SUMINISTROS GAS`. El gasóleo va a
 solo la venta de género), y también cuando el respaldo por palabras clave tiene
 que decidir sin Gemini.
 
-**Suplidos.** Se leen los que la factura identifica como tales, van en su
-columna, se suman al total sin mezclarse con la base ni el IVA, y se exportan al
-campo Suplidos de Aplifisa. El cuadre del total ya cuenta con ellos.
+**Suplidos.** Se registran **como tú los contabilizas**: una segunda línea de
+base imponible del mismo apunte, sin % ni cuota de IVA, repitiendo fecha, número
+y concepto. Ejemplo real: base 100 + IVA 21 + línea de 109,08 = importe neto
+230,08. En el resumen se ven aparte, para que no se confundan con la base.
 
 **El resumen.** «Comprobación de totales por bloque» suma cada PDF por separado
 y desglosa el IVA por tipos en la misma celda (`10%: 12,34 € · 21%: 56,78 €`).
