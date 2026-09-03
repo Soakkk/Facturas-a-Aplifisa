@@ -56,7 +56,9 @@ from facturas_excel.procesar import (
     normaliza_nif, preparar_lote, recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor,
 )
-from facturas_excel.registro import contrastar, leer_registro
+from facturas_excel.registro import (
+    contrastar, leer_registro, parece_listado,
+)
 from facturas_excel.resumen import (
     eur, porcentaje_iva, resumir, resumir_por_bloque,
 )
@@ -395,6 +397,16 @@ class VentanaPrincipal(QMainWindow):
         bloque_cliente.addWidget(self.fila_recargo)
         la.addLayout(bloque_cliente, 1)
 
+        self.btn_registro = QPushButton("Comprobar registro")
+        self.btn_registro.setMinimumHeight(40)
+        self.btn_registro.setToolTip(
+            "Contrasta este lote con el «Listado de apuntes» que imprime "
+            "Aplifisa:\ndice qué facturas no llegaron a registrarse, cuáles "
+            "están de más\ny cuáles entraron con otro importe.\n"
+            "No gasta créditos de Gemini.  (Ctrl+R)")
+        self.btn_registro.setEnabled(False)
+        self.btn_registro.clicked.connect(lambda: self._contrastar_registro())
+        la.addWidget(self.btn_registro)
         self.btn_gastos = QPushButton("Exportar a Aplifisa…")
         self.btn_gastos.setObjectName("exito")
         self.btn_gastos.setEnabled(False)
@@ -588,6 +600,7 @@ class VentanaPrincipal(QMainWindow):
             ("Ctrl+O", self._cargar),
             ("Ctrl+G", self._exportar_todo),
             ("Ctrl+L", self._ver_escaneos),
+            ("Ctrl+R", lambda: self._contrastar_registro()),
         ):
             QShortcut(QKeySequence(teclas), self, activated=accion)
 
@@ -601,8 +614,8 @@ class VentanaPrincipal(QMainWindow):
                            lambda: archivo.abrir(archivo.carpeta_escaneos()))
 
         comprobar = self.menuBar().addMenu("Comprobar")
-        comprobar.addAction("Contrastar con el registro de Aplifisa…",
-                            self._contrastar_registro)
+        comprobar.addAction("Comprobar registro de Aplifisa…	Ctrl+R",
+                            lambda: self._contrastar_registro())
 
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales por bloque")
@@ -755,7 +768,25 @@ class VentanaPrincipal(QMainWindow):
             self._aviso_tope_dado = True
             QMessageBox.warning(self, "Gasto de Gemini", aviso)
 
-    def _contrastar_registro(self):
+    def _ofrecer_contraste(self, ruta):
+        """Se ha soltado el listado de Aplifisa en vez de facturas."""
+        if not self.tabla.rowCount():
+            QMessageBox.information(
+                self, "Listado de Aplifisa",
+                f"«{os.path.basename(ruta)}» es el listado de apuntes de "
+                f"Aplifisa, no un taco de facturas.\n\n"
+                f"Cargue primero las facturas y luego pulse «Comprobar "
+                f"registro» para cuadrarlas con él.")
+            return
+        if QMessageBox.question(
+                self, "Listado de Aplifisa",
+                f"«{os.path.basename(ruta)}» parece el listado de apuntes de "
+                f"Aplifisa.\n\n¿Lo contrasto con las facturas del lote?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes) == QMessageBox.Yes:
+            self._contrastar_registro(ruta)
+
+    def _contrastar_registro(self, ruta=""):
         """El cuadre a tres bandas: factura -> Excel -> lo que quedo en Aplifisa.
 
         Se le pasa el PDF del "Listado de apuntes" de Aplifisa y se compara
@@ -767,9 +798,10 @@ class VentanaPrincipal(QMainWindow):
                 self, "Contrastar con Aplifisa",
                 "Cargue primero el lote de facturas que quiere comprobar.")
             return
-        ruta, _ = QFileDialog.getOpenFileName(
-            self, "Listado de apuntes de Aplifisa (PDF)", ESCRITORIO,
-            "Listado de Aplifisa (*.pdf)")
+        if not ruta:
+            ruta, _ = QFileDialog.getOpenFileName(
+                self, "Listado de apuntes de Aplifisa (PDF)", ESCRITORIO,
+                "Listado de Aplifisa (*.pdf)")
         if not ruta:
             return
         try:
@@ -933,6 +965,15 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Archivos no compatibles",
                                 "No se encontraron PDFs o imágenes válidas.")
             return
+        # Si lo que se ha soltado es el listado de Aplifisa, NO se manda a
+        # Gemini: aqui se lee gratis y lo que se quiere es contrastarlo.
+        listados = [r for r in rutas if r.lower().endswith(".pdf")
+                    and parece_listado(r)]
+        if listados:
+            self._ofrecer_contraste(listados[0])
+            rutas = [r for r in rutas if r not in listados]
+            if not rutas:
+                return
         api_key = leer_api_key()
         if not api_key:
             QMessageBox.warning(self, "Falta la API key",
@@ -1006,6 +1047,7 @@ class VentanaPrincipal(QMainWindow):
         hay_datos = self.tabla.rowCount() > 0
         self.btn_gastos.setEnabled(hay_datos)
         self.btn_ventas.setEnabled(hay_datos)
+        self.btn_registro.setEnabled(hay_datos)
         self.btn_cliente.setEnabled(bool(self._bloques))
         if hay_datos:
             self.tabla.selectRow(0)
@@ -1159,6 +1201,7 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         hay_datos = self.tabla.rowCount() > 0
         self.btn_gastos.setEnabled(hay_datos)
+        self.btn_registro.setEnabled(hay_datos)
         self.lbl_estado.setText(f"Bloque «{nombre}» quitado del lote.")
 
     def _vaciar_todo(self):
@@ -1181,6 +1224,7 @@ class VentanaPrincipal(QMainWindow):
         self._rellenar_tabla()
         self._revalidar_todo()
         self.btn_gastos.setEnabled(False)
+        self.btn_registro.setEnabled(False)
         self.lbl_cliente.setText("Cliente pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
 

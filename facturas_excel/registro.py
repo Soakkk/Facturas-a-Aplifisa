@@ -232,3 +232,25 @@ def contrastar(facturas, registro: Registro) -> Informe:
     informe.base_registro = registro.suma_base
     informe.cuota_registro = registro.suma_cuota
     return informe
+
+
+SEÑALES_LISTADO = ("LISTADO DE APUNTES", "TOTAL ACUMULADO",
+                   "GESTION FISCAL", "GESTIÓN FISCAL")
+
+
+def parece_listado(ruta_pdf: str) -> bool:
+    """¿Es el listado de Aplifisa y no un taco de facturas?
+
+    Importa: si se cuela como facturas, se manda a Gemini y se paga por leer
+    un papel que aqui se lee gratis (y ademas saldria una fila por pagina con
+    datos sin sentido).
+    """
+    try:
+        import fitz
+        with fitz.open(ruta_pdf) as doc:
+            if not doc.page_count:
+                return False
+            texto = doc[0].get_text().upper()
+    except Exception:
+        return False
+    return any(s in texto for s in SEÑALES_LISTADO)

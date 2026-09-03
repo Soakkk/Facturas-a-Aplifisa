@@ -141,3 +141,41 @@ def test_un_pdf_sin_apuntes_no_revienta(tmp_path):
 
     r = leer_registro(str(ruta))
     assert r.apuntes == []
+
+
+# ------------------------------------------ el listado no se manda a Gemini --
+def test_se_reconoce_el_listado_de_aplifisa(listado, tmp_path):
+    """Si se cuela como facturas se paga por leer un papel que aqui es gratis."""
+    from facturas_excel.registro import parece_listado
+
+    assert parece_listado(listado)
+
+    otro = tmp_path / "factura.pdf"
+    doc = fitz.open()
+    doc.new_page().insert_text((40, 40), "FACTURA Nº 123\nTotal 121,00",
+                               fontsize=10)
+    doc.save(str(otro))
+    doc.close()
+    assert not parece_listado(str(otro))
+
+
+def test_soltar_el_listado_no_lo_manda_a_gemini(listado, monkeypatch, tmp_path):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from facturas_excel.app import VentanaPrincipal
+
+    QApplication.instance() or QApplication([])
+    v = VentanaPrincipal(comprobar_updates=False)
+    llamadas = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: llamadas.append(a[2])))
+    monkeypatch.setattr(v, "_contrastar_registro",
+                        lambda ruta="": llamadas.append("contraste"))
+
+    v.procesar_rutas([listado])          # con el lote vacio
+
+    # Ni Worker ni Gemini: solo dice que primero hay que cargar las facturas.
+    assert not getattr(v, "worker", None)
+    assert llamadas and "listado de apuntes" in llamadas[0]

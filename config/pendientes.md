@@ -56,13 +56,15 @@ ese proveedor y lo aplica al resto de sus facturas del lote y a las de los
 próximos. Es lo mismo que hace Aplifisa cuando le dices el concepto de una
 cuenta la primera vez. Lo escrito a mano manda: no lo pisa ninguna lectura.
 
-**Contraste con tu registro de Aplifisa (menú Comprobar).** Saca de Aplifisa el
-«Listado de apuntes» en PDF, pásaselo al programa y te dice, apunte a apunte,
+**Contraste con tu registro de Aplifisa (botón «Comprobar registro», o Ctrl+R).**
+Saca de Aplifisa el «Listado de apuntes» en PDF, pásaselo al programa y te dice, apunte a apunte,
 qué cuadra y qué no: **facturas que no llegaron a registrarse**, apuntes que
 están en Aplifisa y no en el lote (registrados a mano, de otro lote o
 duplicados), y los que entraron **con otro importe**. Compara también los
 totales de base e IVA. Es gratis: ese PDF lleva texto y se lee sin IA.
-Ojo: tiene que ser el PDF que imprime Aplifisa, no un escaneo en papel.
+Ojo: tiene que ser el PDF que imprime Aplifisa, no un escaneo en papel. Si lo
+arrastras a la ventana por error, el programa lo reconoce y te ofrece
+contrastarlo en vez de mandarlo a Gemini (que costaría dinero y no serviría).
 
 **Doble contraste al exportar.** Después de escribir el Excel, el programa lo
 **vuelve a leer y lo compara con la pantalla**, línea por línea y celda por
