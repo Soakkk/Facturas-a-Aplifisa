@@ -90,7 +90,40 @@ QProgressBar {{
 }}
 QProgressBar::chunk {{ background: {NAVY}; border-radius: 5px; }}
 QStatusBar {{ background: {CARD}; color: {MUTED}; border-top: 1px solid {BORDER}; }}
-QToolTip {{ background: {CARD}; color: {INK}; border: 1px solid {BORDER}; padding: 5px; }}
+QToolTip {{
+    background: {CARD}; color: {INK};
+    border: 1px solid #C4CFDB; border-left: 4px solid {NAVY};
+    padding: 8px 10px;
+}}
+
+/* Barras de desplazamiento: finas, redondeadas y sin los botones de flecha,
+   que en una tabla larga solo estorban. */
+QScrollBar:vertical {{
+    background: transparent; width: 12px; margin: 2px 2px 2px 0;
+}}
+QScrollBar::handle:vertical {{
+    background: #C3CEDA; border-radius: 5px; min-height: 36px;
+}}
+QScrollBar::handle:vertical:hover {{ background: #9DB0C6; }}
+QScrollBar::handle:vertical:pressed {{ background: {NAVY}; }}
+QScrollBar:horizontal {{
+    background: transparent; height: 12px; margin: 0 2px 2px 2px;
+}}
+QScrollBar::handle:horizontal {{
+    background: #C3CEDA; border-radius: 5px; min-width: 36px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: #9DB0C6; }}
+QScrollBar::handle:horizontal:pressed {{ background: {NAVY}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+/* Ficha de incidencias de una fila (se abre al pulsar el semaforo). */
+QFrame#ficha {{
+    background: {CARD}; border: 1px solid #C4CFDB; border-radius: 8px;
+}}
+QLabel#fichaTitulo {{ font-size: 14px; font-weight: 700; }}
+QLabel#fichaLinea {{ color: {INK}; font-size: 12px; }}
+QLabel#fichaPie {{ color: {MUTED}; font-size: 11px; }}
 """
 
 

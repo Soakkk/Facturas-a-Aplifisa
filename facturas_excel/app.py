@@ -45,6 +45,9 @@ from facturas_excel.conceptos import (
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
+from facturas_excel.ficha_incidencias import (
+    TITULOS as TITULOS_ESTADO, FichaIncidencias,
+)
 from facturas_excel.exportar import (
     exportar_excel, totales_del_excel, verificar_excel,
 )
@@ -89,6 +92,17 @@ C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
 COLS_RESUMEN_INICIO = ["Bloque", "Tipo", "Líneas", "Base"]
 COLS_RESUMEN_FIN = ["Recargo", "IRPF", "Suplidos", "Total factura"]
 TODOS_LOS_BLOQUES = "Todos los bloques"
+
+
+def _ayuda_estado(estado, mensajes) -> str:
+    """El globo del semaforo, con titulo y un punto por cada problema."""
+    titulo, color = TITULOS_ESTADO.get(estado, TITULOS_ESTADO[REVISAR])
+    if not mensajes:
+        return f"<b style='color:{color}'>{titulo}</b>"
+    puntos = "".join(f"<div style='margin-top:3px'>•&nbsp;{m}</div>"
+                     for m in mensajes)
+    return (f"<div style='max-width:420px'>"
+            f"<b style='color:{color}'>{titulo}</b>{puntos}</div>")
 
 
 def _cabeceras_resumen(tipos_iva) -> list:
@@ -495,6 +509,7 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla.itemChanged.connect(self._on_celda)
+        self.tabla.cellClicked.connect(self._abrir_ficha)
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
         lt.addWidget(self.tabla, 1)
         split.addWidget(tabla_card)
@@ -1538,6 +1553,22 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
+
+    def _abrir_ficha(self, fila, columna):
+        """Al pulsar el semáforo se abre la ficha con lo que le pasa a la fila.
+
+        En el globo de ayuda se leia mal y desaparecia al mover el raton; asi
+        se queda abierta, se puede leer con calma y se puede copiar.
+        """
+        if columna != C_ESTADO or fila >= len(self.filas):
+            return
+        registro = self.filas[fila]
+        ficha = FichaIncidencias(registro.get("estado", OK),
+                                 registro.get("mensajes") or ["Todo correcto."],
+                                 self)
+        ficha.mostrar_junto_a(self.tabla.viewport(),
+                              self.tabla.visualItemRect(
+                                  self.tabla.item(fila, C_ESTADO)))
 
     def _revalidar_fila(self, r):
         if r < 0 or r >= len(self.filas):
