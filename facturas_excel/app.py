@@ -17,7 +17,7 @@ from dataclasses import replace
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, escaner, pendientes, updater,
+    __version__, ajustes, archivo, costes, escaner, pendientes, sesion, updater,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
@@ -317,7 +317,8 @@ class HiloDescargaActualizacion(QThread):
 
 
 class VentanaPrincipal(QMainWindow):
-    def __init__(self, comprobar_updates: bool = True):
+    def __init__(self, comprobar_updates: bool = True,
+                 restaurar_sesion: bool = True):
         super().__init__()
         self.setWindowTitle(f"Facturas a Aplifisa — v{__version__}")
         self.setWindowIcon(QIcon(ruta_recurso("app.ico")))
@@ -344,6 +345,8 @@ class VentanaPrincipal(QMainWindow):
         self._crear_interfaz()
         self._crear_atajos()
         self._pintar_gasto()
+        if restaurar_sesion:
+            self._restaurar_sesion()
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
@@ -401,6 +404,14 @@ class VentanaPrincipal(QMainWindow):
         lbl_recargo = QLabel("Recargo de equivalencia:")
         lbl_recargo.setObjectName("textoSuave")
         lr_recargo.addWidget(lbl_recargo)
+        self.chk_hay_recargo = QCheckBox("Factura(s) con recargo detectado")
+        self.chk_hay_recargo.setChecked(True)
+        self.chk_hay_recargo.setFocusPolicy(Qt.NoFocus)
+        self.chk_hay_recargo.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.chk_hay_recargo.setStyleSheet("font-weight: 600; color: #A16207;")
+        self.chk_hay_recargo.setToolTip(
+            "Solo aparece cuando el lote contiene recargo de equivalencia.")
+        lr_recargo.addWidget(self.chk_hay_recargo)
         self.combo_recargo = ComboSinRueda()
         self.combo_recargo.addItem(
             "registrar por el TOTAL factura (minorista)", TOTAL)
@@ -750,9 +761,82 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Actualizaciones",
                                 f"No se pudo comprobar:\n{msg}")
 
+    def _guardar_sesion(self) -> None:
+        """Conserva lote, correcciones, imágenes y bloques para la próxima vez."""
+        if not self._bloques and not self.filas:
+            sesion.borrar()
+            return
+        filas = []
+        for fila in range(self.tabla.rowCount()):
+            registro = self.filas[fila]
+            filas.append({
+                "png": registro["png"],
+                "factura": self._leer_fila(fila),
+                "aviso": registro.get("aviso", ""),
+                "bloque": registro.get("bloque", ""),
+                "fuentes": registro.get("fuentes", []),
+                "tipo": self._tipo_fila(fila),
+                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
+                "gxx": self.tabla.item(fila, C_GXX).text(),
+            })
+        sesion.guardar({
+            "bloques": self._bloques,
+            "filas": filas,
+            "cliente_nif": getattr(self, "_cliente_nif", ""),
+            "cliente_nombre": getattr(self, "_cliente_nombre", ""),
+            "hay_recargo": getattr(self, "_hay_recargo", False),
+            "regimen_recargo": self.combo_recargo.currentData(),
+        })
+
+    def _restaurar_sesion(self) -> None:
+        datos = sesion.cargar()
+        if not datos or not datos.get("bloques"):
+            return
+        try:
+            self._bloques = datos["bloques"]
+            self._cliente_nif = datos.get("cliente_nif", "")
+            self._cliente_nombre = datos.get("cliente_nombre", "")
+            self._hay_recargo = bool(datos.get("hay_recargo"))
+            self.fila_recargo.setVisible(self._hay_recargo)
+            self.chk_hay_recargo.setChecked(self._hay_recargo)
+            regimen = datos.get("regimen_recargo", DESGLOSE)
+            indice = self.combo_recargo.findData(regimen)
+            self.combo_recargo.blockSignals(True)
+            self.combo_recargo.setCurrentIndex(max(0, indice))
+            self.combo_recargo.blockSignals(False)
+            self._actualizar_combo_bloques()
+            self.tabla.setRowCount(0)
+            self.filas = []
+            for fila in datos.get("filas", []):
+                self._anadir_fila(
+                    fila["png"], fila["factura"], fila["tipo"],
+                    fila["cuenta"], fila["gxx"], fila.get("aviso", ""),
+                    fila.get("bloque", ""), fila.get("fuentes"))
+            self._pintar_cliente()
+            self._revalidar_todo()
+            hay_datos = self.tabla.rowCount() > 0
+            self.btn_gastos.setEnabled(hay_datos)
+            self.btn_registro.setEnabled(hay_datos)
+            self.btn_cliente.setEnabled(bool(self._bloques))
+            if hay_datos:
+                self.tabla.selectRow(0)
+            self.lbl_estado.setText(
+                f"Sesión recuperada: {len(self._bloques)} bloque(s) y "
+                f"{self.tabla.rowCount()} línea(s).")
+        except Exception:
+            # Una sesión antigua o dañada nunca debe impedir abrir el programa.
+            self._bloques = []
+            self.tabla.setRowCount(0)
+            self.filas = []
+            self._limpiar_visor()
+
     def closeEvent(self, ev):
         # No destruir QThreads vivos (abortaria el proceso)
         self.esperar_hilos()
+        try:
+            self._guardar_sesion()
+        except Exception:
+            pass
         super().closeEvent(ev)
 
     def dragEnterEvent(self, event):
@@ -1262,7 +1346,9 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText(f"Bloque «{nombre}» quitado del lote.")
 
     def _vaciar_todo(self):
-        if not self._bloques:
+        if not self._bloques and not self.filas:
+            self._limpiar_visor()
+            sesion.borrar()
             return
         if QMessageBox.question(
                 self, "Vaciar todo",
@@ -1273,17 +1359,28 @@ class VentanaPrincipal(QMainWindow):
             return
         self._bloques = []
         self._ultimo_borrado = []
+        self._rutas_actuales = []
+        self._duplicados = {}
+        self._escaneo_reciente = False
+        self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
         self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_cliente.setEnabled(False)
         self._hay_recargo = False
         self.fila_recargo.setVisible(False)
+        self.chk_hay_recargo.setChecked(False)
+        self.combo_filtro_estado.setCurrentIndex(0)
+        self.combo_filtro_bloque.setCurrentIndex(0)
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
+        self.tabla.clearSelection()
+        self._limpiar_visor()
         self._revalidar_todo()
         self.btn_gastos.setEnabled(False)
         self.btn_registro.setEnabled(False)
         self.lbl_cliente.setText("Cliente pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
+        sesion.borrar()
 
     def _por_el_total(self) -> bool:
         """El cliente registra sus compras con recargo por el total factura."""
@@ -1297,10 +1394,16 @@ class VentanaPrincipal(QMainWindow):
         self.filas = []
         for bloque in self._bloques:
             for png, pr in bloque["procesadas"]:
-                vista = a_total_factura(pr) if recargo else pr
-                for f in vista.facturas:
-                    self._anadir_fila(png, f, vista.tipo, vista.cuenta,
-                                      vista.gxx, vista.aviso, bloque["nombre"])
+                fuentes = [f for f in pr.facturas if not f.eliminada]
+                if not fuentes:
+                    continue
+                vista = a_total_factura(replace(pr, facturas=fuentes)) if recargo else pr
+                visibles = vista.facturas if recargo else fuentes
+                for f in visibles:
+                    origenes = fuentes if recargo else [f]
+                    self._anadir_fila(
+                        png, f, f.tipo_revision or vista.tipo, vista.cuenta,
+                        vista.gxx, vista.aviso, bloque["nombre"], origenes)
         self.tabla.blockSignals(False)
 
     def _on_recargo(self):
@@ -1327,6 +1430,7 @@ class VentanaPrincipal(QMainWindow):
         cuantas = self._facturas_con_recargo()
         self._hay_recargo = bool(cuantas)
         self.fila_recargo.setVisible(self._hay_recargo)
+        self.chk_hay_recargo.setChecked(self._hay_recargo)
         if not cuantas:
             return
         nif = getattr(self, "_cliente_nif", "")
@@ -1342,13 +1446,14 @@ class VentanaPrincipal(QMainWindow):
             max(0, self.combo_recargo.findData(guardado or DESGLOSE)))
         self.combo_recargo.blockSignals(False)
 
-    def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque=""):
+    def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
+                     fuentes=None):
         senales_bloqueadas = self.tabla.signalsBlocked()
         self.tabla.blockSignals(True)
         r = self.tabla.rowCount()
         self.tabla.insertRow(r)
         self.filas.append({"png": png, "factura": f, "aviso": aviso,
-                           "bloque": bloque})
+                           "bloque": bloque, "fuentes": list(fuentes or [f])})
 
         est = QTableWidgetItem("")
         est.setFlags(Qt.ItemIsEnabled)
@@ -1358,7 +1463,7 @@ class VentanaPrincipal(QMainWindow):
         combo = ComboSinRueda()
         combo.addItem("Gasto", "gasto")
         combo.addItem("Ingreso", "venta")
-        combo.setCurrentIndex(max(0, combo.findData(tipo)))
+        combo.setCurrentIndex(max(0, combo.findData(f.tipo_revision or tipo)))
         combo.setToolTip(
             "Clasificación dudosa: compruebe si corresponde a Gasto o Ingreso."
             if aviso and ("dudoso" in aviso.lower() or "confirma" in aviso.lower())
@@ -1419,6 +1524,9 @@ class VentanaPrincipal(QMainWindow):
         fila = self._fila_del_control_tipo(control)
         if 0 <= fila < len(self.filas):
             self.filas[fila]["factura"].revision_confirmada = False
+            self.filas[fila]["factura"].tipo_revision = control.currentData()
+            for fuente in self.filas[fila].get("fuentes", []):
+                fuente.tipo_revision = control.currentData()
         self._revalidar_fila(fila)
 
     def _nombre_escrito_a_mano(self, r) -> str:
@@ -1638,6 +1746,8 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado = []
         for fila in filas:
             registro = self.filas[fila]
+            for fuente in registro.get("fuentes", [registro["factura"]]):
+                fuente.eliminada = True
             self._ultimo_borrado.append({
                 "registro": registro,
                 "tipo": self._tipo_fila(fila),
@@ -1658,10 +1768,12 @@ class VentanaPrincipal(QMainWindow):
             return
         for borrada in self._ultimo_borrado:
             registro = borrada["registro"]
+            for fuente in registro.get("fuentes", [registro["factura"]]):
+                fuente.eliminada = False
             self._anadir_fila(
                 registro["png"], registro["factura"], borrada["tipo"],
                 borrada["cuenta"], borrada["gxx"], registro["aviso"],
-                registro.get("bloque", ""))
+                registro.get("bloque", ""), registro.get("fuentes"))
         cantidad = len(self._ultimo_borrado)
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
@@ -1898,14 +2010,17 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText("Resumen copiado al portapapeles.")
 
     # ---------- miniatura ----------
+    def _limpiar_visor(self) -> None:
+        self._pixmap_documento = QPixmap()
+        self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
+        self.lbl_img.clear()
+        self.lbl_img.setText(
+            "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
+
     def _mostrar_miniatura(self):
         r = self.tabla.currentRow()
         if r < 0 or r >= len(self.filas):
-            self._pixmap_documento = QPixmap()
-            self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
-            self.lbl_img.clear()
-            self.lbl_img.setText(
-                "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
+            self._limpiar_visor()
             return
         png = self.filas[r]["png"]
         factura = self.filas[r]["factura"]
@@ -1985,9 +2100,24 @@ class VentanaPrincipal(QMainWindow):
                 por_tipo[self._tipo_fila(fila)].append(f)
         return por_tipo, excluidas, errores, pendientes_revision
 
+    def _nombre_cliente_archivo(self) -> str:
+        nombre = (getattr(self, "_cliente_nombre", "") or
+                  next((b.get("cliente", "") for b in self._bloques
+                        if b.get("cliente")), "") or "Cliente")
+        return escaner.sanear(nombre)
+
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
         self._revalidar_todo()
+        clientes = {b.get("nif") or b.get("cliente") for b in self._bloques
+                    if b.get("nif") or b.get("cliente")}
+        if len(clientes) > 1:
+            QMessageBox.critical(
+                self, "Hay varios clientes",
+                "No se puede crear un Excel con bloques de clientes distintos. "
+                "Quite el bloque incorrecto o pulse «Vaciar todo» para empezar "
+                "con otro cliente.")
+            return
         por_tipo, excluidas, errores, pendientes_revision = \
             self._clasificar_exportacion()
 
@@ -2029,9 +2159,10 @@ class VentanaPrincipal(QMainWindow):
         generados = []
         problemas_export = []      # lo que no cuadre entre archivo y pantalla
         resumen_archivos = []      # (archivo, lineas, totales) para enseñarlo
+        cliente_archivo = self._nombre_cliente_archivo()
         for tipo, nombre, xml in (
-            ("gasto", "gastos.xlsx", "gastos.xml"),
-            ("venta", "ingresos.xlsx", "ingresos.xml"),
+            ("gasto", f"{cliente_archivo}_gastos.xlsx", "gastos.xml"),
+            ("venta", f"{cliente_archivo}_ingresos.xlsx", "ingresos.xml"),
         ):
             if not por_tipo[tipo]:
                 continue

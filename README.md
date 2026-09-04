@@ -30,6 +30,10 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    carpetas se crean juntas y el ejercicio se obtiene de la fecha de factura.
    Desde **Escaneos guardados** se puede crear el ZIP completo del ejercicio
    para adjuntarlo después como documentación digitalizada en Aplifisa.
+6. El lote en curso se conserva al cerrar el programa, incluidas las
+   correcciones y los bloques acumulados. Solo **Vaciar todo** inicia una sesión
+   nueva. Los Excel se nombran `CLIENTE_gastos.xlsx` y
+   `CLIENTE_ingresos.xlsx`.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

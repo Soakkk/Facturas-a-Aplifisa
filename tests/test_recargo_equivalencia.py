@@ -235,6 +235,7 @@ def test_sin_facturas_con_recargo_la_eleccion_ni_aparece(monkeypatch, tmp_path):
 
     assert not v._hay_recargo
     assert v._facturas_con_recargo() == 0
+    assert v.fila_recargo.isHidden()
 
 
 def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
@@ -244,6 +245,8 @@ def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
     v = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
 
     assert v._por_el_total()
+    assert not v.fila_recargo.isHidden()
+    assert v.chk_hay_recargo.isChecked()
     assert v.tabla.rowCount() == 1                     # un solo apunte
     assert v.tabla.item(0, C_PCT).text() == ""         # sin desglose de IVA
     assert v.tabla.item(0, C_CUOTA).text() == ""

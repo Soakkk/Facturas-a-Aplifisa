@@ -227,6 +227,15 @@ def test_al_vaciar_el_lote_el_resumen_tambien_se_queda_a_cero(monkeypatch):
     assert v.tabla_resumen.rowCount() == 0
     assert v.alerta.isHidden()
     assert "Cliente pendiente" in v.lbl_cliente.text()
+    assert v._pixmap_documento.isNull()
+    assert "Arrastre aquí" in v.lbl_origen.text()
+    assert not v.btn_cliente.isEnabled()
+
+
+def test_el_excel_toma_el_nombre_del_cliente():
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nombre = "Pérez / Martínez S.L."
+    assert v._nombre_cliente_archivo() == "Perez Martinez S.L"
 
 
 def test_quitar_el_ultimo_bloque_tambien_limpia_el_resumen(monkeypatch):
