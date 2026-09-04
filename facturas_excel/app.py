@@ -341,6 +341,8 @@ class VentanaPrincipal(QMainWindow):
         self._tipo_escaneo = "gastos"
         self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
+        # Documentos esperando turno para leerse (ver procesar_rutas).
+        self._cola = []
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -1104,39 +1106,77 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Falta la API key",
                                 "Configura primero tu API key de Gemini.")
             return
+        # Cada documento va a la COLA y se lee por turnos, no todos a la vez.
+        # Con 70 hojas de golpe no se veia nada hasta el final, Google frena
+        # las peticiones seguidas y un tropiezo se llevaba el lote entero. Uno
+        # a uno, cada PDF entra en la tabla en cuanto esta, y se pueden soltar
+        # mas sin esperar a que acabe el anterior.
+        for ruta in rutas:
+            self._cola.append({
+                "rutas": [ruta],
+                "escaneo_reciente": desde_escaner and self._escaneo_reciente,
+                "escaneo_sin_identificar": (
+                    self._escaneo_sin_identificar if desde_escaner
+                    else archivo.sin_identificar(ruta)),
+                "tipo_escaneo": self._tipo_escaneo,
+            })
         if getattr(self, "worker", None) and self.worker.isRunning():
-            QMessageBox.information(self, "Procesando",
-                                    "Espera a que termine el lote actual.")
+            self.lbl_estado.setText(
+                f"En cola: {len(self._cola)} documento(s). Se leen por turnos.")
             return
-        self._rutas_actuales = rutas
+        self._siguiente_de_la_cola()
+
+    def _siguiente_de_la_cola(self) -> bool:
+        """Arranca la lectura del siguiente documento. False si no queda ninguno."""
+        if not self._cola:
+            return False
+        api_key = leer_api_key()
+        if not api_key:
+            self._cola = []
+            return False
+        trabajo = self._cola.pop(0)
+        self._escaneo_reciente = trabajo["escaneo_reciente"]
+        self._escaneo_sin_identificar = trabajo["escaneo_sin_identificar"]
+        self._tipo_escaneo = trabajo["tipo_escaneo"]
+        self._rutas_actuales = trabajo["rutas"]
         self.lbl_origen.setText(
-            f"{len(rutas)} archivo{'s' if len(rutas) != 1 else ''}: "
-            + ", ".join(os.path.basename(r) for r in rutas[:3])
-            + ("…" if len(rutas) > 3 else ""))
+            ", ".join(os.path.basename(r) for r in trabajo["rutas"])
+            + (f"  ·  {len(self._cola)} en cola" if self._cola else ""))
         self.btn_cargar.setEnabled(False)
         self.btn_gastos.setEnabled(False)
         self.btn_ventas.setEnabled(False)
         self.progreso.setVisible(True)
         self.progreso.setValue(0)
         self.lbl_estado.setText("Leyendo facturas con Gemini…")
-        self.worker = Worker(rutas, api_key)
+        self.worker = Worker(trabajo["rutas"], api_key)
         self.worker.progreso.connect(self._on_progreso)
         self.worker.gasto.connect(self._on_gasto)
         self.worker.terminado.connect(self._on_terminado)
         self.worker.fallo.connect(self._on_fallo)
         self.worker.start()
+        return True
 
     def _on_progreso(self, actual, total):
         self.progreso.setMaximum(total)
         self.progreso.setValue(actual)
-        self.lbl_estado.setText(f"Leyendo facturas con Gemini… {actual}/{total}")
+        cual = os.path.basename(self._rutas_actuales[0]) if self._rutas_actuales else ""
+        cola = f"  ·  quedan {len(self._cola)} en la cola" if self._cola else ""
+        self.lbl_estado.setText(
+            f"Leyendo {cual or 'facturas'} con Gemini… {actual}/{total}{cola}")
 
     def _on_fallo(self, msg):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
         self._escaneo_reciente = False
-        self.lbl_estado.setText("No se pudo procesar el lote.")
-        QMessageBox.critical(self, "Error al procesar", msg)
+        cual = os.path.basename(self._rutas_actuales[0]) if self._rutas_actuales else ""
+        self.lbl_estado.setText(f"No se pudo leer {cual or 'el documento'}.")
+        siguen = len(self._cola)
+        QMessageBox.critical(
+            self, "Error al procesar",
+            f"{cual}:{chr(10)}{msg}"
+            + (f"{chr(10)}{chr(10)}Sigo con los {siguen} documento(s) que "
+               f"quedan en la cola." if siguen else ""))
+        self._siguiente_de_la_cola()
 
     def _on_terminado(self, procesadas, nombre, nif, crudos=None):
         self.progreso.setVisible(False)
@@ -1175,9 +1215,15 @@ class VentanaPrincipal(QMainWindow):
         self.btn_ventas.setEnabled(hay_datos)
         self.btn_registro.setEnabled(hay_datos)
         self.btn_cliente.setEnabled(bool(self._bloques))
-        if hay_datos:
+        # Solo en el primer documento: con la cola en marcha, mover la
+        # seleccion cada vez que entra uno le quita el sitio al que mira.
+        if hay_datos and len(self._bloques) == 1:
             self.tabla.selectRow(0)
         self._avisar_paginas_no_leidas()
+        # Con la cola en marcha se sigue por el siguiente documento; lo del
+        # cliente se pregunta UNA vez, al final, y con todo el lote delante.
+        if self._siguiente_de_la_cola():
+            return
         # Un taco del mismo proveedor al mismo cliente deja las dos partes
         # empatadas: hay que preguntarlo o sale todo del reves.
         if self._analisis_del_lote().dudoso:
@@ -1383,6 +1429,7 @@ class VentanaPrincipal(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self._bloques = []
+        self._cola = []
         self._ultimo_borrado = []
         self._rutas_actuales = []
         self._duplicados = {}

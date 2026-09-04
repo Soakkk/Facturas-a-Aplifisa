@@ -111,6 +111,15 @@ verdes no sale nada: no hay nada que contar. Al pasar el ratón sigue apareciend
 el aviso rápido, ahora con título en color. La barra de desplazamiento de la
 tabla también se ha rehecho.
 
+**Cola de documentos.** Ya no hace falta que partas el trabajo en tandas: suelta
+los PDF que quieras y el programa los lee **de uno en uno**, por turnos. Cada
+documento entra en la tabla en cuanto está —no hay que esperar al último— y
+abajo se ve cuál se está leyendo y cuántos quedan en la cola. Si mientras lee
+sueltas otro PDF o escaneas otro taco, **se pone en la cola** en vez de decirte
+«espera a que termine». Si uno da error, se avisa y sigue con los demás. Lo de
+quién es el cliente se pregunta una sola vez, al final, con todo el lote
+delante. «Vaciar todo» tira también lo que estuviera esperando turno.
+
 **Un lote grande ya no se queda colgado.** Con 70 hojas el lote se quedaba en
 «69/70» y de ahí no pasaba: si una petición a Gemini se quedaba sin contestar,
 ese hilo esperaba indefinidamente y nunca llegaba el final. Ahora cada página
