@@ -111,6 +111,14 @@ verdes no sale nada: no hay nada que contar. Al pasar el ratón sigue apareciend
 el aviso rápido, ahora con título en color. La barra de desplazamiento de la
 tabla también se ha rehecho.
 
+**Un lote grande ya no se queda colgado.** Con 70 hojas el lote se quedaba en
+«69/70» y de ahí no pasaba: si una petición a Gemini se quedaba sin contestar,
+ese hilo esperaba indefinidamente y nunca llegaba el final. Ahora cada página
+tiene **90 segundos**; si no contesta se reintenta una vez y, si tampoco, esa
+página se marca y el lote **sigue y termina**. Al acabar, el programa te dice
+**qué páginas no se han podido leer y por qué**, con su archivo y su número de
+hoja, para que vuelvas a pasar solo esas.
+
 **Lo que cuesta.** Abajo a la derecha: el modelo de Gemini, lo que ha costado el
 lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.
 

@@ -209,6 +209,7 @@ class Worker(QThread):
         super().__init__()
         self.rutas = rutas
         self.api_key = api_key
+        self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyo
 
     def run(self):
         try:
@@ -235,6 +236,7 @@ class Worker(QThread):
                 except Exception as e:  # una factura ilegible no tumba el lote
                     datos = {"emisor_nombre": "(NO SE PUDO LEER)", "lineas_iva": [{}],
                              "_error": str(e)[:120]}
+                    self.fallos.append((origen, pagina, str(e)[:120]))
                 return idx, (img, origen, pagina, datos)
 
             hechas = 0
@@ -1175,10 +1177,33 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(bool(self._bloques))
         if hay_datos:
             self.tabla.selectRow(0)
+        self._avisar_paginas_no_leidas()
         # Un taco del mismo proveedor al mismo cliente deja las dos partes
         # empatadas: hay que preguntarlo o sale todo del reves.
         if self._analisis_del_lote().dudoso:
             self._cambiar_cliente(automatico=True)
+
+    def _avisar_paginas_no_leidas(self):
+        """Las páginas que Gemini no pudo leer, dichas por su nombre.
+
+        Salen en rojo en la tabla, pero con 70 hojas eso no se ve: hay que
+        decir cuáles son y por qué, que casi siempre es que se agotó el tiempo
+        de espera y basta con volver a pasar ese PDF."""
+        fallos = getattr(getattr(self, "worker", None), "fallos", None)
+        if not fallos:
+            return
+        salto = chr(10)
+        detalle = salto.join(
+            f"· {os.path.basename(archivo) or 'documento'}, página {pagina}: "
+            f"{motivo}" for archivo, pagina, motivo in fallos[:10])
+        if len(fallos) > 10:
+            detalle += f"{salto}· … y {len(fallos) - 10} más"
+        QMessageBox.warning(
+            self, "Páginas sin leer",
+            f"{len(fallos)} página(s) no se han podido leer y están en rojo "
+            f"en la tabla:{salto}{salto}{detalle}{salto}{salto}"
+            "Vuelve a pasar esas páginas (o el PDF entero: las que ya están "
+            "no se cobran dos veces si quitas antes el bloque).")
 
     def _recolocar_escaneo(self, cliente, procesadas):
         """Archiva el PDF recién escaneado por cliente, ejercicio y tipo.

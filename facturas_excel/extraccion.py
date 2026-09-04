@@ -31,8 +31,23 @@ from google.genai import types
 MODELOS = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-pro-latest"]
 
 
+# Tiempo maximo que se espera a Gemini por pagina. Sin esto una peticion que
+# se queda colgada bloquea el hilo PARA SIEMPRE: con 70 paginas el lote se
+# quedaba en "69/70" y no terminaba nunca (04/09/2026).
+TIEMPO_LIMITE = 90       # segundos
+
+
 class SinCredito(Exception):
     """La API key no tiene credito / facturacion activa (no reintentar)."""
+
+
+class TiempoAgotado(Exception):
+    """Gemini no contesto a tiempo: esa pagina se da por no leida."""
+
+
+def _es_timeout(e: Exception) -> bool:
+    texto = (type(e).__name__ + " " + str(e)).lower()
+    return "timeout" in texto or "timed out" in texto
 
 # Criterio contable que sigue Gemini para proponer el concepto de un GASTO.
 # La lista de conceptos NO es libre: es la que ofrece Aplifisa (catalogo en
@@ -173,7 +188,10 @@ class DatosFactura:
 
 class Extractor:
     def __init__(self, api_key: str, modelos: Optional[List[str]] = None):
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(
+            api_key=api_key,
+            # El SDK lo quiere en milisegundos.
+            http_options=types.HttpOptions(timeout=TIEMPO_LIMITE * 1000))
         self.modelos = modelos or MODELOS
 
     def _generar(self, img: bytes):
@@ -196,6 +214,15 @@ class Extractor:
                             "Tu API key no tiene crédito/facturación activa. "
                             "Activa la facturación en aistudio.google.com y añade saldo."
                         ) from e
+                    if _es_timeout(e):
+                        # Un tiron de red se reintenta una vez; si vuelve a
+                        # colgarse, esta pagina se marca y el lote sigue. Antes
+                        # se probaban 3 modelos x 3 intentos sin limite ninguno.
+                        if intento == 0:
+                            continue
+                        raise TiempoAgotado(
+                            f"Gemini no contestó en {TIEMPO_LIMITE} segundos "
+                            f"(se intentó dos veces).") from e
                     if "503" in msg or "unavailable" in msg or "429" in msg:
                         time.sleep(2 * (intento + 1))
                         continue
