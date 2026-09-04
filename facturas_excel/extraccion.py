@@ -105,6 +105,7 @@ Devuelve SOLO un JSON con esta estructura exacta:
                   "pct_requiv": null, "cuota_requiv": null}}],
   "base_irpf": null, "pct_irpf": null, "cuota_irpf": null,
   "suplidos": null,
+  "es_bien_inversion": false,
   "total": 0.0,
   "sustituye_a": null,
   "manuscrito_en_importes": false,
@@ -131,6 +132,11 @@ SUPLIDOS: si la factura identifica expresamente un importe como "suplidos",
 pero se SUMAN al total a pagar. Copia solamente el importe que figure como tal;
 no deduzcas un suplido solo porque haya una diferencia en el total. Si no
 aparece identificado, deja "suplidos" a null.
+
+BIENES DE INVERSION: pon "es_bien_inversion" a true SOLO cuando la factura
+corresponda claramente a la compra de un inmovilizado duradero (maquinaria,
+vehiculo, mobiliario, equipo informatico, inmueble, etc.), no a una reparacion,
+recambio, consumible o gasto corriente. Estas facturas se revisan manualmente.
 
 FACTURA QUE SUSTITUYE A OTRA: si el documento dice que sustituye/anula/rectifica
 a otro (p.ej. "Sustituye al doc.n: 4532023141", "POST-FACTURACION", factura

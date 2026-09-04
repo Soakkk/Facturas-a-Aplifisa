@@ -13,7 +13,7 @@ sin % ni cuota de IVA. No va en la columna Suplidos.
 from pathlib import Path
 
 from facturas_excel.procesar import a_total_factura, construir
-from facturas_excel.validacion import OK, validar
+from facturas_excel.validacion import REVISAR, validar
 
 CLIENTE = "12345678Z"
 
@@ -55,7 +55,8 @@ def test_el_suplido_es_una_linea_mas_con_base_y_sin_iva():
 def test_la_factura_cuadra_con_el_suplido_dentro():
     pr = construir(datos_suplidos(), CLIENTE, "CLIENTE DE PRUEBA")
     assert not pr.aviso                       # 100 + 21 + 109,08 = 230,08
-    assert all(validar(f).estado == OK for f in pr.facturas)
+    assert all(validar(f).estado == REVISAR for f in pr.facturas)
+    assert all(f.tratamiento_manual == "Factura con suplido" for f in pr.facturas)
 
 
 def test_el_suplido_no_va_en_la_columna_suplidos():

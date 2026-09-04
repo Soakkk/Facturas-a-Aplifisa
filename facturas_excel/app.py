@@ -11,6 +11,7 @@ import argparse
 import os
 import sys
 
+from collections import Counter
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -71,13 +72,17 @@ from facturas_excel.resumen import (
 from facturas_excel.rutas import ruta_config
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
-    validar, validar_nif,
+    fecha_de, validar, validar_nif,
 )
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
 COLOR_ESTADO = {OK: QColor("#2e7d32"), REVISAR: QColor("#f9a825"), ERROR: QColor("#c62828")}
 ICONO_ESTADO = {OK: "OK", REVISAR: "!", ERROR: "X"}
+COLOR_REVISADO = QColor("#1565c0")
+COLOR_MANUAL = QColor("#616161")
+ICONO_REVISADO = "✓"
+ICONO_MANUAL = "M"
 
 HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
@@ -461,7 +466,7 @@ class VentanaPrincipal(QMainWindow):
         titulo_tabla = QLabel("Datos extraídos")
         titulo_tabla.setObjectName("tituloSeccion")
         ayuda_tabla = QLabel(
-            "El programa decide Gasto o Ingreso. Revise únicamente las filas ámbar o rojas.")
+            "Revise las filas ámbar o rojas. ✓ = revisada; M = gestión manual, no se exporta.")
         ayuda_tabla.setObjectName("textoSuave")
         lt.addWidget(titulo_tabla)
         lt.addWidget(ayuda_tabla)
@@ -484,6 +489,16 @@ class VentanaPrincipal(QMainWindow):
         btn_siguiente = QPushButton("Siguiente incidencia")
         btn_siguiente.clicked.connect(self._siguiente_incidencia)
         herramientas.addWidget(btn_siguiente)
+        btn_revisada = QPushButton("Marcar revisada")
+        btn_revisada.setToolTip(
+            "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
+        btn_revisada.clicked.connect(self._marcar_revisada)
+        herramientas.addWidget(btn_revisada)
+        btn_manual = QPushButton("Gestión manual sí/no")
+        btn_manual.setToolTip(
+            "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
+        btn_manual.clicked.connect(self._alternar_gestion_manual)
+        herramientas.addWidget(btn_manual)
         herramientas.addStretch(1)
         self.btn_quitar_bloque = QPushButton("Quitar este bloque")
         self.btn_quitar_bloque.setObjectName("peligro")
@@ -936,7 +951,7 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
         self._avisar_hojas_perdidas(ruta)
         # Directo al lote: es el flujo que se pidio, sin pasar por abrir archivo.
-        self.procesar_rutas([ruta])
+        self.procesar_rutas([ruta], desde_escaner=True)
 
     def _avisar_hojas_perdidas(self, ruta):
         """El alimentador arrastra a veces dos hojas pegadas: salen menos
@@ -964,6 +979,8 @@ class VentanaPrincipal(QMainWindow):
         self.progreso.setVisible(False)
         self.btn_escanear.setEnabled(True)
         self.btn_cargar.setEnabled(True)
+        self._escaneo_reciente = False
+        self._escaneo_sin_identificar = False
         self.lbl_estado.setText("No se pudo escanear.")
         QMessageBox.critical(self, "Error al escanear", mensaje)
 
@@ -975,7 +992,7 @@ class VentanaPrincipal(QMainWindow):
         if rutas:
             self.procesar_rutas(rutas)
 
-    def procesar_rutas(self, rutas):
+    def procesar_rutas(self, rutas, desde_escaner: bool = False):
         """Procesa rutas recibidas por diálogo, arrastre o Escáner Fotos."""
         rutas = [os.path.abspath(r) for r in rutas
                  if os.path.isfile(r) and os.path.splitext(r)[1].lower() in EXT_FACTURA]
@@ -983,6 +1000,10 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Archivos no compatibles",
                                 "No se encontraron PDFs o imágenes válidas.")
             return
+        if not desde_escaner:
+            self._escaneo_reciente = False
+            self._escaneo_sin_identificar = (
+                len(rutas) == 1 and archivo.sin_identificar(rutas[0]))
         # Si lo que se ha soltado es el listado de Aplifisa, NO se manda a
         # Gemini: aqui se lee gratis y lo que se quiere es contrastarlo.
         listados = [r for r in rutas if r.lower().endswith(".pdf")
@@ -1027,6 +1048,7 @@ class VentanaPrincipal(QMainWindow):
     def _on_fallo(self, msg):
         self.progreso.setVisible(False)
         self.btn_cargar.setEnabled(True)
+        self._escaneo_reciente = False
         self.lbl_estado.setText("No se pudo procesar el lote.")
         QMessageBox.critical(self, "Error al procesar", msg)
 
@@ -1075,21 +1097,36 @@ class VentanaPrincipal(QMainWindow):
             self._cambiar_cliente(automatico=True)
 
     def _recolocar_escaneo(self, cliente, procesadas):
-        """Muda el PDF recién escaneado a la carpeta de su cliente.
+        """Archiva el PDF recién escaneado por cliente, ejercicio y tipo.
 
         Al escanear no hace falta decir de quién son las facturas: el programa
         lo averigua por el NIF que se repite y coloca el archivo despues. Si no
         lo averigua, el PDF se queda en «Sin identificar» y se puede colocar a
         mano desde «Escaneos guardados».
         """
-        if not self._escaneo_sin_identificar or len(self._rutas_actuales) != 1:
+        if (not self._escaneo_reciente and not self._escaneo_sin_identificar) \
+                or len(self._rutas_actuales) != 1:
             return
         ruta = self._rutas_actuales[0]
-        if not cliente or not archivo.sin_identificar(ruta):
+        if not cliente:
             return
         ventas = sum(1 for _, pr in procesadas if pr.tipo == "venta")
         tipo = "ingresos" if ventas > len(procesadas) / 2 else "gastos"
-        nueva = archivo.mover_a_cliente(ruta, cliente, tipo)
+        ejercicios = []
+        for _, pr in procesadas:
+            if not pr.facturas:
+                continue
+            fecha = fecha_de(pr.facturas[0].fecha)
+            if fecha:
+                ejercicios.append(fecha.year)
+        ejercicio = Counter(ejercicios).most_common(1)[0][0] if ejercicios else None
+        if len(set(ejercicios)) > 1:
+            aviso = ("El PDF mezcla varios ejercicios; se ha archivado en el "
+                     f"{ejercicio}, que es el más frecuente. Revise su ubicación.")
+            for _, pr in procesadas:
+                pr.aviso = f"{pr.aviso} {aviso}".strip()
+        nueva = archivo.mover_a_cliente(
+            ruta, cliente, tipo, ejercicio=ejercicio)
         if nueva == ruta:
             return
         self._escaneo_sin_identificar = False
@@ -1098,7 +1135,9 @@ class VentanaPrincipal(QMainWindow):
             pr.origen = nueva
             for f in pr.facturas:
                 f.origen_imagen = nueva
-        self.lbl_estado.setText(f"Escaneo guardado como {os.path.basename(nueva)}")
+        self.lbl_estado.setText(
+            f"Escaneo archivado en {cliente} / {ejercicio or 'ejercicio actual'} / "
+            f"{'Ingresos' if tipo == 'ingresos' else 'Gastos'}")
 
     def _analisis_del_lote(self):
         """Las partes que salen en TODO el lote (todos los bloques)."""
@@ -1325,8 +1364,7 @@ class VentanaPrincipal(QMainWindow):
             if aviso and ("dudoso" in aviso.lower() or "confirma" in aviso.lower())
             else "Clasificación automática según el NIF y el papel del cliente en la factura.")
         combo.currentIndexChanged.connect(
-            lambda _i, control=combo: self._revalidar_fila(
-                self._fila_del_control_tipo(control)))
+            lambda _i, control=combo: self._on_tipo_cambiado(control))
         self.tabla.setCellWidget(r, C_TIPO, combo)
 
         valores = {
@@ -1362,6 +1400,8 @@ class VentanaPrincipal(QMainWindow):
         Si no, habria que volver a corregir lo mismo en cada lote: el nombre
         con el que se le llama, su NIF y la cuenta que le toca.
         """
+        if item.row() < len(self.filas):
+            self.filas[item.row()]["factura"].revision_confirmada = False
         columna = item.column()
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
@@ -1374,6 +1414,12 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         if aviso:
             self.lbl_estado.setText(aviso)  # despues: _resumen pisa la barra
+
+    def _on_tipo_cambiado(self, control) -> None:
+        fila = self._fila_del_control_tipo(control)
+        if 0 <= fila < len(self.filas):
+            self.filas[fila]["factura"].revision_confirmada = False
+        self._revalidar_fila(fila)
 
     def _nombre_escrito_a_mano(self, r) -> str:
         """El nombre que pone una persona manda, y se copia al resto de
@@ -1496,7 +1542,7 @@ class VentanaPrincipal(QMainWindow):
                 opcion == 0
                 or (opcion == 1 and estado == ICONO_ESTADO[REVISAR])
                 or (opcion == 2 and estado == ICONO_ESTADO[ERROR])
-                or (opcion == 3 and estado == ICONO_ESTADO[OK])
+                or (opcion == 3 and estado in {ICONO_ESTADO[OK], ICONO_REVISADO})
             )
             if bloque != TODOS_LOS_BLOQUES and self.filas[fila]["bloque"] != bloque:
                 visible = False
@@ -1509,12 +1555,78 @@ class VentanaPrincipal(QMainWindow):
         inicio = self.tabla.currentRow()
         for salto in range(1, total + 1):
             fila = (inicio + salto) % total
-            if self._estado_fila(fila) != ICONO_ESTADO[OK]:
+            registro = self.filas[fila]
+            f = registro["factura"]
+            pendiente = (registro.get("estado") == ERROR or
+                         (registro.get("estado") == REVISAR
+                          and not f.revision_confirmada
+                          and not f.tratamiento_manual))
+            if pendiente:
                 self.combo_filtro_estado.setCurrentIndex(0)
                 self.tabla.selectRow(fila)
                 self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
                 return
         self.lbl_estado.setText("Todo el lote está correcto y listo para exportar.")
+
+    def _filas_seleccionadas(self) -> list[int]:
+        return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})
+
+    def _marcar_revisada(self) -> None:
+        """Da salida únicamente a avisos ámbar comprobados por una persona."""
+        filas = self._filas_seleccionadas()
+        if not filas:
+            QMessageBox.information(
+                self, "Revisión", "Seleccione una o varias filas ámbar.")
+            return
+        confirmadas = 0
+        for fila in filas:
+            registro = self.filas[fila]
+            f = self._leer_fila(fila)
+            if (registro.get("estado") == REVISAR
+                    and not f.tratamiento_manual):
+                f.revision_confirmada = True
+                confirmadas += 1
+        self._revalidar_todo()
+        if confirmadas:
+            self.lbl_estado.setText(
+                f"{confirmadas} línea(s) revisada(s): ya pueden exportarse.")
+        else:
+            QMessageBox.information(
+                self, "Revisión",
+                "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
+                "corrigen y las operaciones manuales no se exportan.")
+
+    def _alternar_gestion_manual(self) -> None:
+        """Aparta la factura completa, aunque tenga varias líneas de IVA."""
+        seleccionadas = self._filas_seleccionadas()
+        if not seleccionadas:
+            QMessageBox.information(
+                self, "Gestión manual", "Seleccione al menos una factura.")
+            return
+        claves = set()
+        for fila in seleccionadas:
+            f = self._leer_fila(fila)
+            claves.add((f.origen_imagen, f.num_factura, f.fecha, f.nif))
+        candidatas = [self._leer_fila(i) for i in range(self.tabla.rowCount())
+                      if (self.filas[i]["factura"].origen_imagen,
+                          self.filas[i]["factura"].num_factura,
+                          self.filas[i]["factura"].fecha,
+                          self.filas[i]["factura"].nif) in claves]
+        quitar_marca = all(f.tratamiento_manual == "Marcada por el usuario"
+                           for f in candidatas)
+        for f in candidatas:
+            # Las exclusiones detectadas (suplido, bien de inversión o
+            # sustituida) no se desactivan con un clic accidental.
+            if quitar_marca:
+                f.tratamiento_manual = None
+            elif not f.tratamiento_manual:
+                f.tratamiento_manual = "Marcada por el usuario"
+            f.revision_confirmada = False
+        self._revalidar_todo()
+        self.lbl_estado.setText(
+            f"{len(candidatas)} línea(s) "
+            + ("devueltas al flujo automático." if quitar_marca
+               else "apartadas para gestión manual."))
 
     def _eliminar_seleccion(self) -> None:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},
@@ -1601,10 +1713,18 @@ class VentanaPrincipal(QMainWindow):
                         f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
                         f"base y tipo de IVA). Bórrala o quedará registrada dos veces.")
             estado = ERROR
+        confirmada = (estado == REVISAR and f.revision_confirmada
+                      and not f.tratamiento_manual)
+        if confirmada:
+            msgs.append("Revisada y confirmada manualmente")
+        self.filas[r]["estado"] = estado
+        self.filas[r]["mensajes"] = msgs
         celda = self.tabla.item(r, C_ESTADO)
         self.tabla.blockSignals(True)
-        celda.setText(ICONO_ESTADO[estado])
-        celda.setBackground(COLOR_ESTADO[estado])
+        celda.setText(ICONO_MANUAL if f.tratamiento_manual else
+                      ICONO_REVISADO if confirmada else ICONO_ESTADO[estado])
+        celda.setBackground(COLOR_MANUAL if f.tratamiento_manual else
+                            COLOR_REVISADO if confirmada else COLOR_ESTADO[estado])
         celda.setForeground(QColor("white"))
         celda.setToolTip("\n".join(msgs) if msgs else "Todo correcto")
         self.tabla.blockSignals(False)
@@ -1844,34 +1964,53 @@ class VentanaPrincipal(QMainWindow):
             traducidas.append(replace(f, concepto=texto) if texto else f)
         return traducidas
 
+    def _clasificar_exportacion(self):
+        """Separa lo exportable, lo manual y lo que todavía bloquea el lote."""
+        por_tipo = {"gasto": [], "venta": []}
+        excluidas = []
+        errores = []
+        pendientes_revision = []
+        for fila in range(self.tabla.rowCount()):
+            f = self._leer_fila(fila)
+            registro = self.filas[fila]
+            if fila in self._duplicados:
+                excluidas.append((fila, "duplicada"))
+            elif f.tratamiento_manual:
+                excluidas.append((fila, f.tratamiento_manual))
+            elif registro.get("estado") == ERROR:
+                errores.append(fila)
+            elif registro.get("estado") == REVISAR and not f.revision_confirmada:
+                pendientes_revision.append(fila)
+            else:
+                por_tipo[self._tipo_fila(fila)].append(f)
+        return por_tipo, excluidas, errores, pendientes_revision
+
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
-        por_tipo = {"gasto": [], "venta": []}
-        for fila in range(self.tabla.rowCount()):
-            por_tipo[self._tipo_fila(fila)].append(self._leer_fila(fila))
-        if not any(por_tipo.values()):
-            QMessageBox.warning(self, "Sin datos", "No hay facturas que exportar.")
-            return
+        self._revalidar_todo()
+        por_tipo, excluidas, errores, pendientes_revision = \
+            self._clasificar_exportacion()
 
-        problemas = []
-        if self._duplicados:
-            problemas.append(
-                f"{len(self._duplicados)} factura(s) duplicada(s) que se registrarían dos veces")
-        errores = sum(
-            1 for facturas in por_tipo.values() for factura in facturas
-            if validar(factura).estado == ERROR)
-        if errores:
-            problemas.append(f"{errores} línea(s) con errores")
-        if problemas:
-            respuesta = QMessageBox.question(
+        if errores or pendientes_revision:
+            partes = []
+            if errores:
+                partes.append(f"{len(errores)} línea(s) roja(s) con errores")
+            if pendientes_revision:
+                partes.append(
+                    f"{len(pendientes_revision)} línea(s) ámbar sin confirmar")
+            QMessageBox.warning(
                 self, "Revisión pendiente",
-                "Antes de exportar se han detectado:\n\n  · "
-                + "\n  · ".join(problemas)
-                + "\n\n¿Quiere exportar de todas formas?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if respuesta != QMessageBox.Yes:
-                self._siguiente_incidencia()
-                return
+                "No se ha exportado nada. Corrija los errores y marque como "
+                "revisados los avisos comprobados:\n\n  · "
+                + "\n  · ".join(partes))
+            self._siguiente_incidencia()
+            return
+        if not any(por_tipo.values()):
+            QMessageBox.information(
+                self, "Sin facturas rutinarias",
+                "No hay facturas para exportar automáticamente. "
+                f"Se han apartado {len(excluidas)} línea(s) para gestión manual.")
+            return
 
         # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
         # asi que este orden es el que tendran en el registro.
@@ -1926,6 +2065,8 @@ class VentanaPrincipal(QMainWindow):
             f"Archivos preparados para Aplifisa en {carpeta}:\n\n{detalle}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
+            + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
+               if excluidas else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
               "en pantalla, línea por línea.")
 
@@ -1952,4 +2093,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

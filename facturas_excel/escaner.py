@@ -102,15 +102,23 @@ def sanear(texto: str) -> str:
 
 
 def ruta_destino(carpeta_base: str, cliente: str, tipo: str,
-                 dia: Optional[date] = None) -> str:
-    """Carpeta del cliente y nombre con cliente, tipo y fecha, sin pisar nada.
+                 dia: Optional[date] = None,
+                 ejercicio: Optional[int] = None) -> str:
+    """Ruta Cliente/Ejercicio/Tipo y nombre estable, sin pisar nada.
 
-    <base>\\<CLIENTE>\\<CLIENTE>_<gastos|ingresos>_<aaaa-mm-dd>[_2].pdf
+    <base>\\<CLIENTE>\\<EJERCICIO>\\<Gastos|Ingresos>\\archivo.pdf
     """
     cliente = sanear(cliente or "Cliente sin identificar")
     tipo = "ingresos" if str(tipo).lower().startswith("i") else "gastos"
     dia = dia or date.today()
-    return nombre_libre(os.path.join(carpeta_base, cliente),
+    ejercicio = int(ejercicio or dia.year)
+    carpeta_tipo = "Ingresos" if tipo == "ingresos" else "Gastos"
+    carpeta_ejercicio = os.path.join(carpeta_base, cliente, str(ejercicio))
+    # Se crean las dos desde el principio: cada ejercicio queda listo para
+    # recibir y comprimir por separado la documentación digitalizada.
+    os.makedirs(os.path.join(carpeta_ejercicio, "Ingresos"), exist_ok=True)
+    os.makedirs(os.path.join(carpeta_ejercicio, "Gastos"), exist_ok=True)
+    return nombre_libre(os.path.join(carpeta_ejercicio, carpeta_tipo),
                         f"{cliente}_{tipo}_{dia:%Y-%m-%d}")
 
 
@@ -342,7 +350,25 @@ def armar_pdf(paginas: List[str], destino: str) -> str:
         documento.save(destino)
     finally:
         documento.close()
+    verificar_pdf(destino)
     return destino
+
+
+def verificar_pdf(ruta: str) -> int:
+    """Comprueba que el escáner produjo un PDF legible y con páginas."""
+    import fitz
+
+    try:
+        if not os.path.exists(ruta) or os.path.getsize(ruta) == 0:
+            raise ValueError("el archivo está vacío")
+        with fitz.open(ruta) as documento:
+            paginas = documento.page_count
+        if paginas < 1:
+            raise ValueError("no contiene páginas")
+        return paginas
+    except Exception as e:
+        raise ErrorEscaneo(
+            f"El escáner creó un PDF incompleto o ilegible: {e}") from e
 
 
 # ---------------------------------------------------------------- NAPS2
@@ -412,6 +438,7 @@ def escanear_naps2(destino: str, dispositivo: str = "", dpi: int = DPI_POR_DEFEC
             raise ErrorEscaneo(SIN_PAPEL)
         raise ErrorEscaneo(
             "El escaneo no terminó bien.\n\n" + (texto[-400:] or "Sin detalles."))
+    verificar_pdf(destino)
     return destino
 
 

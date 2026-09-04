@@ -16,14 +16,20 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    cliente emite) y quién es la contraparte.
 3. **Tabla de revisión** con semáforo de control de calidad:
    - 🟢 todo cuadra (cuota = base × tipo, total coincide, NIF válido)
-   - 🟡 revisar (suplidos/financiación, NIF dudoso, rol ambiguo…)
+   - 🟡 revisar (confianza media/baja, NIF dudoso, rol ambiguo…)
    - 🔴 error (descuadres, faltan campos obligatorios)
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
-   se abre una vista previa grande.
-4. **Exportar** `gastos.xlsx` / `ventas.xlsx` → importar en Aplifisa con la
+   se abre una vista previa grande. Una fila ámbar solo se exporta después de
+   pulsar **Marcar revisada**.
+4. **Exportar** `gastos.xlsx` / `ingresos.xlsx` → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
-   Los suplidos identificados se mantienen separados de la base y del IVA y se
-   exportan en su campo específico de Aplifisa.
+   Los duplicados, documentos sustituidos, suplidos y bienes de inversión se
+   apartan de la exportación rutinaria para tratarlos manualmente.
+5. Los PDF creados desde el escáner quedan archivados automáticamente como
+   `Cliente / Ejercicio / Gastos` o `Cliente / Ejercicio / Ingresos`. Las dos
+   carpetas se crean juntas y el ejercicio se obtiene de la fecha de factura.
+   Desde **Escaneos guardados** se puede crear el ZIP completo del ejercicio
+   para adjuntarlo después como documentación digitalizada en Aplifisa.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

@@ -52,13 +52,19 @@ class Factura:
     subclave: Optional[str] = None          # GXX del concepto (obligatoria en la 628)
     descripcion_concepto: Optional[str] = None  # como lo llama Aplifisa
     es_suplido: bool = False                # esta linea es el suplido de su factura
+    confianza_ia: Optional[str] = None      # alta/media/baja informada por Gemini
+    revision_confirmada: bool = False       # una persona comprobo el aviso ambar
+    tratamiento_manual: Optional[str] = None  # fuera del flujo rutinario
+    iva_incluido_en_base: bool = False       # régimen de recargo: gasto por total
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
     def campos_dict(self) -> dict:
         """Devuelve {nombre_campo: valor} solo de los campos exportables."""
         excluidos = {"total_impreso", "origen_imagen", "lineas_factura",
-                     "subclave", "descripcion_concepto", "es_suplido"}
+                     "subclave", "descripcion_concepto", "es_suplido",
+                     "confianza_ia", "revision_confirmada",
+                     "tratamiento_manual", "iva_incluido_en_base"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 

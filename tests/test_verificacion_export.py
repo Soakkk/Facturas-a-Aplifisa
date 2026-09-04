@@ -37,6 +37,22 @@ def test_un_archivo_recien_escrito_no_tiene_ninguna_diferencia(tmp_path):
     assert verificar_excel(facturas, config(), ruta) == []
 
 
+def test_contrato_dorado_de_una_factura_rutinaria_para_aplifisa(tmp_path):
+    """Celdas exactas que Aplifisa espera en una compra ordinaria."""
+    f = factura("FA-2025-17", 100.0, 21.0)
+    f.fecha_operacion = "30/01/2025"
+    ruta = str(tmp_path / "gastos.xlsx")
+    exportar_excel([f], config(), ruta)
+
+    hoja = load_workbook(ruta).active
+    esperado = {
+        "B2": "31/01/2025", "C2": "628", "D2": "100,00",
+        "E2": "21", "F2": "21,00", "K2": "30/01/2025",
+        "O2": "B12345674", "P2": "PROVEEDOR SL", "Q2": "FA-2025-17",
+    }
+    assert {celda: hoja[celda].value for celda in esperado} == esperado
+
+
 def test_se_caza_un_importe_cambiado_en_el_archivo(tmp_path):
     facturas = [factura("FA-1")]
     ruta = str(tmp_path / "gastos.xlsx")

@@ -142,8 +142,8 @@ def validar(f: Factura) -> Resultado:
     elif fecha_de(f.fecha) is None:
         # Fecha ilegible: Aplifisa la rechazaria y ademas delata una mala
         # lectura de la factura entera.
-        marcar_revisar(f"No se entiende la fecha «{f.fecha}»: "
-                       f"debe ser dd/mm/aaaa")
+        marcar_error(f"No se entiende la fecha «{f.fecha}»: "
+                     f"debe ser dd/mm/aaaa")
     if not f.num_factura:
         marcar_error("Falta el nº de factura (obligatorio)")
     if not f.nombre:
@@ -160,6 +160,28 @@ def validar(f: Factura) -> Resultado:
     elif not validar_nif(f.nif):
         marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): {f.nif}")
 
+    # Verde significa que están presentes todos los importes necesarios para
+    # el flujo rutinario. Antes, al faltar todos, no se ejecutaba ninguna
+    # comprobación aritmética y la fila podía parecer correcta.
+    if f.base_iva is None:
+        marcar_error("Falta la base imponible")
+    if f.total_impreso is None:
+        marcar_error("Falta el total de la factura")
+    if not f.es_suplido and not f.iva_incluido_en_base:
+        if f.pct_iva is None:
+            marcar_error("Falta el tipo de IVA")
+        if f.cuota_iva is None:
+            marcar_error("Falta la cuota de IVA")
+
+    confianza = str(f.confianza_ia or "").strip().lower()
+    if confianza in {"media", "baja"}:
+        marcar_revisar(
+            f"Confianza de lectura {confianza}: compare los datos con el PDF")
+    if f.tratamiento_manual:
+        marcar_revisar(
+            f"Gestión manual: {f.tratamiento_manual}. No se incluirá en la "
+            "exportación automática")
+
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
         esperada = round(f.base_iva * f.pct_iva / 100.0, 2)
@@ -169,6 +191,15 @@ def validar(f: Factura) -> Resultado:
             marcar_error(
                 f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}"
             )
+
+    # Si aparece parte de un impuesto, tienen que estar sus tres piezas. Un
+    # dato parcial no se puede interpretar de forma segura como cero.
+    irpf = (f.base_irpf, f.pct_irpf, f.cuota_irpf)
+    if any(v is not None for v in irpf) and not all(v is not None for v in irpf):
+        marcar_error("IRPF incompleto: faltan base, porcentaje o cuota")
+    recargo = (f.base_requiv, f.pct_requiv, f.cuota_requiv)
+    if any(v is not None for v in recargo) and not all(v is not None for v in recargo):
+        marcar_error("Recargo de equivalencia incompleto")
 
     # Recargo de equivalencia: su tipo lo fija el del IVA, y la cuota sale de
     # la base. Un recargo mal leido no descuadra siempre el total (son céntimos),

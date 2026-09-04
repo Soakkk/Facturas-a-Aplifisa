@@ -35,9 +35,9 @@ def test_una_factura_vieja_no_se_marca():
     assert validar(factura("15/03/2019")).estado == OK
 
 
-def test_fecha_ilegible_se_marca_para_revisar():
+def test_fecha_ilegible_se_marca_como_error():
     res = validar(factura("1//2026"))
-    assert res.estado == REVISAR
+    assert res.estado == "error"
     assert any("No se entiende la fecha" in m for m in res.mensajes)
 
 

@@ -249,6 +249,10 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         concepto=cuenta or None,
         total_impreso=_num(datos.get("total")),
         origen_imagen=origen,
+        confianza_ia=(str(datos.get("confianza") or "").strip().lower()
+                      or None),
+        tratamiento_manual=("Bien de inversión"
+                            if datos.get("es_bien_inversion") else None),
     )
     facturas = []
     for i, linea in enumerate(lineas):
@@ -283,6 +287,8 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     # nombre y concepto. No va en la columna Suplidos.
     suplido = _num(datos.get("suplidos"))
     if suplido and facturas:
+        for f in facturas:
+            f.tratamiento_manual = "Factura con suplido"
         linea = replace(facturas[0])
         linea.base_iva = suplido
         linea.pct_iva = linea.cuota_iva = None
@@ -351,6 +357,8 @@ def marcar_sustituidas(procesadas: List[FacturaProcesada]) -> int:
             _anadir_aviso(vieja, f"SUSTITUIDA por la factura {nuevo} del mismo "
                                  f"lote: NO la importes o duplicarás el gasto.")
             vieja.sustituida_por = nuevo
+            for f in vieja.facturas:
+                f.tratamiento_manual = f"Sustituida por {nuevo or 'otra factura'}"
             marcadas += 1
     return marcadas
 
@@ -443,6 +451,7 @@ def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
     base.base_requiv = base.pct_requiv = base.cuota_requiv = None
     base.suplidos = None
     base.es_suplido = False   # el suplido ya esta dentro del total
+    base.iva_incluido_en_base = True
     return replace(pr, facturas=[base])
 
 

@@ -5,6 +5,7 @@ cuando el programa detecta al cliente, y nada se borra de verdad.
 """
 
 import os
+import zipfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -53,7 +54,7 @@ def test_al_saber_el_cliente_el_pdf_se_muda_a_su_carpeta(escaneos):
                                     date(2026, 9, 2))
 
     assert os.path.exists(nueva) and not os.path.exists(ruta)
-    assert nueva.endswith(os.path.join("CLIENTE EJEMPLO",
+    assert nueva.endswith(os.path.join("CLIENTE EJEMPLO", "2026", "Gastos",
                                        "CLIENTE EJEMPLO_gastos_2026-09-02.pdf"))
     # la carpeta "Sin identificar" se queda vacia y se recoge
     assert not os.path.isdir(os.path.join(escaneos, archivo.SIN_IDENTIFICAR))
@@ -66,13 +67,18 @@ def test_mover_sin_cliente_no_toca_nada(escaneos):
 
 
 def test_el_listado_ordena_por_fecha_y_dice_de_quien_es(escaneos):
-    _pdf(os.path.join(escaneos, "CLIENTE A", "CLIENTE A_gastos_2026-09-01.pdf"))
-    _pdf(os.path.join(escaneos, "CLIENTE B", "CLIENTE B_ingresos_2026-09-02.pdf"))
-    os.utime(os.path.join(escaneos, "CLIENTE A", "CLIENTE A_gastos_2026-09-01.pdf"),
+    _pdf(os.path.join(escaneos, "CLIENTE A", "2025", "Gastos",
+                      "CLIENTE A_gastos_2026-09-01.pdf"))
+    _pdf(os.path.join(escaneos, "CLIENTE B", "2026", "Ingresos",
+                      "CLIENTE B_ingresos_2026-09-02.pdf"))
+    os.utime(os.path.join(escaneos, "CLIENTE A", "2025", "Gastos",
+                          "CLIENTE A_gastos_2026-09-01.pdf"),
              (1_600_000_000, 1_600_000_000))   # mas antiguo
 
     lista = archivo.listar(escaneos)
     assert [e.cliente for e in lista] == ["CLIENTE B", "CLIENTE A"]
+    assert [(e.ejercicio, e.tipo) for e in lista] == [
+        (2026, "ingresos"), (2025, "gastos")]
     assert lista[0].tamano_texto.endswith("KB")
 
 
@@ -120,6 +126,7 @@ def test_el_escaneo_se_coloca_solo_al_detectar_al_cliente(escaneos):
     assert not os.path.exists(ruta)
     colocado = v._rutas_actuales[0]
     assert "CLIENTE DETECTADO_gastos_" in os.path.basename(colocado)
+    assert os.path.join("CLIENTE DETECTADO", "2026", "Gastos") in colocado
     # el bloque toma el nombre nuevo y la factura apunta al PDF movido
     assert v.tabla.item(0, C_BLOQUE).text().startswith("CLIENTE DETECTADO")
     assert v.filas[0]["factura"].origen_imagen == colocado
@@ -135,6 +142,19 @@ def test_un_taco_de_ventas_se_archiva_como_ingresos(escaneos):
                     "CLIENTE", "12345678Z")
 
     assert "_ingresos_" in os.path.basename(v._rutas_actuales[0])
+
+
+def test_se_archiva_en_el_ejercicio_de_la_factura_no_en_el_del_escaneo(escaneos):
+    ruta = _pdf(archivo.ruta_provisional(escaneos, "gastos", date(2026, 9, 2)))
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._rutas_actuales = [ruta]
+    v._escaneo_sin_identificar = True
+
+    pr = _procesada()
+    pr.facturas[0].fecha = "31/12/2024"
+    v._on_terminado([(b"", pr)], "CLIENTE", "12345678Z")
+
+    assert os.path.join("CLIENTE", "2024", "Gastos") in v._rutas_actuales[0]
 
 
 def test_si_no_se_detecta_el_cliente_el_pdf_se_queda_donde_esta(escaneos):
@@ -155,3 +175,22 @@ def test_la_fecha_sale_del_nombre_no_de_cuando_se_movio(escaneos):
     ruta = _pdf(os.path.join(escaneos, "CLIENTE",
                              "CLIENTE_gastos_2026-01-15.pdf"))
     assert archivo._fecha_de_archivo(ruta) == date(2026, 1, 15)
+
+
+def test_comprime_ingresos_y_gastos_del_ejercicio_para_aplifisa(escaneos):
+    gasto = _pdf(os.path.join(escaneos, "CLIENTE", "2025", "Gastos", "g.pdf"))
+    ingreso = _pdf(os.path.join(escaneos, "CLIENTE", "2025", "Ingresos", "i.pdf"))
+
+    destino = archivo.comprimir_ejercicio(escaneos, "CLIENTE", 2025)
+
+    assert os.path.exists(destino)
+    with zipfile.ZipFile(destino) as comprimido:
+        assert set(comprimido.namelist()) == {
+            "Gastos/", "Ingresos/", "Gastos/g.pdf", "Ingresos/i.pdf"}
+    assert os.path.exists(gasto) and os.path.exists(ingreso)
+
+
+def test_no_crea_un_zip_vacio(escaneos):
+    os.makedirs(os.path.join(escaneos, "CLIENTE", "2025", "Gastos"))
+    with pytest.raises(ValueError):
+        archivo.comprimir_ejercicio(escaneos, "CLIENTE", 2025)

@@ -16,8 +16,12 @@ def test_el_pdf_se_nombra_con_cliente_tipo_y_fecha(tmp_path):
                                 date(2026, 9, 2))
     # sin acentos y sin el punto final (Windows no admite nombres acabados en .)
     assert os.path.basename(ruta) == "Perez Martinez S.L_gastos_2026-09-02.pdf"
-    # y en su propia carpeta, ya creada
-    assert os.path.isdir(os.path.join(str(tmp_path), "Perez Martinez S.L"))
+    # Cliente / ejercicio / tipo, listo para comprimir por ejercicio.
+    assert os.path.dirname(ruta) == os.path.join(
+        str(tmp_path), "Perez Martinez S.L", "2026", "Gastos")
+    assert os.path.isdir(os.path.dirname(ruta))
+    assert os.path.isdir(os.path.join(
+        str(tmp_path), "Perez Martinez S.L", "2026", "Ingresos"))
 
 
 def test_dos_escaneos_el_mismo_dia_no_se_pisan(tmp_path):
@@ -26,6 +30,13 @@ def test_dos_escaneos_el_mismo_dia_no_se_pisan(tmp_path):
     dos = escaner.ruta_destino(str(tmp_path), "CLIENTE", "ingresos", date(2026, 9, 2))
     assert os.path.basename(uno) == "CLIENTE_ingresos_2026-09-02.pdf"
     assert os.path.basename(dos) == "CLIENTE_ingresos_2026-09-02_2.pdf"
+
+
+def test_el_ejercicio_de_la_factura_puede_ser_distinto_al_del_escaneo(tmp_path):
+    ruta = escaner.ruta_destino(
+        str(tmp_path), "CLIENTE", "gastos", date(2026, 9, 2), ejercicio=2025)
+    assert os.path.dirname(ruta).endswith(
+        os.path.join("CLIENTE", "2025", "Gastos"))
 
 
 def test_sanear_quita_lo_que_windows_no_admite():
@@ -120,6 +131,14 @@ def test_el_pdf_sale_con_una_pagina_por_hoja(tmp_path):
     assert os.path.exists(destino)
     with fitz.open(destino) as doc:
         assert doc.page_count == 3
+
+
+def test_un_pdf_vacio_del_escaner_no_se_da_por_bueno(tmp_path):
+    ruta = tmp_path / "vacio.pdf"
+    ruta.write_bytes(b"")
+    with pytest.raises(escaner.ErrorEscaneo) as error:
+        escaner.verificar_pdf(str(ruta))
+    assert "incompleto o ilegible" in str(error.value)
 
 
 def test_sin_escaner_conectado_lo_dice_claro(monkeypatch):

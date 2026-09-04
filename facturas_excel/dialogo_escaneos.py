@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from . import archivo
 
-COLUMNAS = ["Cliente", "Fecha", "Archivo", "Tamaño"]
+COLUMNAS = ["Cliente", "Ejercicio", "Tipo", "Fecha escaneo", "Archivo", "Tamaño"]
 
 
 class DialogoEscaneos(QDialog):
@@ -44,7 +44,7 @@ class DialogoEscaneos(QDialog):
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setAlternatingRowColors(True)
         self.tabla.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.Stretch)
+            4, QHeaderView.Stretch)
         self.tabla.doubleClicked.connect(self._abrir)
         raiz.addWidget(self.tabla, 1)
 
@@ -57,7 +57,8 @@ class DialogoEscaneos(QDialog):
         botones.addWidget(self.btn_anadir)
         for texto, accion in (("Abrir PDF", self._abrir),
                               ("Abrir su carpeta", self._abrir_carpeta),
-                              ("Cambiar de cliente…", self._cambiar_cliente)):
+                              ("Cambiar de cliente…", self._cambiar_cliente),
+                              ("Crear ZIP del ejercicio", self._crear_zip)):
             b = QPushButton(texto)
             b.clicked.connect(accion)
             botones.addWidget(b)
@@ -85,11 +86,12 @@ class DialogoEscaneos(QDialog):
             f"Todavía no hay escaneos en {carpeta}. Use «Escanear facturas».")
         self.tabla.setRowCount(len(self._escaneos))
         for fila, esc in enumerate(self._escaneos):
-            valores = [esc.cliente, f"{esc.fecha:%d/%m/%Y}", esc.nombre,
-                       esc.tamano_texto]
+            valores = [esc.cliente, str(esc.ejercicio or "—"),
+                       esc.tipo.capitalize() if esc.tipo else "—",
+                       f"{esc.fecha:%d/%m/%Y}", esc.nombre, esc.tamano_texto]
             for columna, texto in enumerate(valores):
                 item = QTableWidgetItem(texto)
-                if columna == 3:
+                if columna == 5:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if esc.cliente == archivo.SIN_IDENTIFICAR:
                     item.setToolTip(
@@ -97,7 +99,7 @@ class DialogoEscaneos(QDialog):
                         "a pasarlo por el programa, o con «Cambiar de cliente».")
                 self.tabla.setItem(fila, columna, item)
         self.tabla.resizeColumnsToContents()
-        self.tabla.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.tabla.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
 
     def _seleccionados(self) -> List[archivo.Escaneo]:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})
@@ -143,6 +145,27 @@ class DialogoEscaneos(QDialog):
         if ok and nombre.strip():
             archivo.renombrar_cliente(esc.ruta, nombre.strip())
             self.recargar()
+
+    def _crear_zip(self) -> None:
+        esc = self._uno()
+        if not esc:
+            return
+        if esc.cliente in (archivo.SIN_IDENTIFICAR, "—") or not esc.ejercicio:
+            QMessageBox.warning(
+                self, "Crear ZIP",
+                "Antes debe identificar el cliente y el ejercicio del escaneo.")
+            return
+        try:
+            ruta = archivo.comprimir_ejercicio(
+                archivo.carpeta_escaneos(), esc.cliente, esc.ejercicio)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Crear ZIP", str(e))
+            return
+        QMessageBox.information(
+            self, "ZIP preparado",
+            f"Se ha creado:\n{ruta}\n\nYa puede adjuntarlo como documentación "
+            "digitalizada en Aplifisa.")
+        archivo.abrir(os.path.dirname(ruta))
 
     def _quitar(self) -> None:
         elegidos = self._seleccionados()

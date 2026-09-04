@@ -113,8 +113,9 @@ class DialogoEscaneo(QDialog):
 
         carpeta = ajustes.leer("carpeta_escaneos", carpeta_por_defecto())
         aviso = QLabel(
-            f"El PDF se guardará en {os.path.join(carpeta, '<CLIENTE>')} con el "
-            f"nombre CLIENTE_tipo_fecha.pdf y entrará solo en el lote.\n"
+            f"El PDF se guardará en "
+            f"{os.path.join(carpeta, '<CLIENTE>', '<EJERCICIO>', '<Gastos o Ingresos>')} "
+            f"con el nombre CLIENTE_tipo_fecha.pdf y entrará solo en el lote.\n"
             f"Sin cliente, se guarda como «Sin identificar» y se coloca solo "
             f"cuando el programa averigüe de quién es.")
         aviso.setObjectName("textoSuave")
