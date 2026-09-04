@@ -179,3 +179,77 @@ def test_soltar_el_listado_no_lo_manda_a_gemini(listado, monkeypatch, tmp_path):
     # Ni Worker ni Gemini: solo dice que primero hay que cargar las facturas.
     assert not getattr(v, "worker", None)
     assert llamadas and "listado de apuntes" in llamadas[0]
+
+
+# ------------------------------- el listado "IVA - Facturas recibidas" -------
+# Es el que se saca para un requerimiento. Sus columnas se solapan al leer el
+# texto seguido y una linea de suplido trae menos importes que las demas, asi
+# que se lee por la posicion de cada palabra.
+COLUMNAS_RECIBIDAS = [
+    (20, "Orden"), (44, "Fecha"), (80, "Nºfact.rec."), (110, "Serie"),
+    (128, "Nºfra.proveedor"), (178, "Identificación"),
+    (330, "Base IVA"), (366, "%"), (393, "Cuota IVA"),
+    (437, "Base R.Eq."), (479, "%"), (500, "Cuota R.Eq."), (540, "Base + Cuota"),
+]
+# orden, fecha, nº fact.rec., nº del proveedor, nif y nombre, base, %, cuota, total
+FILAS_RECIBIDAS = [
+    ("1", "31/01/2025", "1", "FA-338", "B12345674 PROVEEDOR DE EJEMPLO SL",
+     "1,54", "10,00", "0,15", "1,69"),
+    ("2", "31/01/2025", "1", "FA-338", "B12345674 PROVEEDOR DE EJEMPLO SL",
+     "140,56", "21,00", "29,52", "170,08"),
+    ("3", "28/02/2025", "2", "FA-739", "B12345674 PROVEEDOR DE EJEMPLO SL",
+     "72,79", "21,00", "15,29", "88,08"),
+    # Un suplido: base sin IVA, sin % ni cuota. Aqui se rompia la lectura.
+    ("4", "13/11/2025", "3", "25 / 5.887", "B12345675 GESTORIA DE EJEMPLO",
+     "109,08", "", "", "109,08"),
+]
+
+
+@pytest.fixture
+def listado_recibidas(tmp_path):
+    """El listado de facturas recibidas, con sus columnas en su sitio."""
+    ruta = tmp_path / "recibidas.pdf"
+    doc = fitz.open()
+    pagina = doc.new_page()
+    for x, texto in COLUMNAS_RECIBIDAS:
+        pagina.insert_text((x, 92), texto, fontsize=6)
+    y = 104
+    for orden, fecha, rec, prov, quien, base, pct, cuota, total in FILAS_RECIBIDAS:
+        pagina.insert_text((31, y), orden, fontsize=6)
+        pagina.insert_text((41, y), fecha, fontsize=6)
+        pagina.insert_text((101, y), rec, fontsize=6)
+        pagina.insert_text((128, y), prov, fontsize=6)
+        pagina.insert_text((178, y), quien, fontsize=6)
+        for x, valor in ((337, base), (361, pct), (405, cuota), (560, total)):
+            if valor:
+                pagina.insert_text((x, y), valor, fontsize=6)
+        y += 10
+    pagina.insert_text((332, y + 20), "323,97", fontsize=6)
+    pagina.insert_text((398, y + 20), "44,96", fontsize=6)
+    pagina.insert_text((554, y + 20), "368,93", fontsize=6)
+    pagina.insert_text((215, y + 22), "TOTAL ACUMULADO:", fontsize=6)
+    doc.save(str(ruta))
+    doc.close()
+    return str(ruta)
+
+
+def test_se_lee_el_listado_de_facturas_recibidas(listado_recibidas):
+    r = leer_registro(listado_recibidas)
+
+    assert len(r.apuntes) == 4
+    assert r.bien_leido                       # cuadra con sus propios totales
+    assert r.suma_base == r.total_base == 323.97
+    assert r.suma_cuota == r.total_cuota == 44.96
+    # El nº que interesa para el requerimiento es el de factura recibida.
+    assert [a.numero for a in r.apuntes] == ["1", "1", "2", "3"]
+    assert r.apuntes[0].nombre == "PROVEEDOR DE EJEMPLO SL"   # sin el NIF delante
+
+
+def test_el_suplido_se_lee_como_base_sin_iva(listado_recibidas):
+    """Antes se colaba el % en la base y el listado entero descuadraba."""
+    r = leer_registro(listado_recibidas)
+
+    suplido = r.apuntes[-1]
+    assert suplido.base == 109.08
+    assert suplido.cuota is None
+    assert r.apuntes[0].base == 1.54 and r.apuntes[0].cuota == 0.15

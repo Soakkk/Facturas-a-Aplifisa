@@ -83,6 +83,8 @@ def leer_registro(ruta_pdf: str) -> Registro:
 
     lineas: List[str] = []
     with fitz.open(ruta_pdf) as doc:
+        if _es_facturas_recibidas(doc):
+            return _leer_facturas_recibidas(doc)
         for pagina in doc:
             lineas += [t.strip() for t in pagina.get_text().splitlines()
                        if t.strip()]
@@ -152,6 +154,159 @@ def _leer_totales(registro: Registro, siguientes: List[str]) -> Registro:
         registro.total_neto = valores[5]
     return registro
 
+
+# --------------------------------------- listado "IVA - Facturas recibidas" --
+# Es el que se saca para un requerimiento: una linea por tipo de IVA, ordenada
+# por nº de apunte, y con el Nº fact.rec. que Aplifisa da a cada factura.
+# Aqui no vale leer el texto seguido: las columnas se solapan y una linea sin
+# IVA (un suplido) trae menos importes que las demas, asi que se lee por la
+# POSICION de cada palabra, que es lo unico fiable en este listado.
+
+CABECERAS = {
+    "BASEIVA": "base",
+    "CUOTAIVA": "cuota",
+    "BASER.EQ.": "base_req",
+    "CUOTAR.EQ.": "cuota_req",
+    "BASE+CUOTA": "total",
+}
+MARGEN_FILA = 1.5        # puntos: dos palabras de la misma linea
+HUECO_COLUMNA = 6        # puntos: separacion entre columnas de la cabecera
+NIF_SUELTO = re.compile(r"^[A-Z0-9][0-9]{7}[A-Z0-9]$")
+
+
+def _es_facturas_recibidas(doc) -> bool:
+    """El listado de facturas recibidas trae columnas propias en la cabecera."""
+    if not doc.page_count:
+        return False
+    texto = doc[0].get_text()
+    return "fact.rec" in texto and "fra.proveedor" in texto
+
+
+def _filas(pagina) -> list:
+    """Las palabras de la pagina agrupadas en lineas, de arriba abajo."""
+    palabras = sorted(pagina.get_text("words"), key=lambda p: (p[3], p[0]))
+    filas: list = []
+    for x0, _, x1, y1, texto, *_ in palabras:
+        if filas and abs(filas[-1][0] - y1) <= MARGEN_FILA:
+            filas[-1][1].append((x0, x1, texto))
+        else:
+            filas.append((y1, [(x0, x1, texto)]))
+    return filas
+
+
+def _columnas(fila) -> Optional[dict]:
+    """Saca de la cabecera donde cae cada columna. None si no es la cabecera."""
+    texto = " ".join(t for _, _, t in fila)
+    if "fact.rec" not in texto or "Orden" not in texto:
+        return None
+
+    col = {}
+    for x0, _, t in fila:
+        if "fact.rec" in t:
+            col["x_num"] = x0
+        elif "fra.proveedor" in t:
+            col["x_proveedor"] = x0
+        elif "dentificaci" in t and "x_nombre" not in col:
+            col["x_nombre"] = x0
+
+    # Las columnas de importes: se agrupan las palabras de la cabecera y se
+    # guarda el centro de cada una, para asignar despues cada numero a la suya.
+    grupos: list = []
+    for x0, x1, t in fila:
+        if grupos and x0 - grupos[-1][-1][1] <= HUECO_COLUMNA:
+            grupos[-1].append((x0, x1, t))
+        else:
+            grupos.append([(x0, x1, t)])
+    centros, porcentajes = {}, 0
+    for grupo in grupos:
+        etiqueta = "".join(t for _, _, t in grupo).upper()
+        if etiqueta == "%":
+            campo = "pct" if not porcentajes else "pct_req"
+            porcentajes += 1
+        else:
+            campo = CABECERAS.get(etiqueta)
+        if campo:
+            centros[campo] = (grupo[0][0] + grupo[-1][1]) / 2
+    if "base" not in centros or "x_nombre" not in col:
+        return None
+    col["importes"] = centros
+    return col
+
+
+def _columna_de(x0: float, x1: float, centros: dict) -> str:
+    """A que columna de importes pertenece un numero: a la de centro mas cerca."""
+    centro = (x0 + x1) / 2
+    return min(centros, key=lambda c: abs(centros[c] - centro))
+
+
+def _apunte_de_fila(fila, col) -> Optional[Apunte]:
+    centros = col["importes"]
+    tope = max(centros.values()) + 30       # a la derecha van los cobros RECC
+    fecha = next((t for x0, _, t in fila
+                  if col["x_num"] > x0 and FECHA.match(t)), "")
+    if not fecha:
+        return None
+
+    numero, nombre = "", []
+    valores = {}
+    for x0, x1, t in fila:
+        if x0 >= tope:
+            continue
+        if col["x_num"] <= x0 < col["x_proveedor"]:
+            numero = t
+        elif col["x_nombre"] <= x0 < centros["base"] - 20:
+            nombre.append(t)
+        elif x0 >= col["x_nombre"]:
+            valor = _num(t)
+            if valor is not None:
+                valores[_columna_de(x0, x1, centros)] = valor
+    if "base" not in valores:
+        return None
+    if nombre and NIF_SUELTO.match(nombre[0].upper()):
+        nombre = nombre[1:]                 # el NIF va delante del nombre
+    return Apunte(numero=numero, fecha=fecha, nombre=" ".join(nombre),
+                  base=valores.get("base"), cuota=valores.get("cuota"),
+                  recargo=valores.get("cuota_req"), neto=valores.get("total"))
+
+
+def _leer_facturas_recibidas(doc) -> Registro:
+    registro = Registro()
+    for pagina in doc:
+        col = None
+        filas = _filas(pagina)
+        for i, (y, fila) in enumerate(filas):
+            cabecera = _columnas(fila)
+            if cabecera:
+                col = cabecera
+                continue
+            if col is None:
+                continue
+            if any("ACUMULADO" in t.upper() for _, _, t in fila):
+                # Los importes del acumulado van en su propia linea, justo
+                # encima de la etiqueta.
+                registro = _totales_recibidas(registro, filas[max(i - 1, 0)][1],
+                                              col)
+                continue
+            apunte = _apunte_de_fila(fila, col)
+            if apunte:
+                registro.apuntes.append(apunte)
+    return registro
+
+
+def _totales_recibidas(registro: Registro, fila, col) -> Registro:
+    centros = col["importes"]
+    for x0, x1, t in fila:
+        valor = _num(t)
+        if valor is None:
+            continue
+        campo = _columna_de(x0, x1, centros)
+        if campo == "base":
+            registro.total_base = valor
+        elif campo == "cuota":
+            registro.total_cuota = valor
+        elif campo == "total":
+            registro.total_neto = valor
+    return registro
 
 # ----------------------------------------------------------------- contraste
 @dataclass
@@ -234,7 +389,7 @@ def contrastar(facturas, registro: Registro) -> Informe:
     return informe
 
 
-SEÑALES_LISTADO = ("LISTADO DE APUNTES", "TOTAL ACUMULADO",
+SEÑALES_LISTADO = ("LISTADO DE APUNTES", "TOTAL ACUMULADO", "FACT.REC",
                    "GESTION FISCAL", "GESTIÓN FISCAL")
 
 

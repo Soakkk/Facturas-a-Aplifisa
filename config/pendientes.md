@@ -66,6 +66,13 @@ Ojo: tiene que ser el PDF que imprime Aplifisa, no un escaneo en papel. Si lo
 arrastras a la ventana por error, el programa lo reconoce y te ofrece
 contrastarlo en vez de mandarlo a Gemini (que costaría dinero y no serviría).
 
+Vale cualquiera de los dos listados: el «Listado de apuntes desglosados» y el
+**«IVA/IGIC - Facturas recibidas»**, que es el que sacas para un requerimiento.
+Este segundo se leía mal (las columnas se pisan y una línea de suplido trae
+menos importes que las demás, así que los porcentajes se colaban como base y el
+listado descuadraba). Ahora se lee por la posición de cada columna y cuadra con
+sus propios totales antes de compararlo con nada.
+
 **El orden de los apuntes lo eliges tú.** Al exportar se pregunta: **en el orden
 del PDF escaneado** (el apunte nº 3 es la hoja 3 — lo que hace falta en un
 requerimiento, para poder seguir el listado contra el taco de papel numerado) o
