@@ -8,7 +8,9 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 
 ## Flujo
 
-1. **Cargar facturas** (PDF escaneado o imágenes) — se procesan en paralelo.
+1. **Cargar facturas** (PDF escaneado o imágenes) — entran en una cola y cada
+   bloque se procesa en paralelo. Los PDF largos se dividen internamente en
+   partes de 25 páginas; pueden añadirse más documentos mientras la cola sigue.
    También se pueden arrastrar sobre la ventana o recibir directamente desde
    Escáner Fotos mediante `FacturasAplifisa.exe --import "lote.pdf"`.
 2. El programa **detecta al cliente** (el NIF que se repite en el lote) y, por
@@ -21,8 +23,11 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
    se abre una vista previa grande. Una fila ámbar solo se exporta después de
    pulsar **Marcar revisada**.
-4. **Exportar** `gastos.xlsx` / `ingresos.xlsx` → importar en Aplifisa con la
+4. **Exportar** `CLIENTE_gastos.xlsx` / `CLIENTE_ingresos.xlsx` → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
+   Si hay varios bloques, también se generan Excel `parte_01_de_04`, etc., para
+   control y recuperación. En Aplifisa se importa solo el consolidado para no
+   duplicar apuntes.
    Los duplicados, documentos sustituidos, suplidos y bienes de inversión se
    apartan de la exportación rutinaria para tratarlos manualmente.
 5. Los PDF creados desde el escáner quedan archivados automáticamente como

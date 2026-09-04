@@ -11,7 +11,7 @@ import argparse
 import os
 import sys
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import replace
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, escaner, pendientes, sesion, updater,
+    __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
+    sesion, updater,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
@@ -37,6 +38,7 @@ from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.dialogo_orden import (
     PDF as ORDEN_PDF, DialogoOrden,
 )
+from facturas_excel.dialogo_notas_version import DialogoNotasVersion
 from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_registro import DialogoRegistro
 from facturas_excel.dialogo_textos import DialogoTextos
@@ -57,7 +59,7 @@ from facturas_excel.exportar import (
 )
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
-from facturas_excel.pdf import cargar_imagenes
+from facturas_excel.pdf import PAGINAS_POR_BLOQUE, cargar_imagenes, dividir_pdf
 from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
     normaliza_nif, preparar_lote, recordar_cuenta_proveedor, recordar_nif,
@@ -209,7 +211,7 @@ class Worker(QThread):
         super().__init__()
         self.rutas = rutas
         self.api_key = api_key
-        self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyo
+        self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
 
     def run(self):
         try:
@@ -341,8 +343,10 @@ class VentanaPrincipal(QMainWindow):
         self._tipo_escaneo = "gastos"
         self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
-        # Documentos esperando turno para leerse (ver procesar_rutas).
         self._cola = []
+        self._cola_total = 0
+        self._cola_completados = 0
+        self._elemento_cola_actual = None
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -351,6 +355,7 @@ class VentanaPrincipal(QMainWindow):
         self._pintar_gasto()
         if restaurar_sesion:
             self._restaurar_sesion()
+        QTimer.singleShot(500, self._mostrar_notas_version_al_arrancar)
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
@@ -682,9 +687,19 @@ class VentanaPrincipal(QMainWindow):
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
                        lambda: self._comprobar_actualizaciones(silencioso=False))
+        menu.addAction("Novedades de esta versión…",
+                       lambda: self._mostrar_notas_version(forzar=True))
         menu.addAction("Diagnóstico y sugerencias…",
                        lambda: self._mostrar_pendientes(al_arrancar=False))
         menu.addAction("Acerca de", self._acerca_de)
+
+    def _mostrar_notas_version_al_arrancar(self):
+        self._mostrar_notas_version(forzar=False)
+
+    def _mostrar_notas_version(self, forzar: bool = False):
+        if not forzar and notas_version.ya_vistas(__version__):
+            return
+        DialogoNotasVersion(__version__, self).exec()
 
     def _mostrar_pendientes(self, al_arrancar: bool):
         """Lo que hace falta saber para seguir afinando el programa, y un hueco
@@ -1081,17 +1096,14 @@ class VentanaPrincipal(QMainWindow):
             self.procesar_rutas(rutas)
 
     def procesar_rutas(self, rutas, desde_escaner: bool = False):
-        """Procesa rutas recibidas por diálogo, arrastre o Escáner Fotos."""
+        """Añade documentos a la cola, dividiendo los PDF largos en bloques."""
         rutas = [os.path.abspath(r) for r in rutas
                  if os.path.isfile(r) and os.path.splitext(r)[1].lower() in EXT_FACTURA]
         if not rutas:
             QMessageBox.warning(self, "Archivos no compatibles",
                                 "No se encontraron PDFs o imágenes válidas.")
             return
-        if not desde_escaner:
-            self._escaneo_reciente = False
-            self._escaneo_sin_identificar = (
-                len(rutas) == 1 and archivo.sin_identificar(rutas[0]))
+        sin_identificar = (len(rutas) == 1 and archivo.sin_identificar(rutas[0]))
         # Si lo que se ha soltado es el listado de Aplifisa, NO se manda a
         # Gemini: aqui se lee gratis y lo que se quiere es contrastarlo.
         listados = [r for r in rutas if r.lower().endswith(".pdf")
@@ -1106,88 +1118,129 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Falta la API key",
                                 "Configura primero tu API key de Gemini.")
             return
-        # Cada documento va a la COLA y se lee por turnos, no todos a la vez.
-        # Con 70 hojas de golpe no se veia nada hasta el final, Google frena
-        # las peticiones seguidas y un tropiezo se llevaba el lote entero. Uno
-        # a uno, cada PDF entra en la tabla en cuanto esta, y se pueden soltar
-        # mas sin esperar a que acabe el anterior.
-        for ruta in rutas:
-            self._cola.append({
-                "rutas": [ruta],
-                "escaneo_reciente": desde_escaner and self._escaneo_reciente,
-                "escaneo_sin_identificar": (
-                    self._escaneo_sin_identificar if desde_escaner
-                    else archivo.sin_identificar(ruta)),
-                "tipo_escaneo": self._tipo_escaneo,
-            })
-        if getattr(self, "worker", None) and self.worker.isRunning():
-            self.lbl_estado.setText(
-                f"En cola: {len(self._cola)} documento(s). Se leen por turnos.")
+        elementos = []
+        try:
+            for ruta in rutas:
+                if ruta.lower().endswith(".pdf"):
+                    partes = dividir_pdf(ruta, PAGINAS_POR_BLOQUE)
+                    for numero, parte in enumerate(partes, 1):
+                        elementos.append({
+                            "rutas": [parte],
+                            "original": ruta,
+                            "etiqueta": os.path.splitext(os.path.basename(parte))[0],
+                            "parte": numero,
+                            "partes": len(partes),
+                            "archivar": bool(desde_escaner or sin_identificar),
+                            "desde_escaner": bool(desde_escaner),
+                            "sin_identificar": bool(sin_identificar),
+                            "tipo_escaneo": self._tipo_escaneo,
+                        })
+                else:
+                    elementos.append({
+                        "rutas": [ruta], "original": ruta,
+                        "etiqueta": os.path.splitext(os.path.basename(ruta))[0],
+                        "parte": 1, "partes": 1,
+                        "archivar": bool(desde_escaner or sin_identificar),
+                        "desde_escaner": bool(desde_escaner),
+                        "sin_identificar": bool(sin_identificar),
+                        "tipo_escaneo": self._tipo_escaneo,
+                    })
+        except Exception as e:
+            QMessageBox.critical(
+                self, "No se pudo preparar el PDF",
+                f"No se ha añadido a la cola:\n\n{e}")
             return
-        self._siguiente_de_la_cola()
 
-    def _siguiente_de_la_cola(self) -> bool:
-        """Arranca la lectura del siguiente documento. False si no queda ninguno."""
-        if not self._cola:
-            return False
-        api_key = leer_api_key()
-        if not api_key:
-            self._cola = []
-            return False
-        trabajo = self._cola.pop(0)
-        self._escaneo_reciente = trabajo["escaneo_reciente"]
-        self._escaneo_sin_identificar = trabajo["escaneo_sin_identificar"]
-        self._tipo_escaneo = trabajo["tipo_escaneo"]
-        self._rutas_actuales = trabajo["rutas"]
-        self.lbl_origen.setText(
-            ", ".join(os.path.basename(r) for r in trabajo["rutas"])
-            + (f"  ·  {len(self._cola)} en cola" if self._cola else ""))
-        self.btn_cargar.setEnabled(False)
+        en_curso = bool(getattr(self, "worker", None) and self.worker.isRunning())
+        if not en_curso and not self._cola:
+            self._cola_total = 0
+            self._cola_completados = 0
+        self._cola.extend(elementos)
+        self._cola_total += len(elementos)
         self.btn_gastos.setEnabled(False)
         self.btn_ventas.setEnabled(False)
         self.progreso.setVisible(True)
         self.progreso.setValue(0)
-        self.lbl_estado.setText("Leyendo facturas con Gemini…")
-        self.worker = Worker(trabajo["rutas"], api_key)
+        if en_curso:
+            self.lbl_estado.setText(
+                f"Añadidos {len(elementos)} bloque(s). Cola total: "
+                f"{self._cola_completados + 1}/{self._cola_total} en curso.")
+            return
+        self._iniciar_siguiente_cola(api_key)
+
+    def _iniciar_siguiente_cola(self, api_key=None):
+        if not self._cola:
+            self._elemento_cola_actual = None
+            self.progreso.setVisible(False)
+            self.btn_cargar.setEnabled(True)
+            hay_datos = self.tabla.rowCount() > 0
+            self.btn_gastos.setEnabled(hay_datos)
+            self.btn_registro.setEnabled(hay_datos)
+            self.lbl_estado.setText(
+                f"Cola terminada: {self._cola_completados} bloque(s) procesado(s).")
+            return
+        api_key = api_key or leer_api_key()
+        if not api_key:
+            self.lbl_estado.setText("Cola pendiente: falta la API key de Gemini.")
+            return
+        elemento = self._cola.pop(0)
+        self._elemento_cola_actual = elemento
+        self._rutas_actuales = list(elemento["rutas"])
+        self._tipo_escaneo = elemento["tipo_escaneo"]
+        self._escaneo_reciente = elemento["desde_escaner"]
+        self._escaneo_sin_identificar = elemento["sin_identificar"]
+        self.lbl_origen.setText(elemento["etiqueta"])
+        actual = self._cola_completados + 1
+        self.lbl_estado.setText(
+            f"Cola {actual}/{self._cola_total}: leyendo {elemento['etiqueta']}…")
+        self.worker = Worker(self._rutas_actuales, api_key)
         self.worker.progreso.connect(self._on_progreso)
         self.worker.gasto.connect(self._on_gasto)
         self.worker.terminado.connect(self._on_terminado)
         self.worker.fallo.connect(self._on_fallo)
         self.worker.start()
-        return True
 
     def _on_progreso(self, actual, total):
         self.progreso.setMaximum(total)
         self.progreso.setValue(actual)
-        cual = os.path.basename(self._rutas_actuales[0]) if self._rutas_actuales else ""
-        cola = f"  ·  quedan {len(self._cola)} en la cola" if self._cola else ""
+        bloque = self._cola_completados + 1
         self.lbl_estado.setText(
-            f"Leyendo {cual or 'facturas'} con Gemini… {actual}/{total}{cola}")
+            f"Cola {bloque}/{self._cola_total} · páginas {actual}/{total}")
 
     def _on_fallo(self, msg):
-        self.progreso.setVisible(False)
-        self.btn_cargar.setEnabled(True)
+        self._cola_completados += 1
         self._escaneo_reciente = False
-        cual = os.path.basename(self._rutas_actuales[0]) if self._rutas_actuales else ""
-        self.lbl_estado.setText(f"No se pudo leer {cual or 'el documento'}.")
-        siguen = len(self._cola)
         QMessageBox.critical(
-            self, "Error al procesar",
-            f"{cual}:{chr(10)}{msg}"
-            + (f"{chr(10)}{chr(10)}Sigo con los {siguen} documento(s) que "
-               f"quedan en la cola." if siguen else ""))
-        self._siguiente_de_la_cola()
+            self, "Error en un bloque",
+            f"Este bloque no se pudo procesar, pero la cola continuará:\n\n{msg}")
+        self._iniciar_siguiente_cola()
 
     def _on_terminado(self, procesadas, nombre, nif, crudos=None):
-        self.progreso.setVisible(False)
-        self.btn_cargar.setEnabled(True)
+        elemento = self._elemento_cola_actual or {}
+        rutas_parte = list(self._rutas_actuales)
         # Si el escaneo salió sin saber de quién era, ahora ya se sabe: el PDF
         # se muda solo a la carpeta del cliente antes de nombrar el bloque.
-        self._recolocar_escaneo(nombre, procesadas)
+        if elemento.get("archivar"):
+            original_anterior = elemento.get("original", "")
+            self._rutas_actuales = [original_anterior]
+            self._recolocar_escaneo(nombre, procesadas)
+            original_nuevo = self._rutas_actuales[0]
+            for pendiente in self._cola:
+                if pendiente.get("original") == original_anterior:
+                    pendiente["original"] = original_nuevo
+                    pendiente["archivar"] = False
+                    pendiente["desde_escaner"] = False
+                    pendiente["sin_identificar"] = False
+        elif not elemento:
+            # También conserva el contrato de llamadas directas (pruebas y
+            # pequeñas integraciones que entregan un bloque ya procesado).
+            self._recolocar_escaneo(nombre, procesadas)
+        if elemento:
+            self._rutas_actuales = rutas_parte
         # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
         # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
         self._bloques.append({
-            "nombre": self._nombre_bloque(),
+            "nombre": self._nombre_bloque(elemento.get("etiqueta")),
             "procesadas": procesadas,
             # Lo leido por Gemini, tal cual: permite rehacer el lote con otro
             # cliente sin gastar otra lectura.
@@ -1215,41 +1268,32 @@ class VentanaPrincipal(QMainWindow):
         self.btn_ventas.setEnabled(hay_datos)
         self.btn_registro.setEnabled(hay_datos)
         self.btn_cliente.setEnabled(bool(self._bloques))
-        # Solo en el primer documento: con la cola en marcha, mover la
-        # seleccion cada vez que entra uno le quita el sitio al que mira.
         if hay_datos and len(self._bloques) == 1:
             self.tabla.selectRow(0)
         self._avisar_paginas_no_leidas()
-        # Con la cola en marcha se sigue por el siguiente documento; lo del
-        # cliente se pregunta UNA vez, al final, y con todo el lote delante.
-        if self._siguiente_de_la_cola():
-            return
         # Un taco del mismo proveedor al mismo cliente deja las dos partes
         # empatadas: hay que preguntarlo o sale todo del reves.
         if self._analisis_del_lote().dudoso:
             self._cambiar_cliente(automatico=True)
+        self._cola_completados += 1
+        self._iniciar_siguiente_cola()
 
     def _avisar_paginas_no_leidas(self):
-        """Las páginas que Gemini no pudo leer, dichas por su nombre.
-
-        Salen en rojo en la tabla, pero con 70 hojas eso no se ve: hay que
-        decir cuáles son y por qué, que casi siempre es que se agotó el tiempo
-        de espera y basta con volver a pasar ese PDF."""
+        """Detalla las páginas agotadas o ilegibles sin detener la cola."""
         fallos = getattr(getattr(self, "worker", None), "fallos", None)
         if not fallos:
             return
         salto = chr(10)
         detalle = salto.join(
-            f"· {os.path.basename(archivo) or 'documento'}, página {pagina}: "
-            f"{motivo}" for archivo, pagina, motivo in fallos[:10])
+            f"· {os.path.basename(ruta) or 'documento'}, página {pagina}: {motivo}"
+            for ruta, pagina, motivo in fallos[:10])
         if len(fallos) > 10:
             detalle += f"{salto}· … y {len(fallos) - 10} más"
         QMessageBox.warning(
             self, "Páginas sin leer",
             f"{len(fallos)} página(s) no se han podido leer y están en rojo "
             f"en la tabla:{salto}{salto}{detalle}{salto}{salto}"
-            "Vuelve a pasar esas páginas (o el PDF entero: las que ya están "
-            "no se cobran dos veces si quitas antes el bloque).")
+            "La cola continúa. Puede volver a cargar solo esas páginas.")
 
     def _recolocar_escaneo(self, cliente, procesadas):
         """Archiva el PDF recién escaneado por cliente, ejercicio y tipo.
@@ -1341,10 +1385,12 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         self.lbl_estado.setText(f"Lote rehecho con {nombre or nif} como cliente.")
 
-    def _nombre_bloque(self) -> str:
+    def _nombre_bloque(self, base_preferido: str = "") -> str:
         """Nombre corto del bloque: el del PDF cargado, sin repetirse."""
         rutas = self._rutas_actuales
-        if not rutas:
+        if base_preferido:
+            base = base_preferido
+        elif not rutas:
             base = f"Bloque {len(self._bloques) + 1}"
         elif len(rutas) == 1:
             base = os.path.splitext(os.path.basename(rutas[0]))[0]
@@ -2178,6 +2224,21 @@ class VentanaPrincipal(QMainWindow):
                         if b.get("cliente")), "") or "Cliente")
         return escaner.sanear(nombre)
 
+    def _exportables_por_bloque(self):
+        """Misma selección validada, conservando el bloque/parte de origen."""
+        salida = defaultdict(lambda: {"gasto": [], "venta": []})
+        for fila in range(self.tabla.rowCount()):
+            factura = self._leer_fila(fila)
+            registro = self.filas[fila]
+            if (fila in self._duplicados or factura.tratamiento_manual
+                    or registro.get("estado") == ERROR
+                    or (registro.get("estado") == REVISAR
+                        and not factura.revision_confirmada)):
+                continue
+            salida[registro.get("bloque", "Bloque")][self._tipo_fila(fila)].append(
+                factura)
+        return salida
+
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
         self._revalidar_todo()
@@ -2223,12 +2284,15 @@ class VentanaPrincipal(QMainWindow):
         orden = dialogo_orden.orden()
         for tipo in por_tipo:
             por_tipo[tipo] = ordenar_para_exportar(por_tipo[tipo], orden)
+        por_bloque = self._exportables_por_bloque()
+        for tipos in por_bloque.values():
+            for tipo in tipos:
+                tipos[tipo] = ordenar_para_exportar(tipos[tipo], orden)
 
         carpeta = QFileDialog.getExistingDirectory(
             self, "Carpeta para los Excel de Aplifisa", ESCRITORIO)
         if not carpeta:
             return
-        generados = []
         problemas_export = []      # lo que no cuadre entre archivo y pantalla
         resumen_archivos = []      # (archivo, lineas, totales) para enseñarlo
         cliente_archivo = self._nombre_cliente_archivo()
@@ -2249,7 +2313,20 @@ class VentanaPrincipal(QMainWindow):
             problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
             resumen_archivos.append(
                 (nombre, len(listas), totales_del_excel(config, ruta)))
-            generados.append(nombre)
+
+            bloques_tipo = [facturas[tipo] for facturas in por_bloque.values()
+                            if facturas[tipo]]
+            if len(bloques_tipo) > 1:
+                for numero, facturas_bloque in enumerate(bloques_tipo, 1):
+                    nombre_parte = (
+                        f"{cliente_archivo}_{'gastos' if tipo == 'gasto' else 'ingresos'}"
+                        f"_parte_{numero:02d}_de_{len(bloques_tipo):02d}.xlsx")
+                    ruta_parte = os.path.join(carpeta, nombre_parte)
+                    lista_parte = self._para_aplifisa(facturas_bloque)
+                    exportar_excel(lista_parte, config, ruta_parte)
+                    fallos = verificar_excel(lista_parte, config, ruta_parte)
+                    problemas_export.extend(
+                        f"{nombre_parte}: {p}" for p in fallos[:5])
 
         if problemas_export:
             QMessageBox.critical(
@@ -2271,7 +2348,9 @@ class VentanaPrincipal(QMainWindow):
             + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
                if excluidas else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
-              "en pantalla, línea por línea.")
+              "en pantalla, línea por línea.\n\n"
+              "IMPORTANTE: importe en Aplifisa solo el archivo consolidado "
+              "(sin «parte» en el nombre). Los parciales son para control o recuperación.")
 
 
 def _argumentos(argv):
