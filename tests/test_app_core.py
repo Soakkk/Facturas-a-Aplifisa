@@ -155,3 +155,16 @@ def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
     v._revalidar_todo()
     assert v._duplicados == {}
     assert v.alerta.isHidden()
+
+
+def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    assert v.minimumWidth() == 1024
+    assert v.barra_rapida.parentWidget() is not None
+    assert [v.btn_cargar.text(), v.btn_escanear.text(), v.btn_vaciar.text(),
+            v.btn_gastos.text()] == [
+        "Abrir PDF", "Escanear", "Vaciar todo", "Exportar a Aplifisa"]
+    acciones = [accion.text() for accion in v.menu_acciones.actions()]
+    assert "Vaciar todo" not in acciones
+    assert "Quitar bloque" in acciones
+    assert "Eliminar selección" in acciones

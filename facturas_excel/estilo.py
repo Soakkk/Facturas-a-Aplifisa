@@ -39,15 +39,46 @@ QWidget {{
 }}
 QMainWindow, QDialog, QMessageBox, QFileDialog {{ background: {PAGE}; }}
 
-QMenuBar {{ background: {BAR}; color: #E6EAF0; border: none; padding: 2px 10px; }}
+QMenuBar {{
+    background: {BAR}; color: #E6EAF0; border: none;
+    border-bottom: 1px solid #26334A; padding: 2px 10px; min-height: 34px;
+}}
 QMenuBar::item {{ padding: 7px 10px; border-radius: 3px; }}
 QMenuBar::item:selected {{ background: rgba(255,255,255,0.14); }}
 QMenu {{ background: {CARD}; border: 1px solid {BORDER}; padding: 4px; }}
 QMenu::item {{ padding: 7px 24px 7px 10px; border-radius: 3px; }}
 QMenu::item:selected {{ background: {ACCENT_FAINT}; color: {ACCENT}; }}
 
+QWidget#barraRapida {{ background: {BAR}; }}
+QWidget#barraRapida QPushButton {{
+    min-height: 25px; max-height: 25px; padding: 2px 10px;
+    border-radius: 3px; font-family: {FUENTE_UI}; font-size: 12px;
+    color: #E6EAF0; background: #17233A; border: 1px solid #526078;
+}}
+QWidget#barraRapida QPushButton:hover {{
+    color: white; background: #23324D; border-color: #8290A7;
+}}
+QWidget#barraRapida QPushButton#accesoPeligro {{
+    color: #FFB4B4; border-color: #8D3C47; background: #271B2A;
+}}
+QWidget#barraRapida QPushButton#accesoPeligro:hover {{
+    color: white; border-color: #D65B68; background: #6F2430;
+}}
+QWidget#barraRapida QPushButton#accesoExito {{
+    color: white; border-color: #3A9B68; background: {SUCCESS};
+}}
+QWidget#barraRapida QPushButton#accesoExito:hover {{
+    color: white; border-color: #63BE8B; background: #185634;
+}}
+QWidget#barraRapida QPushButton:disabled {{
+    color: #788397; border-color: #354158; background: #172033;
+}}
+
 QFrame#tarjeta {{
     background: {CARD}; border: 1.5px solid {BORDER}; border-radius: 4px;
+}}
+QFrame#barraCliente {{
+    background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
 }}
 QLabel#tituloSeccion {{
     color: {MUTED}; font-size: 11px; font-weight: 700;
@@ -83,6 +114,8 @@ QPushButton#exito {{ background: {SUCCESS}; color: white; border-color: {SUCCESS
 QPushButton#exito:hover {{ background: #185634; color: white; }}
 QPushButton#peligro {{ color: {DANGER}; }}
 QPushButton#peligro:hover {{ border-color: {DANGER}; color: {DANGER}; }}
+QPushButton#compacto {{ padding: 5px 11px; }}
+QPushButton#menuAcciones {{ padding-right: 10px; }}
 
 QLineEdit, QComboBox {{
     background: {CARD}; border: 1px solid {BORDER}; border-radius: 3px;

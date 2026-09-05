@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.2": """
+<h2>Novedades de la versión 1.13.2</h2>
+<ul>
+  <li><b>Nueva barra de acceso rápido:</b> abrir PDF, escanear, vaciar el lote
+      y exportar a Aplifisa quedan siempre visibles bajo los menús.</li>
+  <li><b>Mejor en portátiles:</b> las acciones de revisión se reparten en filas
+      cortas y ya no recortan sus textos a 1024 px o con escalado de Windows.</li>
+  <li><b>Cliente más compacto:</b> el selector ocupa una sola línea y deja más
+      espacio para las facturas y la vista previa del documento.</li>
+  <li><b>Acciones ordenadas:</b> quitar bloque, eliminar selección y deshacer
+      quedan agrupadas en «Más acciones»; «Vaciar todo» permanece accesible.</li>
+</ul>
+""",
     "1.13.0": """
 <h2>Novedades de la versión 1.13.0</h2>
 <ul>

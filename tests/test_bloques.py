@@ -226,7 +226,7 @@ def test_al_vaciar_el_lote_el_resumen_tambien_se_queda_a_cero(monkeypatch):
     assert v.tabla.rowCount() == 0
     assert v.tabla_resumen.rowCount() == 0
     assert v.alerta.isHidden()
-    assert "Cliente pendiente" in v.lbl_cliente.text()
+    assert v.lbl_cliente.text() == "Pendiente de detectar"
     assert v._pixmap_documento.isNull()
     assert "Arrastre aquí" in v.lbl_origen.text()
     assert not v.btn_cliente.isEnabled()

@@ -18,8 +18,8 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar,
-    QPushButton, QProgressDialog, QScrollArea, QSplitter, QTableWidget,
+    QHeaderView, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressBar,
+    QPushButton, QProgressDialog, QScrollArea, QSplitter, QStyle, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -327,7 +327,7 @@ class VentanaPrincipal(QMainWindow):
         self.setWindowTitle(f"Facturas a Aplifisa — v{__version__}")
         self.setWindowIcon(QIcon(ruta_recurso("app.ico")))
         self.resize(1420, 820)
-        self.setMinimumSize(1080, 680)
+        self.setMinimumSize(1024, 640)
         self.setAcceptDrops(True)
         self.filas = []  # por fila: dict(png, factura, aviso, bloque)
         # Un bloque = un escaneo/carga. Se acumulan para poder meter en un solo
@@ -365,6 +365,7 @@ class VentanaPrincipal(QMainWindow):
         raiz = QVBoxLayout(central)
         raiz.setContentsMargins(0, 0, 0, 0)
         raiz.setSpacing(0)
+        raiz.addWidget(self.barra_rapida)
 
         # Sin banner de cabecera: la marca y la version ya salen en el titulo de
         # la ventana, y el espacio se aprovecha para la tabla.
@@ -372,32 +373,23 @@ class VentanaPrincipal(QMainWindow):
         cuerpo.setContentsMargins(18, 14, 18, 12)
         cuerpo.setSpacing(12)
 
-        acciones = QFrame()
-        acciones.setObjectName("tarjeta")
-        la = QHBoxLayout(acciones)
-        la.setContentsMargins(16, 12, 16, 12)
-        self.btn_escanear = QPushButton("Escanear facturas")
-        self.btn_escanear.setObjectName("primario")
-        self.btn_escanear.setMinimumHeight(40)
-        self.btn_escanear.setToolTip(
-            "Escanea el taco del alimentador, guarda el PDF con el nombre del "
-            "cliente y lo mete en el lote.  (Ctrl+E)")
-        self.btn_escanear.clicked.connect(self._escanear)
-        self.btn_cargar = QPushButton("Abrir PDF o imágenes")
-        self.btn_cargar.setMinimumHeight(40)
-        self.btn_cargar.setToolTip("Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
-        self.btn_cargar.clicked.connect(self._cargar)
-        la.addWidget(self.btn_escanear)
-        la.addWidget(self.btn_cargar)
-        la.addSpacing(12)
-        bloque_cliente = QVBoxLayout()
-        etiqueta = QLabel("LOTE ACTUAL")
-        etiqueta.setObjectName("textoSuave")
-        self.lbl_cliente = QLabel("Cliente pendiente de detectar")
+        # El lote ocupa una sola fila. Las acciones frecuentes viven junto al
+        # menú para no robar altura ni encoger la tabla en portátiles.
+        cliente_bar = QFrame()
+        cliente_bar.setObjectName("barraCliente")
+        bloque_cliente = QHBoxLayout(cliente_bar)
+        bloque_cliente.setContentsMargins(12, 7, 12, 7)
+        bloque_cliente.setSpacing(10)
+        etiqueta = QLabel("CLIENTE")
+        etiqueta.setObjectName("tituloSeccion")
+        self.lbl_cliente = QLabel("Pendiente de detectar")
         self.lbl_cliente.setObjectName("cliente")
         bloque_cliente.addWidget(etiqueta)
         bloque_cliente.addWidget(self.lbl_cliente)
-        self.btn_cliente = QPushButton("Cambiar cliente…")
+        bloque_cliente.addStretch(1)
+        self.btn_cliente = QPushButton("Cambiar")
+        self.btn_cliente.setObjectName("compacto")
+        self.btn_cliente.setMaximumWidth(110)
         self.btn_cliente.setToolTip(
             "Quién es SU cliente en estas facturas. Si se detectó mal, se "
             "cambia aquí y el lote se rehace sin volver a pasar por Gemini.")
@@ -437,25 +429,7 @@ class VentanaPrincipal(QMainWindow):
         lr_recargo.addWidget(self.combo_recargo, 1)
         self.fila_recargo.setVisible(False)
         bloque_cliente.addWidget(self.fila_recargo)
-        la.addLayout(bloque_cliente, 1)
-
-        self.btn_registro = QPushButton("Comprobar registro")
-        self.btn_registro.setMinimumHeight(40)
-        self.btn_registro.setToolTip(
-            "Contrasta este lote con el «Listado de apuntes» que imprime "
-            "Aplifisa:\ndice qué facturas no llegaron a registrarse, cuáles "
-            "están de más\ny cuáles entraron con otro importe.\n"
-            "No gasta créditos de Gemini.  (Ctrl+R)")
-        self.btn_registro.setEnabled(False)
-        self.btn_registro.clicked.connect(lambda: self._contrastar_registro())
-        la.addWidget(self.btn_registro)
-        self.btn_gastos = QPushButton("Exportar a Aplifisa…")
-        self.btn_gastos.setObjectName("exito")
-        self.btn_gastos.setEnabled(False)
-        self.btn_gastos.clicked.connect(self._exportar_todo)
-        self.btn_ventas = self.btn_gastos
-        la.addWidget(self.btn_gastos)
-        cuerpo.addWidget(acciones)
+        cuerpo.addWidget(cliente_bar)
 
         self.progreso = QProgressBar()
         self.progreso.setVisible(False)
@@ -491,55 +465,68 @@ class VentanaPrincipal(QMainWindow):
         lt.addWidget(titulo_tabla)
         lt.addWidget(ayuda_tabla)
 
-        herramientas = QHBoxLayout()
-        herramientas.setSpacing(8)
-        herramientas.addWidget(QLabel("Mostrar:"))
+        # Dos filas cortas evitan que Qt aplaste los textos cuando la ventana
+        # se usa a 1024/1366 px o con escalado de Windows.
+        barra_herramientas = QVBoxLayout()
+        barra_herramientas.setSpacing(6)
+        filtros = QHBoxLayout()
+        filtros.setSpacing(8)
+        filtros.addWidget(QLabel("Mostrar:"))
         self.combo_filtro_estado = ComboSinRueda()
         self.combo_filtro_estado.addItems(
             ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
-        herramientas.addWidget(self.combo_filtro_estado)
+        filtros.addWidget(self.combo_filtro_estado)
         self.combo_filtro_bloque = ComboSinRueda()
         self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
         self.combo_filtro_bloque.setToolTip(
             "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
-        herramientas.addWidget(self.combo_filtro_bloque)
-        btn_siguiente = QPushButton("Siguiente incidencia")
-        btn_siguiente.clicked.connect(self._siguiente_incidencia)
-        herramientas.addWidget(btn_siguiente)
-        btn_revisada = QPushButton("Marcar revisada")
-        btn_revisada.setToolTip(
+        filtros.addWidget(self.combo_filtro_bloque)
+        filtros.addStretch(1)
+        barra_herramientas.addLayout(filtros)
+
+        acciones_principales = QHBoxLayout()
+        acciones_principales.setSpacing(8)
+        self.btn_siguiente = QPushButton("Siguiente incidencia")
+        self.btn_siguiente.clicked.connect(self._siguiente_incidencia)
+        acciones_principales.addWidget(self.btn_siguiente)
+        self.btn_revisada = QPushButton("Marcar revisada")
+        self.btn_revisada.setToolTip(
             "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
-        btn_revisada.clicked.connect(self._marcar_revisada)
-        herramientas.addWidget(btn_revisada)
-        btn_manual = QPushButton("Gestión manual sí/no")
-        btn_manual.setToolTip(
+        self.btn_revisada.clicked.connect(self._marcar_revisada)
+        acciones_principales.addWidget(self.btn_revisada)
+        acciones_principales.addStretch(1)
+        barra_herramientas.addLayout(acciones_principales)
+
+        acciones_secundarias = QHBoxLayout()
+        acciones_secundarias.setSpacing(8)
+        self.btn_manual = QPushButton("Gestión manual")
+        self.btn_manual.setToolTip(
             "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
-        btn_manual.clicked.connect(self._alternar_gestion_manual)
-        herramientas.addWidget(btn_manual)
-        herramientas.addStretch(1)
-        self.btn_quitar_bloque = QPushButton("Quitar este bloque")
-        self.btn_quitar_bloque.setObjectName("peligro")
+        self.btn_manual.clicked.connect(self._alternar_gestion_manual)
+        acciones_secundarias.addWidget(self.btn_manual)
+        acciones_secundarias.addStretch(1)
+
+        self.menu_acciones = QMenu(self)
+        self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
         self.btn_quitar_bloque.setToolTip(
             "Quita del lote el bloque elegido en el desplegable (p.ej. si se ha "
             "cargado un PDF que no tocaba).")
-        self.btn_quitar_bloque.clicked.connect(self._quitar_bloque)
-        herramientas.addWidget(self.btn_quitar_bloque)
-        self.btn_vaciar = QPushButton("Vaciar todo")
-        self.btn_vaciar.setObjectName("peligro")
-        self.btn_vaciar.clicked.connect(self._vaciar_todo)
-        herramientas.addWidget(self.btn_vaciar)
-        self.btn_deshacer_borrado = QPushButton("Deshacer eliminación")
+        self.btn_quitar_bloque.triggered.connect(self._quitar_bloque)
+        self.btn_eliminar = self.menu_acciones.addAction("Eliminar selección")
+        self.btn_eliminar.triggered.connect(self._eliminar_seleccion)
+        self.menu_acciones.addSeparator()
+        self.btn_deshacer_borrado = self.menu_acciones.addAction("Deshacer eliminación")
         self.btn_deshacer_borrado.setEnabled(False)
-        self.btn_deshacer_borrado.clicked.connect(self._deshacer_borrado)
-        herramientas.addWidget(self.btn_deshacer_borrado)
-        btn_eliminar = QPushButton("Eliminar selección")
-        btn_eliminar.setObjectName("peligro")
-        btn_eliminar.clicked.connect(self._eliminar_seleccion)
-        herramientas.addWidget(btn_eliminar)
-        lt.addLayout(herramientas)
+        self.btn_deshacer_borrado.triggered.connect(self._deshacer_borrado)
+        self.btn_mas_acciones = QPushButton("Más acciones")
+        self.btn_mas_acciones.setObjectName("menuAcciones")
+        self.btn_mas_acciones.setMenu(self.menu_acciones)
+        acciones_secundarias.addWidget(self.btn_mas_acciones)
+        barra_herramientas.addLayout(acciones_secundarias)
+        lt.addLayout(barra_herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setHorizontalHeaderLabels(COLS)
@@ -667,8 +654,10 @@ class VentanaPrincipal(QMainWindow):
                            lambda: archivo.abrir(archivo.carpeta_escaneos()))
 
         comprobar = self.menuBar().addMenu("Comprobar")
-        comprobar.addAction("Comprobar registro de Aplifisa…	Ctrl+R",
-                            lambda: self._contrastar_registro())
+        self.btn_registro = comprobar.addAction(
+            "Comprobar registro de Aplifisa…\tCtrl+R",
+            lambda: self._contrastar_registro())
+        self.btn_registro.setEnabled(False)
 
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales por bloque")
@@ -692,6 +681,47 @@ class VentanaPrincipal(QMainWindow):
         menu.addAction("Diagnóstico y sugerencias…",
                        lambda: self._mostrar_pendientes(al_arrancar=False))
         menu.addAction("Acerca de", self._acerca_de)
+
+        # Accesos diarios en una franja compacta bajo los menús. Separarlos
+        # evita que menús y botones se pisen a 1024 px de ancho.
+        self.barra_rapida = QWidget()
+        self.barra_rapida.setObjectName("barraRapida")
+        accesos = QHBoxLayout(self.barra_rapida)
+        accesos.setContentsMargins(6, 3, 8, 3)
+        accesos.setSpacing(6)
+        accesos.addStretch(1)
+
+        self.btn_cargar = QPushButton("Abrir PDF")
+        self.btn_cargar.setObjectName("accesoRapido")
+        self.btn_cargar.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        self.btn_cargar.setToolTip("Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
+        self.btn_cargar.clicked.connect(self._cargar)
+        accesos.addWidget(self.btn_cargar)
+
+        self.btn_escanear = QPushButton("Escanear")
+        self.btn_escanear.setObjectName("accesoRapido")
+        self.btn_escanear.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.btn_escanear.setToolTip(
+            "Escanea el taco del alimentador, guarda el PDF con el nombre del "
+            "cliente y lo mete en el lote.  (Ctrl+E)")
+        self.btn_escanear.clicked.connect(self._escanear)
+        accesos.addWidget(self.btn_escanear)
+
+        self.btn_vaciar = QPushButton("Vaciar todo")
+        self.btn_vaciar.setObjectName("accesoPeligro")
+        self.btn_vaciar.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.btn_vaciar.setToolTip("Quita todas las facturas del lote actual.")
+        self.btn_vaciar.clicked.connect(self._vaciar_todo)
+        accesos.addWidget(self.btn_vaciar)
+
+        self.btn_gastos = QPushButton("Exportar a Aplifisa")
+        self.btn_gastos.setObjectName("accesoExito")
+        self.btn_gastos.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.btn_gastos.setEnabled(False)
+        self.btn_gastos.clicked.connect(self._exportar_todo)
+        self.btn_ventas = self.btn_gastos
+        accesos.addWidget(self.btn_gastos)
+
 
     def _mostrar_notas_version_al_arrancar(self):
         self._mostrar_notas_version(forzar=False)
@@ -1496,7 +1526,7 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         self.btn_gastos.setEnabled(False)
         self.btn_registro.setEnabled(False)
-        self.lbl_cliente.setText("Cliente pendiente de detectar")
+        self.lbl_cliente.setText("Pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
         sesion.borrar()
 
