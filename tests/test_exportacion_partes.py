@@ -19,7 +19,7 @@ def _factura(numero):
     )
 
 
-def test_exporta_solo_el_excel_consolidado_en_la_carpeta_documental(
+def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
         tmp_path, monkeypatch):
     ventana = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     ventana._cliente_nombre = "CLIENTE PRUEBA"
@@ -47,11 +47,15 @@ def test_exporta_solo_el_excel_consolidado_en_la_carpeta_documental(
             return modulo_app.ORDEN_PDF
 
     escritos = []
+    limpiezas = []
     monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
     monkeypatch.setattr(
         modulo_app.archivo, "ruta_excel_consolidado",
         lambda cliente, ejercicio, tipo: str(
-            tmp_path / f"{cliente}_{ejercicio}_{tipo}_consolidado.xlsx"))
+            tmp_path / f"{'GASTOS' if tipo == 'gasto' else 'INGRESOS'}_{cliente}.xlsx"))
+    monkeypatch.setattr(
+        modulo_app.archivo, "eliminar_excel_temporales",
+        lambda cliente, tipo: limpiezas.append((cliente, tipo)) or ["parte.xlsx"])
     monkeypatch.setattr(modulo_app, "leer_config", lambda ruta: object())
     monkeypatch.setattr(modulo_app, "exportar_excel",
                         lambda facturas, config, ruta: escritos.append(ruta))
@@ -63,5 +67,6 @@ def test_exporta_solo_el_excel_consolidado_en_la_carpeta_documental(
     ventana._exportar_todo()
 
     nombres = [os.path.basename(ruta) for ruta in escritos]
-    assert nombres == ["CLIENTE PRUEBA_2026_gasto_consolidado.xlsx"]
+    assert nombres == ["GASTOS_CLIENTE PRUEBA.xlsx"]
     assert not any("parte_" in nombre for nombre in nombres)
+    assert limpiezas == [("CLIENTE PRUEBA", "gasto")]

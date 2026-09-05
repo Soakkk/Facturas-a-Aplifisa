@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from typing import Dict
 
 from .rutas import dir_datos
@@ -100,6 +101,32 @@ def marcar_cliente(nif, nombre: str = "") -> None:
 def es_cliente_confirmado(nif) -> bool:
     nif = _normaliza(nif)
     return bool(nif and _leer_todo().get(nif, {}).get("confirmado"))
+
+
+def _clave_nombre(nombre) -> str:
+    """Nombre comparable sin acentos, puntuación ni forma societaria."""
+    texto = "".join(
+        c for c in unicodedata.normalize("NFD", str(nombre or ""))
+        if unicodedata.category(c) != "Mn"
+    ).upper()
+    for caracter in ",.()-_/":
+        texto = texto.replace(caracter, " ")
+    tokens = [t for t in texto.split()
+              if t not in {"SL", "SLU", "SA", "SAU", "CB"}]
+    return " ".join(tokens)
+
+
+def buscar_confirmado_por_nombre(nombre: str) -> tuple[str, str] | None:
+    """Cliente confirmado cuyo nombre coincide con el leído en la factura."""
+    clave = _clave_nombre(nombre)
+    if not clave:
+        return None
+    coincidencias = []
+    for nif, ficha in _leer_todo().items():
+        if (isinstance(ficha, dict) and ficha.get("confirmado")
+                and _clave_nombre(ficha.get("nombre")) == clave):
+            coincidencias.append((_normaliza(nif), ficha.get("nombre", "")))
+    return coincidencias[0] if len(coincidencias) == 1 else None
 
 
 # --------------------------------------------------- regimen de recargo

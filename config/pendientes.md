@@ -1,6 +1,6 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de septiembre de 2026 (versión 1.13.5). Apunta abajo lo que
+Actualizado el 5 de septiembre de 2026 (versión 1.13.6). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
@@ -19,10 +19,11 @@ quitarlos de en medio.
 
 **Varios PDF en un Excel.** Cada carga o escaneo es un «bloque» que se suma al
 lote. Un requerimiento de 60 facturas se escanea en tres tandas y sale un solo
-Excel consolidado junto a los PDF del cliente. Cada bloque se puede quitar por
-separado, y «Vaciar todo» empieza de cero. Los PDF largos se procesan en partes
-internas de 25 páginas, pero esas partes se borran al terminar y no se generan
-Excel parciales.
+Excel consolidado en el Escritorio, llamado `GASTOS_CLIENTE.xlsx` o
+`INGRESOS_CLIENTE.xlsx`. Cada bloque se puede quitar por separado, y «Vaciar
+todo» empieza de cero. Los PDF largos se procesan en partes internas de 25
+páginas; al comprobarse el consolidado se borran también los Excel temporales
+`parte_N_de_M` de ese cliente y tipo.
 
 **Facturas que se pierden o se repiten.** Si el alimentador arrastra dos hojas
 pegadas, esa factura no daba ningún aviso. Ahora salta por dos vías: el recuento
@@ -33,6 +34,12 @@ de hojas (si le dices cuántas pones) y el salto en la numeración («falta la
 partes salen las mismas veces y antes se elegía al azar. Ahora pregunta, se
 acuerda de tu respuesta para siempre, y el botón «Cambiar cliente…» rehace el
 lote sin volver a pagar la lectura.
+
+**CIF/NIF corregidos.** Lo que escribes a mano prevalece sobre el OCR incluso
+si este devuelve otro identificador que parece válido. Se recuerda el proveedor
+y también el cliente confirmado para no repetir la misma corrección. Los
+tickets de contado sin DNI permanecen en amarillo para que los veas y los
+marques como revisados, sin inventarles ninguna regla.
 
 **Las cuentas.** El programa lleva dentro tu catálogo de conceptos de Aplifisa
 (gastos e ingresos, con sus subclaves) y Gemini elige de esa lista, no de una

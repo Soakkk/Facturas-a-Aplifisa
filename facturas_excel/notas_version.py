@@ -6,6 +6,20 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.6": """
+<h2>Novedades de la versión 1.13.6</h2>
+<ul>
+  <li><b>Las correcciones humanas mandan:</b> un CIF, NIF o DNI corregido se
+      recuerda y prevalece sobre futuras lecturas erróneas del OCR.</li>
+  <li><b>Clientes reconocidos por su nombre:</b> si su identificador sale
+      cortado o mal leído, se recupera el confirmado anteriormente.</li>
+  <li><b>Contado sin falsas reglas:</b> los tickets sin identificador continúan
+      en amarillo para revisarlos y confirmarlos en bloque.</li>
+  <li><b>Excel listo en el Escritorio:</b> se llama GASTOS_CLIENTE.xlsx o
+      INGRESOS_CLIENTE.xlsx; al consolidar se limpian los Excel temporales de
+      partes del mismo cliente y tipo.</li>
+</ul>
+""",
     "1.13.5": """
 <h2>Novedades de la versión 1.13.5</h2>
 <ul>

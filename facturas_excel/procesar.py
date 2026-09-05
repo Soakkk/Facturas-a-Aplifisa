@@ -109,7 +109,8 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
         for campo_nif, campo_nom, papel in (
                 ("emisor_nif", "emisor_nombre", "e"),
                 ("receptor_nif", "receptor_nombre", "r")):
-            nif = normaliza_nif(d.get(campo_nif))
+            conocido = clientes.buscar_confirmado_por_nombre(d.get(campo_nom, ""))
+            nif = conocido[0] if conocido else normaliza_nif(d.get(campo_nif))
             if not nif:
                 continue
             c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
@@ -118,7 +119,9 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
                 c.como_emisor += 1
             else:
                 c.como_receptor += 1
-            if d.get(campo_nom):
+            if conocido and conocido[1]:
+                nombres[nif].append(conocido[1])
+            elif d.get(campo_nom):
                 nombres[nif].append(d[campo_nom])
 
     for nif, c in cuenta.items():
@@ -394,9 +397,9 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
     """Rellena los NIF que faltan o no valen con los ya sabidos de otras veces.
 
     Se usa DESPUES de propagar_nifs: dentro del mismo lote la prueba es mejor.
-    Como en propagar_nifs, no pisa nunca un NIF valido; si el proveedor llega con
-    uno valido DISTINTO al recordado, no toca nada y avisa (puede haber cambiado
-    de CIF, o ser otra empresa que se llama parecido).
+    Un NIF confirmado manualmente sí prevalece incluso si el OCR devuelve otro
+    que, por casualidad, pasa el dígito de control. Los aprendidos solo por una
+    lectura automática mantienen la cautela anterior.
     """
     completados = 0
     for pr in procesadas:
@@ -409,17 +412,26 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
         actual = normaliza_nif(f.nif)
         if validar_nif(actual):
             if actual != ficha["nif"]:
-                _anadir_aviso(pr, f"OJO: {f.nombre} tiene guardado el NIF "
-                                  f"{ficha['nif']} y esta factura trae {actual}. "
-                                  f"Comprueba cuál es el bueno.")
+                if not ficha.get("manual"):
+                    _anadir_aviso(pr, f"OJO: {f.nombre} tiene guardado el NIF "
+                                      f"{ficha['nif']} y esta factura trae {actual}. "
+                                      f"Comprueba cuál es el bueno.")
+                    continue
+                for linea in pr.facturas:
+                    linea.nif = ficha["nif"]
+                completados += 1
             continue
         leido = (f.nif or "").strip()   # antes de pisarlo: f ES pr.facturas[0]
         for linea in pr.facturas:
             linea.nif = ficha["nif"]
         motivo = f"aquí se leyó «{leido}», que no es válido" if leido \
             else "aquí no se leyó ninguno"
-        _anadir_aviso(pr, f"NIF puesto de memoria ({ficha['nif']}): es el que "
-                          f"consta guardado para {f.nombre} y {motivo}. Compruébalo.")
+        # Lo confirmado por una persona ya está comprobado y no debe obligar a
+        # revisar las mismas facturas en cada lote. La memoria automática sí
+        # permanece amarilla hasta que alguien la confirme.
+        if not ficha.get("manual"):
+            _anadir_aviso(pr, f"NIF puesto de memoria ({ficha['nif']}): es el que "
+                              f"consta guardado para {f.nombre} y {motivo}. Compruébalo.")
         completados += 1
     return completados
 

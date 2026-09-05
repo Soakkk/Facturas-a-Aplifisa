@@ -59,6 +59,17 @@ def test_un_cliente_confirmado_gana_aunque_empaten():
     assert analisis.mejor.cliente_confirmado
 
 
+def test_el_nombre_confirmado_corrige_un_nif_de_cliente_mal_leido():
+    clientes.marcar_cliente(*CLIENTE)
+    factura = factura_gasolinera("FA-1")
+    factura["receptor_nif"] = "87654321X"  # OCR plausible pero incorrecto
+
+    analisis = procesar.analizar_cliente([factura])
+
+    assert analisis.mejor.nif == CLIENTE[0]
+    assert {c.nif for c in analisis.candidatos} == {CLIENTE[0], GASOLINERA[0]}
+
+
 def test_un_proveedor_conocido_no_puede_ser_el_cliente():
     procesar.recordar_nif(GASOLINERA[1], GASOLINERA[0], manual=True)
     analisis = procesar.analizar_cliente(

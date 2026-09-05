@@ -120,17 +120,53 @@ def copiar_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
 
 def ruta_excel_consolidado(cliente: str, ejercicio: int, tipo: str,
                            carpeta_base: Optional[str] = None) -> str:
-    """Nombre libre para el Excel final, junto a sus PDF originales."""
-    carpeta = carpeta_tipo_cliente(cliente, ejercicio, tipo, carpeta_base)
+    """Ruta temporal del Excel final que se importa en Aplifisa.
+
+    Los PDF son el archivo documental permanente. El Excel, en cambio, se deja
+    directamente en el Escritorio para importarlo y borrarlo después.
+    ``ejercicio`` se conserva en la firma por compatibilidad con llamadas de
+    versiones anteriores, pero no forma parte del nombre solicitado.
+    """
+    carpeta = carpeta_base or os.path.join(os.path.expanduser("~"), "Desktop")
+    os.makedirs(carpeta, exist_ok=True)
     cliente_limpio = sanear(cliente or "Cliente")
     tipo_limpio = "ingresos" if str(tipo).lower().startswith(("i", "v")) else "gastos"
-    base = f"{cliente_limpio}_{int(ejercicio)}_{tipo_limpio}_consolidado"
-    ruta = os.path.join(carpeta, base + ".xlsx")
-    numero = 2
-    while os.path.exists(ruta):
-        ruta = os.path.join(carpeta, f"{base}_{numero}.xlsx")
-        numero += 1
-    return ruta
+    return os.path.join(carpeta, f"{tipo_limpio.upper()}_{cliente_limpio}.xlsx")
+
+
+def eliminar_excel_temporales(cliente: str, tipo: str,
+                              carpeta_base: Optional[str] = None) -> List[str]:
+    """Elimina solo los Excel ``parte_N_de_M`` del cliente y tipo indicados.
+
+    La selección es deliberadamente estricta: no toca otros libros del
+    Escritorio, ni el consolidado, ni documentos de otro cliente.
+    """
+    carpeta = carpeta_base or os.path.join(os.path.expanduser("~"), "Desktop")
+    if not os.path.isdir(carpeta):
+        return []
+    cliente_limpio = sanear(cliente or "Cliente")
+    tipo_limpio = "ingresos" if str(tipo).lower().startswith(("i", "v")) else "gastos"
+    extremos = (
+        f"{cliente_limpio}_{tipo_limpio}",
+        f"{tipo_limpio}_{cliente_limpio}",
+    )
+    patrones = [re.compile(
+        rf"^{re.escape(base)}_parte_\d+_de_\d+\.xlsx$", re.IGNORECASE)
+        for base in extremos]
+    eliminados = []
+    try:
+        entradas = list(os.scandir(carpeta))
+    except OSError:
+        return []
+    for entrada in entradas:
+        if not entrada.is_file() or not any(p.match(entrada.name) for p in patrones):
+            continue
+        try:
+            os.remove(entrada.path)
+            eliminados.append(entrada.path)
+        except OSError:
+            pass
+    return eliminados
 
 
 def _base_de(ruta: str) -> str:

@@ -2513,6 +2513,7 @@ class VentanaPrincipal(QMainWindow):
             por_tipo[tipo] = ordenar_para_exportar(por_tipo[tipo], orden)
         problemas_export = []      # lo que no cuadre entre archivo y pantalla
         resumen_archivos = []      # (ruta, lineas, totales) para enseñarlo
+        tipos_exportados = []      # los parciales se borran solo tras verificar
         cliente_archivo = self._nombre_cliente_archivo()
         for tipo, xml in (
             ("gasto", "gastos.xml"),
@@ -2534,6 +2535,7 @@ class VentanaPrincipal(QMainWindow):
             problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
             resumen_archivos.append(
                 (ruta, len(listas), totales_del_excel(config, ruta)))
+            tipos_exportados.append(tipo)
 
         if problemas_export:
             QMessageBox.critical(
@@ -2543,6 +2545,10 @@ class VentanaPrincipal(QMainWindow):
                 + "\n\nNO importe estos archivos en Aplifisa sin revisarlos.")
             return
 
+        temporales_eliminados = sum(
+            len(archivo.eliminar_excel_temporales(cliente_archivo, tipo))
+            for tipo in tipos_exportados
+        )
         detalle = "\n".join(
             f"  · {os.path.basename(ruta)}: {lineas} línea(s), "
             f"base {eur(t['base_iva'])}, "
@@ -2555,11 +2561,13 @@ class VentanaPrincipal(QMainWindow):
         QMessageBox.information(
             self, "Exportación terminada",
             f"Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
-            f"Guardados junto a los PDF originales:\n{carpetas}\n\n"
+            f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
             + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
                if excluidas else "")
+            + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
+               if temporales_eliminados else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
               "en pantalla, línea por línea. No se han creado Excel parciales.")
 

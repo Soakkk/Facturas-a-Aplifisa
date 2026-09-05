@@ -37,7 +37,7 @@ def test_lo_escrito_a_mano_se_recuerda_y_se_reutiliza():
     pr = factura("ANTONIO Y CAÑIZARES SL", None)
     assert completar_desde_memoria([pr]) == 1
     assert pr.facturas[0].nif == CANIZARES
-    assert "no se leyó ninguno" in pr.aviso
+    assert not pr.aviso
 
 
 def test_da_igual_como_venga_escrito_el_nombre():
@@ -52,15 +52,34 @@ def test_tambien_corrige_un_nif_mal_leido():
     pr = factura("ANTONIO Y CAÑIZARES SL", "B3OO48276")   # O en vez de 0
     assert completar_desde_memoria([pr]) == 1
     assert pr.facturas[0].nif == CANIZARES
-    assert "B3OO48276" in pr.aviso
+    assert not pr.aviso
 
 
-def test_no_pisa_un_nif_valido_pero_avisa_si_no_es_el_guardado():
+def test_el_nif_corregido_a_mano_pisa_incluso_un_ocr_valido_distinto():
     recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=True)
     pr = factura("ANTONIO Y CAÑIZARES SL", OTRO)
+
+    assert completar_desde_memoria([pr]) == 1
+    assert pr.facturas[0].nif == CANIZARES   # manda lo confirmado por la persona
+    assert not pr.aviso                      # no obliga a revisar lo mismo otra vez
+
+
+def test_un_nif_solo_aprendido_por_ocr_no_pisa_otro_valido():
+    recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=False)
+    pr = factura("ANTONIO Y CAÑIZARES SL", OTRO)
+
     assert completar_desde_memoria([pr]) == 0
-    assert pr.facturas[0].nif == OTRO        # manda lo que trae la factura
+    assert pr.facturas[0].nif == OTRO
     assert "Comprueba cuál es el bueno" in pr.aviso
+
+
+def test_el_nif_manual_completa_sin_poner_en_amarillo_cada_lote():
+    recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=True)
+    pr = factura("ANTONIO Y CAÑIZARES SL", None)
+
+    assert completar_desde_memoria([pr]) == 1
+    assert pr.facturas[0].nif == CANIZARES
+    assert not pr.aviso
 
 
 def test_nunca_recuerda_un_nif_que_no_valida():

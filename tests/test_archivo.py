@@ -80,19 +80,36 @@ def test_un_pdf_externo_se_copia_y_el_original_no_se_mueve(escaneos):
         "CLIENTE EJEMPLO", "2025", "Gastos", "PDF de HP.pdf"))
 
 
-def test_excel_consolidado_va_junto_a_los_pdf_y_no_pisa_otro(escaneos):
+def test_excel_consolidado_va_al_escritorio_con_nombre_para_aplifisa(escaneos):
     primero = archivo.ruta_excel_consolidado(
         "CLIENTE", 2025, "gasto", escaneos)
-    _pdf(os.path.splitext(primero)[0] + ".pdf")  # no afecta: distinta extensión
-    with open(primero, "wb") as fh:
-        fh.write(b"xlsx")
     segundo = archivo.ruta_excel_consolidado(
         "CLIENTE", 2025, "gasto", escaneos)
 
-    assert primero.endswith(os.path.join(
-        "CLIENTE", "2025", "Gastos",
-        "CLIENTE_2025_gastos_consolidado.xlsx"))
-    assert segundo.endswith("CLIENTE_2025_gastos_consolidado_2.xlsx")
+    assert primero == os.path.join(escaneos, "GASTOS_CLIENTE.xlsx")
+    assert segundo == primero
+
+
+def test_al_consolidar_solo_borra_los_excel_de_partes_del_mismo_cliente(escaneos):
+    temporales = [
+        os.path.join(escaneos, "CLIENTE_gastos_parte_01_de_04.xlsx"),
+        os.path.join(escaneos, "GASTOS_CLIENTE_parte_02_de_04.xlsx"),
+    ]
+    conservar = [
+        os.path.join(escaneos, "GASTOS_CLIENTE.xlsx"),
+        os.path.join(escaneos, "OTRO_gastos_parte_01_de_02.xlsx"),
+        os.path.join(escaneos, "CLIENTE_ingresos_parte_01_de_02.xlsx"),
+    ]
+    for ruta in temporales + conservar:
+        with open(ruta, "wb") as fh:
+            fh.write(b"xlsx")
+
+    borrados = archivo.eliminar_excel_temporales(
+        "CLIENTE", "gasto", escaneos)
+
+    assert set(borrados) == set(temporales)
+    assert not any(os.path.exists(ruta) for ruta in temporales)
+    assert all(os.path.exists(ruta) for ruta in conservar)
 
 
 def test_el_listado_ordena_por_fecha_y_dice_de_quien_es(escaneos):

@@ -25,25 +25,27 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
    se abre una vista previa grande. Una fila ámbar solo se exporta después de
    pulsar **Marcar revisada**.
-4. **Exportar** `CLIENTE_EJERCICIO_gastos_consolidado.xlsx` /
-   `CLIENTE_EJERCICIO_ingresos_consolidado.xlsx` → importar en Aplifisa con la
+4. **Exportar** `GASTOS_CLIENTE.xlsx` / `INGRESOS_CLIENTE.xlsx` al Escritorio
+   → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
    Aunque el PDF tenga 100 páginas o varios bloques, solo se genera el Excel
-   consolidado que se importa en Aplifisa; no quedan Excel parciales.
+   consolidado que se importa en Aplifisa. Al comprobarlo correctamente, se
+   eliminan los Excel temporales `parte_N_de_M` de ese cliente y tipo.
    Los duplicados, documentos sustituidos, suplidos y bienes de inversión se
    apartan de la exportación rutinaria para tratarlos manualmente.
 5. Tanto los PDF creados desde el escáner como los cargados desde HP u otro
    programa quedan archivados automáticamente en el Escritorio como
    `Documentación Facturas / Cliente / Ejercicio / Gastos` o `Ingresos`. Los
    PDF externos se copian y su original no se mueve. Las dos carpetas se crean
-   juntas y el ejercicio se obtiene de la fecha de factura. El Excel consolidado
-   queda junto a los PDF originales de su tipo.
+   juntas y el ejercicio se obtiene de la fecha de factura. Los Excel no forman
+   parte de este archivo permanente.
    Desde **Escaneos guardados** se puede crear el ZIP completo del ejercicio
    para adjuntarlo después como documentación digitalizada en Aplifisa.
 6. El lote en curso se conserva al cerrar el programa, incluidas las
    correcciones y los bloques acumulados. Solo **Vaciar todo** inicia una sesión
-   nueva. Cada exportación recibe un nombre libre para no sobrescribir un Excel
-   consolidado anterior.
+   nueva. Los CIF/NIF/DNI corregidos manualmente se recuerdan por cliente o
+   proveedor y prevalecen sobre futuras lecturas dudosas del OCR. Los tickets
+   de contado sin identificador siguen en amarillo para su revisión manual.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión
