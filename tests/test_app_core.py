@@ -159,8 +159,15 @@ def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
 
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     from PySide6.QtCore import Qt
+    from facturas_excel.estilo import FUENTE_UI, QSS
 
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    assert v.windowTitle() == "Facturas a Aplifisa"
+    assert "Mono" not in FUENTE_UI
+    assert "monospace" not in QSS
+    assert not v.lbl_mostrar.icon().isNull()
+    assert v.visor_scroll.widget() is v.lbl_img
+    assert v.btn_zoom_menos.toolTip() == "Alejar documento"
     assert v.minimumWidth() == 1024
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
     assert v.layout_herramientas.getItemPosition(

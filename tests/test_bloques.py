@@ -172,11 +172,11 @@ def test_el_resumen_muestra_los_suplidos_sin_mezclarlos_con_la_base():
     cargar_bloque(v, r"C:\tmp\suplidos.pdf", [f])
 
     cabeceras = _cabeceras(v)
-    assert v.tabla_resumen.item(0, cabeceras.index("Base")).text() == "100,00 €"
+    assert v.tabla_resumen.item(0, cabeceras.index("BASE")).text() == "100,00 €"
     assert v.tabla_resumen.item(
-        0, cabeceras.index("Suplidos")).text() == "109,08 €"
+        0, cabeceras.index("SUPLIDOS")).text() == "109,08 €"
     assert v.tabla_resumen.item(
-        0, cabeceras.index("Total factura")).text() == "230,08 €"
+        0, cabeceras.index("TOTAL FACTURA")).text() == "230,08 €"
 
 
 def test_resumir_por_bloque_agrupa_y_redondea():

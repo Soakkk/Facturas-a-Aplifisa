@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.4": """
+<h2>Novedades de la versión 1.13.4</h2>
+<ul>
+  <li><b>Diseño completamente unificado:</b> se elimina la mezcla con el estilo
+      gris técnico y toda la interfaz utiliza la misma tipografía Segoe UI.</li>
+  <li><b>Cliente como en la referencia:</b> estado y botón Cambiar aparecen
+      juntos, en una franja limpia a todo el ancho.</li>
+  <li><b>Visor renovado:</b> mantiene el PDF a la derecha e incorpora indicador
+      de página, controles de zoom y acceso a la vista previa grande.</li>
+  <li><b>Acabado visual fiel:</b> iconos lineales, bordes ligeros, cabeceras
+      azules y proporciones ajustadas al diseño aprobado.</li>
+</ul>
+""",
     "1.13.3": """
 <h2>Novedades de la versión 1.13.3</h2>
 <ul>

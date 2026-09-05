@@ -325,7 +325,7 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self, comprobar_updates: bool = True,
                  restaurar_sesion: bool = True):
         super().__init__()
-        self.setWindowTitle(f"Facturas a Aplifisa — v{__version__}")
+        self.setWindowTitle("Facturas a Aplifisa")
         self.setWindowIcon(QIcon(ruta_recurso("app.ico")))
         self.resize(1420, 820)
         self.setMinimumSize(1024, 640)
@@ -376,8 +376,8 @@ class VentanaPrincipal(QMainWindow):
         # Sin banner de cabecera: la marca y la version ya salen en el titulo de
         # la ventana, y el espacio se aprovecha para la tabla.
         cuerpo = QVBoxLayout()
-        cuerpo.setContentsMargins(18, 14, 18, 12)
-        cuerpo.setSpacing(12)
+        cuerpo.setContentsMargins(10, 12, 10, 8)
+        cuerpo.setSpacing(10)
 
         # El lote ocupa una sola fila. Las acciones frecuentes viven junto al
         # menú para no robar altura ni encoger la tabla en portátiles.
@@ -392,7 +392,6 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_cliente.setObjectName("cliente")
         bloque_cliente.addWidget(etiqueta)
         bloque_cliente.addWidget(self.lbl_cliente)
-        bloque_cliente.addStretch(1)
         self.btn_cliente = QPushButton("Cambiar")
         self.btn_cliente.setObjectName("compacto")
         self.btn_cliente.setMaximumWidth(110)
@@ -402,6 +401,7 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
         bloque_cliente.addWidget(self.btn_cliente)
+        bloque_cliente.addStretch(1)
         # Solo aparece si el lote trae facturas con recargo de equivalencia:
         # para el resto de clientes no significa nada y estorba.
         self.fila_recargo = QWidget()
@@ -435,7 +435,7 @@ class VentanaPrincipal(QMainWindow):
         lr_recargo.addWidget(self.combo_recargo, 1)
         self.fila_recargo.setVisible(False)
         bloque_cliente.addWidget(self.fila_recargo)
-        cuerpo.addWidget(cliente_bar)
+        raiz.addWidget(cliente_bar)
 
         self.progreso = QProgressBar()
         self.progreso.setVisible(False)
@@ -463,20 +463,20 @@ class VentanaPrincipal(QMainWindow):
         tabla_card.setObjectName("tarjeta")
         lt = QVBoxLayout(tabla_card)
         lt.setContentsMargins(12, 12, 12, 12)
-        titulo_tabla = QLabel("Datos extraídos")
+        titulo_tabla = QLabel("DATOS EXTRAÍDOS")
         titulo_tabla.setObjectName("tituloSeccion")
-        ayuda_tabla = QLabel(
-            "Revise las filas ámbar o rojas. ✓ = revisada; M = gestión manual, no se exporta.")
-        ayuda_tabla.setObjectName("textoSuave")
         lt.addWidget(titulo_tabla)
-        lt.addWidget(ayuda_tabla)
 
         # En ventana ancha coincide con el prototipo: filtros y acciones en
         # una fila. En portátiles se reparten sin comprimir ni cortar textos.
         self.layout_herramientas = QGridLayout()
         self.layout_herramientas.setHorizontalSpacing(8)
         self.layout_herramientas.setVerticalSpacing(6)
-        self.lbl_mostrar = QLabel("Mostrar:")
+        self.lbl_mostrar = QPushButton()
+        self.lbl_mostrar.setObjectName("botonIcono")
+        self.lbl_mostrar.setIcon(QIcon(ruta_recurso("filter.svg")))
+        self.lbl_mostrar.setFixedWidth(30)
+        self.lbl_mostrar.setToolTip("Filtrar las facturas mostradas")
         self.combo_filtro_estado = ComboSinRueda()
         self.combo_filtro_estado.addItems(
             ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
@@ -489,25 +489,30 @@ class VentanaPrincipal(QMainWindow):
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
         self.btn_siguiente = QPushButton("Siguiente incidencia")
         self.btn_siguiente.setObjectName("accionTabla")
+        self.btn_siguiente.setIcon(QIcon(ruta_recurso("arrow-right.svg")))
         self.btn_siguiente.clicked.connect(self._siguiente_incidencia)
         self.btn_revisada = QPushButton("Marcar revisada")
         self.btn_revisada.setObjectName("accionTabla")
+        self.btn_revisada.setIcon(QIcon(ruta_recurso("check.svg")))
         self.btn_revisada.setToolTip(
             "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
         self.btn_revisada.clicked.connect(self._marcar_revisada)
         self.btn_manual = QPushButton("Gestión manual")
         self.btn_manual.setObjectName("accionTabla")
+        self.btn_manual.setIcon(QIcon(ruta_recurso("edit.svg")))
         self.btn_manual.setToolTip(
             "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
         self.btn_manual.clicked.connect(self._alternar_gestion_manual)
 
         self.menu_acciones = QMenu(self)
         self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
+        self.btn_quitar_bloque.setIcon(QIcon(ruta_recurso("trash.svg")))
         self.btn_quitar_bloque.setToolTip(
             "Quita del lote el bloque elegido en el desplegable (p.ej. si se ha "
             "cargado un PDF que no tocaba).")
         self.btn_quitar_bloque.triggered.connect(self._quitar_bloque)
         self.btn_eliminar = self.menu_acciones.addAction("Eliminar selección")
+        self.btn_eliminar.setIcon(QIcon(ruta_recurso("trash.svg")))
         self.btn_eliminar.triggered.connect(self._eliminar_seleccion)
         self.menu_acciones.addSeparator()
         self.btn_deshacer_borrado = self.menu_acciones.addAction("Deshacer eliminación")
@@ -521,7 +526,7 @@ class VentanaPrincipal(QMainWindow):
         lt.addLayout(self.layout_herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
-        self.tabla.setHorizontalHeaderLabels(COLS)
+        self.tabla.setHorizontalHeaderLabels([cabecera.upper() for cabecera in COLS])
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -533,13 +538,38 @@ class VentanaPrincipal(QMainWindow):
 
         visor_card = QFrame()
         visor_card.setObjectName("tarjeta")
+        visor_card.setMinimumWidth(360)
         lv = QVBoxLayout(visor_card)
         lv.setContentsMargins(12, 12, 12, 12)
-        titulo_visor = QLabel("Documento original")
+        titulo_visor = QLabel("DOCUMENTO ORIGINAL")
         titulo_visor.setObjectName("tituloSeccion")
         self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_origen.setObjectName("textoSuave")
         self.lbl_origen.setWordWrap(True)
+        barra_documento = QHBoxLayout()
+        barra_documento.setSpacing(5)
+        barra_documento.addWidget(self.lbl_origen, 1)
+        self.lbl_pagina = QLabel("")
+        self.lbl_pagina.setObjectName("textoSuave")
+        barra_documento.addWidget(self.lbl_pagina)
+        self.btn_zoom_menos = QPushButton()
+        self.btn_zoom_menos.setObjectName("botonVisor")
+        self.btn_zoom_menos.setIcon(QIcon(ruta_recurso("zoom-out.svg")))
+        self.btn_zoom_menos.setToolTip("Alejar documento")
+        self.btn_zoom_menos.clicked.connect(lambda: self._cambiar_zoom_visor(-0.15))
+        barra_documento.addWidget(self.btn_zoom_menos)
+        self.btn_zoom_mas = QPushButton()
+        self.btn_zoom_mas.setObjectName("botonVisor")
+        self.btn_zoom_mas.setIcon(QIcon(ruta_recurso("zoom-in.svg")))
+        self.btn_zoom_mas.setToolTip("Acercar documento")
+        self.btn_zoom_mas.clicked.connect(lambda: self._cambiar_zoom_visor(0.15))
+        barra_documento.addWidget(self.btn_zoom_mas)
+        self.btn_opciones_visor = QPushButton("⋮")
+        self.btn_opciones_visor.setObjectName("botonVisor")
+        menu_visor = QMenu(self.btn_opciones_visor)
+        menu_visor.addAction("Abrir vista previa grande", self._abrir_vista_previa)
+        self.btn_opciones_visor.setMenu(menu_visor)
+        barra_documento.addWidget(self.btn_opciones_visor)
         self.lbl_img = VisorClicable(
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
         self.lbl_img.setObjectName("visor")
@@ -550,11 +580,18 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_img.setToolTip("Haga clic para abrir una vista previa grande.")
         self.lbl_img.clicked.connect(self._abrir_vista_previa)
         self._pixmap_documento = QPixmap()
+        self._zoom_visor = 1.0
+        self.visor_scroll = QScrollArea()
+        self.visor_scroll.setObjectName("visorScroll")
+        self.visor_scroll.setWidgetResizable(True)
+        self.visor_scroll.setWidget(self.lbl_img)
         lv.addWidget(titulo_visor)
-        lv.addWidget(self.lbl_origen)
-        lv.addWidget(self.lbl_img, 1)
+        lv.addLayout(barra_documento)
+        lv.addWidget(self.visor_scroll, 1)
         split.addWidget(visor_card)
-        split.setSizes([980, 380])
+        split.setStretchFactor(0, 7)
+        split.setStretchFactor(1, 3)
+        split.setSizes([980, 420])
         cuerpo.addWidget(split, 1)
 
         resumen_card = QFrame()
@@ -563,7 +600,7 @@ class VentanaPrincipal(QMainWindow):
         lr.setContentsMargins(12, 10, 12, 10)
         lr.setSpacing(2)
         fila_titulo = QHBoxLayout()
-        self.lbl_resumen_titulo = QLabel("Comprobación de totales por bloque")
+        self.lbl_resumen_titulo = QLabel("⌄  COMPROBACIÓN DE TOTALES")
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
         fila_titulo.addWidget(self.lbl_resumen_titulo)
         fila_titulo.addStretch(1)
@@ -580,7 +617,8 @@ class VentanaPrincipal(QMainWindow):
         lr.addLayout(fila_titulo)
         self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
                                           + len(COLS_RESUMEN_FIN))
-        self.tabla_resumen.setHorizontalHeaderLabels(_cabeceras_resumen([]))
+        self.tabla_resumen.setHorizontalHeaderLabels(
+            [cabecera.upper() for cabecera in _cabeceras_resumen([])])
         self.tabla_resumen.verticalHeader().setVisible(False)
         self.tabla_resumen.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_resumen.setSelectionMode(QTableWidget.NoSelection)
@@ -694,6 +732,13 @@ class VentanaPrincipal(QMainWindow):
                     ctypes.sizeof(valor))
                 if resultado == 0:
                     break
+            # La captura usa el mismo azul marino en título y barra de menús.
+            for atributo, color in ((35, 0x003A1A07), (36, 0x00FFFFFF),
+                                    (34, 0x003A1A07)):
+                valor_color = ctypes.c_uint(color)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    int(self.winId()), atributo, ctypes.byref(valor_color),
+                    ctypes.sizeof(valor_color))
         except (AttributeError, OSError):
             pass
 
@@ -769,14 +814,14 @@ class VentanaPrincipal(QMainWindow):
 
         self.btn_cargar = QPushButton("Abrir PDF")
         self.btn_cargar.setObjectName("accesoRapido")
-        self.btn_cargar.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        self.btn_cargar.setIcon(QIcon(ruta_recurso("open.svg")))
         self.btn_cargar.setToolTip("Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
         self.btn_cargar.clicked.connect(self._cargar)
         accesos.addWidget(self.btn_cargar)
 
         self.btn_escanear = QPushButton("Escanear")
         self.btn_escanear.setObjectName("accesoRapido")
-        self.btn_escanear.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.btn_escanear.setIcon(QIcon(ruta_recurso("scan.svg")))
         self.btn_escanear.setToolTip(
             "Escanea el taco del alimentador, guarda el PDF con el nombre del "
             "cliente y lo mete en el lote.  (Ctrl+E)")
@@ -785,14 +830,14 @@ class VentanaPrincipal(QMainWindow):
 
         self.btn_vaciar = QPushButton("Vaciar todo")
         self.btn_vaciar.setObjectName("accesoPeligro")
-        self.btn_vaciar.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.btn_vaciar.setIcon(QIcon(ruta_recurso("trash.svg")))
         self.btn_vaciar.setToolTip("Quita todas las facturas del lote actual.")
         self.btn_vaciar.clicked.connect(self._vaciar_todo)
         accesos.addWidget(self.btn_vaciar)
 
         self.btn_gastos = QPushButton("Exportar a Aplifisa")
         self.btn_gastos.setObjectName("accesoExito")
-        self.btn_gastos.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.btn_gastos.setIcon(QIcon(ruta_recurso("export.svg")))
         self.btn_gastos.setEnabled(False)
         self.btn_gastos.clicked.connect(self._exportar_todo)
         self.btn_ventas = self.btn_gastos
@@ -1721,7 +1766,7 @@ class VentanaPrincipal(QMainWindow):
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 item.setToolTip("Escaneo o PDF del que salió esta factura.")
             self.tabla.setItem(r, col, item)
-        self.tabla.setRowHeight(r, 34)
+        self.tabla.setRowHeight(r, 42)
         self.tabla.blockSignals(senales_bloqueadas)
 
     # ---------- edicion / validacion ----------
@@ -2196,7 +2241,8 @@ class VentanaPrincipal(QMainWindow):
         self._tipos_iva_resumen = tipos_iva
         cabeceras = _cabeceras_resumen(tipos_iva)
         self.tabla_resumen.setColumnCount(len(cabeceras))
-        self.tabla_resumen.setHorizontalHeaderLabels(cabeceras)
+        self.tabla_resumen.setHorizontalHeaderLabels(
+            [cabecera.upper() for cabecera in cabeceras])
         self.tabla_resumen.setRowCount(len(lineas))
         for r, (bloque, tipo, t, es_total) in enumerate(lineas):
             # En recargo el gasto va por el total factura: el desglose de IVA
@@ -2240,10 +2286,29 @@ class VentanaPrincipal(QMainWindow):
     # ---------- miniatura ----------
     def _limpiar_visor(self) -> None:
         self._pixmap_documento = QPixmap()
+        self._zoom_visor = 1.0
         self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
+        self.lbl_pagina.clear()
         self.lbl_img.clear()
+        self.lbl_img.setMinimumSize(330, 430)
         self.lbl_img.setText(
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
+
+    def _pintar_pixmap_visor(self) -> None:
+        if self._pixmap_documento.isNull():
+            return
+        viewport = self.visor_scroll.viewport().size()
+        ancho = max(330, int(viewport.width() * self._zoom_visor))
+        alto = max(430, int(viewport.height() * self._zoom_visor))
+        self.lbl_img.setMinimumSize(ancho, alto)
+        self.lbl_img.setPixmap(self._pixmap_documento.scaled(
+            ancho, alto, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _cambiar_zoom_visor(self, incremento: float) -> None:
+        if self._pixmap_documento.isNull():
+            return
+        self._zoom_visor = min(2.5, max(0.7, self._zoom_visor + incremento))
+        self._pintar_pixmap_visor()
 
     def _mostrar_miniatura(self):
         r = self.tabla.currentRow()
@@ -2254,12 +2319,12 @@ class VentanaPrincipal(QMainWindow):
         factura = self.filas[r]["factura"]
         origen = os.path.basename(factura.origen_imagen or "")
         self.lbl_origen.setText(origen or "Documento cargado")
+        self.lbl_pagina.setText("1 / 1")
         pix = QPixmap()
         pix.loadFromData(png)
         if not pix.isNull():
             self._pixmap_documento = pix
-            self.lbl_img.setPixmap(pix.scaled(
-                self.lbl_img.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self._pintar_pixmap_visor()
         else:
             self._pixmap_documento = QPixmap()
 
