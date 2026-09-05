@@ -44,8 +44,10 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 6. El lote en curso se conserva al cerrar el programa, incluidas las
    correcciones y los bloques acumulados. Solo **Vaciar todo** inicia una sesión
    nueva. Los CIF/NIF/DNI corregidos manualmente se recuerdan por cliente o
-   proveedor y prevalecen sobre futuras lecturas dudosas del OCR. Los tickets
-   de contado sin identificador siguen en amarillo para su revisión manual.
+   proveedor. Si una nueva lectura válida los contradice, no se cambia la
+   memoria automáticamente: una discrepancia queda amarilla y, si tres o más
+   facturas coinciden en el nuevo valor, el programa pide confirmación una sola
+   vez. Los tickets de contado sin identificador siguen en amarillo.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

@@ -55,13 +55,20 @@ def test_tambien_corrige_un_nif_mal_leido():
     assert not pr.aviso
 
 
-def test_el_nif_corregido_a_mano_pisa_incluso_un_ocr_valido_distinto():
+def test_un_nif_valido_distinto_no_se_pisa_sin_confirmacion():
     recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=True)
     pr = factura("ANTONIO Y CAÑIZARES SL", OTRO)
 
-    assert completar_desde_memoria([pr]) == 1
-    assert pr.facturas[0].nif == CANIZARES   # manda lo confirmado por la persona
-    assert not pr.aviso                      # no obliga a revisar lo mismo otra vez
+    assert completar_desde_memoria([pr]) == 0
+    assert pr.facturas[0].nif == OTRO
+    assert pr.conflicto_nif == {
+        "nombre": "ANTONIO Y CAÑIZARES SL",
+        "guardado": CANIZARES,
+        "leido": OTRO,
+        "mensaje": pr.aviso,
+        "consultado": False,
+    }
+    assert "Comprueba cuál es el bueno" in pr.aviso
 
 
 def test_un_nif_solo_aprendido_por_ocr_no_pisa_otro_valido():

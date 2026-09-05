@@ -349,6 +349,7 @@ class VentanaPrincipal(QMainWindow):
         self._cola_total = 0
         self._cola_completados = 0
         self._elemento_cola_actual = None
+        self._decisiones_conflicto_nif = {}
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -1439,6 +1440,11 @@ class VentanaPrincipal(QMainWindow):
         recordar_nombre(nif, nombre)
         self._cliente_nif, self._cliente_nombre = nif, nombre
         self._pintar_cliente()
+        # Primero se confirma quién es el cliente; solo después tiene sentido
+        # decidir si la otra parte contradice un NIF guardado de proveedor.
+        if self._analisis_del_lote().dudoso:
+            self._cambiar_cliente(automatico=True)
+        self._resolver_conflictos_nif()
         self._preparar_recargo()
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
@@ -1452,12 +1458,92 @@ class VentanaPrincipal(QMainWindow):
             self.tabla.selectRow(0)
         self._avisar_paginas_no_leidas()
         self._limpiar_parte_interna(elemento)
-        # Un taco del mismo proveedor al mismo cliente deja las dos partes
-        # empatadas: hay que preguntarlo o sale todo del reves.
-        if self._analisis_del_lote().dudoso:
-            self._cambiar_cliente(automatico=True)
         self._cola_completados += 1
         self._iniciar_siguiente_cola()
+
+    @staticmethod
+    def _quitar_aviso_conflicto(pr, mensaje: str) -> None:
+        """Retira únicamente el aviso que acaba de quedar resuelto."""
+        if pr.aviso == mensaje:
+            pr.aviso = ""
+        else:
+            pr.aviso = " ".join(pr.aviso.replace(mensaje, "").split())
+
+    def _decidir_conflicto_nif(self, nombre: str, guardado: str,
+                               leido: str, cantidad: int) -> str:
+        """Pregunta una vez cuando varias facturas contradicen la memoria."""
+        cuadro = QMessageBox(self)
+        cuadro.setWindowTitle("Confirmar CIF/NIF del proveedor")
+        cuadro.setIcon(QMessageBox.Warning)
+        cuadro.setText(
+            f"Para {nombre} está guardado <b>{guardado}</b>, pero "
+            f"{cantidad} facturas de este lote muestran <b>{leido}</b>.")
+        cuadro.setInformativeText(
+            "El programa no cambiará lo aprendido sin que usted lo confirme.")
+        mantener = cuadro.addButton("Mantener el guardado", QMessageBox.AcceptRole)
+        sustituir = cuadro.addButton("Usar el nuevo y recordarlo", QMessageBox.ActionRole)
+        revisar = cuadro.addButton("Dejar pendiente", QMessageBox.RejectRole)
+        cuadro.setDefaultButton(revisar)
+        cuadro.exec()
+        pulsado = cuadro.clickedButton()
+        if pulsado is mantener:
+            return "guardado"
+        if pulsado is sustituir:
+            return "nuevo"
+        return "revisar"
+
+    def _resolver_conflictos_nif(self) -> None:
+        """Contrasta la memoria con la evidencia acumulada de todo el lote."""
+        grupos = {}
+        for bloque in self._bloques:
+            for _imagen, pr in bloque.get("procesadas", []):
+                conflicto = getattr(pr, "conflicto_nif", None)
+                if not conflicto:
+                    continue
+                clave = (clave_proveedor(conflicto["nombre"]),
+                         conflicto["guardado"], conflicto["leido"])
+                grupos.setdefault(clave, []).append(pr)
+
+        for clave_grupo, procesadas in grupos.items():
+            _clave, guardado, leido = clave_grupo
+            decision = self._decisiones_conflicto_nif.get(clave_grupo)
+            if decision:
+                self._aplicar_decision_conflicto_nif(
+                    procesadas, decision, guardado, leido)
+                continue
+            # Una discrepancia aislada se ve en amarillo. Con evidencia
+            # repetida se pregunta una sola vez por todo el grupo.
+            if len(procesadas) < 3:
+                continue
+            if any(pr.conflicto_nif.get("consultado") for pr in procesadas):
+                for pr in procesadas:
+                    pr.conflicto_nif["consultado"] = True
+                continue
+            nombre = procesadas[0].conflicto_nif["nombre"]
+            decision = self._decidir_conflicto_nif(
+                nombre, guardado, leido, len(procesadas))
+            self._decisiones_conflicto_nif[clave_grupo] = decision
+            self._aplicar_decision_conflicto_nif(
+                procesadas, decision, guardado, leido)
+
+    def _aplicar_decision_conflicto_nif(self, procesadas, decision: str,
+                                        guardado: str, leido: str) -> None:
+        """Aplica la decisión a este grupo y a sus partes posteriores."""
+        nombre = procesadas[0].conflicto_nif["nombre"]
+        if decision == "guardado":
+            recordar_nif(nombre, guardado, manual=True)
+            for pr in procesadas:
+                for factura in pr.facturas:
+                    factura.nif = guardado
+        elif decision == "nuevo":
+            recordar_nif(nombre, leido, manual=True)
+        for pr in procesadas:
+            conflicto = pr.conflicto_nif
+            if decision != "revisar":
+                self._quitar_aviso_conflicto(pr, conflicto["mensaje"])
+                pr.conflicto_nif = None
+            else:
+                conflicto["consultado"] = True
 
     def _avisar_paginas_no_leidas(self):
         """Detalla las páginas agotadas o ilegibles sin detener la cola."""
@@ -1681,6 +1767,7 @@ class VentanaPrincipal(QMainWindow):
             return
         self._bloques = []
         self._cola = []
+        self._decisiones_conflicto_nif = {}
         self._ultimo_borrado = []
         self._rutas_actuales = []
         self._duplicados = {}

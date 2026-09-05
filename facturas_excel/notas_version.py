@@ -6,6 +6,20 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.7": """
+<h2>Novedades de la versión 1.13.7</h2>
+<ul>
+  <li><b>Aprendizaje con contraste:</b> una corrección guardada completa CIF o
+      NIF ausentes e inválidos, pero no silencia una lectura válida distinta.</li>
+  <li><b>Confirmación por mayoría:</b> si tres o más facturas del mismo
+      proveedor coinciden en otro identificador, se pregunta una sola vez si
+      mantener el anterior, recordar el nuevo o dejar el grupo pendiente.</li>
+  <li><b>Sin decisiones ocultas:</b> la memoria nunca se sustituye únicamente
+      porque la IA la contradiga; la decisión final siempre es del usuario.</li>
+  <li><b>Preparada para lotes grandes:</b> mantiene el procesamiento por turnos
+      y bloques de 25 páginas para acotar el trabajo simultáneo en memoria.</li>
+</ul>
+""",
     "1.13.6": """
 <h2>Novedades de la versión 1.13.6</h2>
 <ul>

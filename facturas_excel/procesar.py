@@ -165,6 +165,7 @@ class FacturaProcesada:
     aviso: str = ""           # rol emisor/destinatario dudoso, etc.
     sustituye_a: str = ""     # nº del documento al que sustituye, si lo dice
     sustituida_por: str = ""  # nº de la factura del lote que la sustituye a ella
+    conflicto_nif: dict | None = None  # guardado frente a otra lectura válida
 
 
 TOLERANCIA_CUADRE = 0.02  # euros de margen por redondeos
@@ -412,14 +413,17 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
         actual = normaliza_nif(f.nif)
         if validar_nif(actual):
             if actual != ficha["nif"]:
-                if not ficha.get("manual"):
-                    _anadir_aviso(pr, f"OJO: {f.nombre} tiene guardado el NIF "
-                                      f"{ficha['nif']} y esta factura trae {actual}. "
-                                      f"Comprueba cuál es el bueno.")
-                    continue
-                for linea in pr.facturas:
-                    linea.nif = ficha["nif"]
-                completados += 1
+                mensaje = (f"OJO: {f.nombre} tiene guardado el NIF "
+                           f"{ficha['nif']} y esta factura trae {actual}. "
+                           "Comprueba cuál es el bueno.")
+                pr.conflicto_nif = {
+                    "nombre": f.nombre or "Proveedor",
+                    "guardado": ficha["nif"],
+                    "leido": actual,
+                    "mensaje": mensaje,
+                    "consultado": False,
+                }
+                _anadir_aviso(pr, mensaje)
             continue
         leido = (f.nif or "").strip()   # antes de pisarlo: f ES pr.facturas[0]
         for linea in pr.facturas:

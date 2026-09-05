@@ -1,6 +1,6 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de septiembre de 2026 (versión 1.13.6). Apunta abajo lo que
+Actualizado el 5 de septiembre de 2026 (versión 1.13.7). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
@@ -35,11 +35,13 @@ partes salen las mismas veces y antes se elegía al azar. Ahora pregunta, se
 acuerda de tu respuesta para siempre, y el botón «Cambiar cliente…» rehace el
 lote sin volver a pagar la lectura.
 
-**CIF/NIF corregidos.** Lo que escribes a mano prevalece sobre el OCR incluso
-si este devuelve otro identificador que parece válido. Se recuerda el proveedor
-y también el cliente confirmado para no repetir la misma corrección. Los
-tickets de contado sin DNI permanecen en amarillo para que los veas y los
-marques como revisados, sin inventarles ninguna regla.
+**CIF/NIF corregidos.** Lo que escribes a mano completa automáticamente futuras
+lecturas ausentes o inválidas. Si el OCR trae otro identificador válido, no se
+cambia nada a escondidas: queda amarillo y, cuando tres o más facturas coinciden
+en el nuevo, se pregunta una vez si mantener el guardado, sustituirlo o dejar el
+grupo pendiente. Se recuerda también el cliente confirmado. Los tickets de
+contado sin DNI permanecen en amarillo para que los veas y los marques como
+revisados, sin inventarles ninguna regla.
 
 **Las cuentas.** El programa lleva dentro tu catálogo de conceptos de Aplifisa
 (gastos e ingresos, con sus subclaves) y Gemini elige de esa lista, no de una

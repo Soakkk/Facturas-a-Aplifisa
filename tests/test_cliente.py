@@ -70,6 +70,84 @@ def test_el_nombre_confirmado_corrige_un_nif_de_cliente_mal_leido():
     assert {c.nif for c in analisis.candidatos} == {CLIENTE[0], GASOLINERA[0]}
 
 
+@pytest.mark.parametrize(
+    "decision, esperado",
+    [("guardado", GASOLINERA[0]), ("nuevo", "B73549388")],
+)
+def test_tres_facturas_con_otro_nif_piden_una_decision_para_todo_el_grupo(
+        monkeypatch, decision, esperado):
+    procesar.recordar_nif(GASOLINERA[1], GASOLINERA[0], manual=True)
+    procesadas = []
+    for numero in range(3):
+        datos = factura_gasolinera(f"FA-{numero}")
+        datos["emisor_nif"] = "B73549388"
+        pr = procesar.construir(datos, CLIENTE[0], CLIENTE[1])
+        procesar.completar_desde_memoria([pr])
+        procesadas.append((b"", pr))
+
+    ventana = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    ventana._bloques = [{"procesadas": procesadas}]
+    decisiones = []
+    monkeypatch.setattr(
+        ventana, "_decidir_conflicto_nif",
+        lambda *args: decisiones.append(args) or decision)
+
+    ventana._resolver_conflictos_nif()
+
+    assert len(decisiones) == 1
+    assert decisiones[0][-1] == 3
+    assert all(pr.facturas[0].nif == esperado for _, pr in procesadas)
+    assert all(not pr.aviso and pr.conflicto_nif is None
+               for _, pr in procesadas)
+    ficha = proveedores.leer(procesar.clave_proveedor(GASOLINERA[1]))
+    assert ficha["nif"] == esperado
+
+
+def test_dos_facturas_con_conflicto_quedan_amarillas_sin_interrumpir(monkeypatch):
+    procesar.recordar_nif(GASOLINERA[1], GASOLINERA[0], manual=True)
+    procesadas = []
+    for numero in range(2):
+        datos = factura_gasolinera(f"FA-{numero}")
+        datos["emisor_nif"] = "B73549388"
+        pr = procesar.construir(datos, CLIENTE[0], CLIENTE[1])
+        procesar.completar_desde_memoria([pr])
+        procesadas.append((b"", pr))
+
+    ventana = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    ventana._bloques = [{"procesadas": procesadas}]
+    monkeypatch.setattr(
+        ventana, "_decidir_conflicto_nif",
+        lambda *args: pytest.fail("No debe preguntar con solo dos facturas"))
+
+    ventana._resolver_conflictos_nif()
+
+    assert all(pr.aviso and pr.conflicto_nif for _, pr in procesadas)
+
+
+def test_dejar_pendiente_no_vuelve_a_preguntar_en_el_mismo_lote(monkeypatch):
+    procesar.recordar_nif(GASOLINERA[1], GASOLINERA[0], manual=True)
+    procesadas = []
+    for numero in range(3):
+        datos = factura_gasolinera(f"FA-{numero}")
+        datos["emisor_nif"] = "B73549388"
+        pr = procesar.construir(datos, CLIENTE[0], CLIENTE[1])
+        procesar.completar_desde_memoria([pr])
+        procesadas.append((b"", pr))
+
+    ventana = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    ventana._bloques = [{"procesadas": procesadas}]
+    preguntas = []
+    monkeypatch.setattr(
+        ventana, "_decidir_conflicto_nif",
+        lambda *args: preguntas.append(args) or "revisar")
+
+    ventana._resolver_conflictos_nif()
+    ventana._resolver_conflictos_nif()
+
+    assert len(preguntas) == 1
+    assert all(pr.conflicto_nif["consultado"] for _, pr in procesadas)
+
+
 def test_un_proveedor_conocido_no_puede_ser_el_cliente():
     procesar.recordar_nif(GASOLINERA[1], GASOLINERA[0], manual=True)
     analisis = procesar.analizar_cliente(
