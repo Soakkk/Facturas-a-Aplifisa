@@ -49,7 +49,9 @@ QMenu {{ background: {CARD}; border: 1px solid {BORDER}; padding: 4px; }}
 QMenu::item {{ padding: 7px 24px 7px 10px; border-radius: 3px; }}
 QMenu::item:selected {{ background: {ACCENT_FAINT}; color: {ACCENT}; }}
 
-QWidget#barraRapida {{ background: {BAR}; }}
+QWidget#barraRapida, QFrame#filaBarraEstrecha {{
+    background: {BAR}; border: none; border-bottom: 1px solid #26334A;
+}}
 QWidget#barraRapida QPushButton {{
     min-height: 25px; max-height: 25px; padding: 2px 10px;
     border-radius: 3px; font-family: {FUENTE_UI}; font-size: 12px;
@@ -115,7 +117,9 @@ QPushButton#exito:hover {{ background: #185634; color: white; }}
 QPushButton#peligro {{ color: {DANGER}; }}
 QPushButton#peligro:hover {{ border-color: {DANGER}; color: {DANGER}; }}
 QPushButton#compacto {{ padding: 5px 11px; }}
-QPushButton#menuAcciones {{ padding-right: 10px; }}
+QPushButton#accionTabla, QPushButton#menuAcciones {{
+    padding: 6px 10px; font-family: {FUENTE_UI}; font-size: 12px;
+}}
 
 QLineEdit, QComboBox {{
     background: {CARD}; border: 1px solid {BORDER}; border-radius: 3px;

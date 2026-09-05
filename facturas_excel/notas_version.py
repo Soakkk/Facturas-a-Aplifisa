@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.3": """
+<h2>Novedades de la versión 1.13.3</h2>
+<ul>
+  <li><b>Cabecera como en el nuevo diseño:</b> los menús quedan a la izquierda
+      y Abrir PDF, Escanear, Vaciar todo y Exportar a Aplifisa a la derecha.</li>
+  <li><b>Barra de título oscura:</b> la ventana se integra con la cabecera azul
+      del programa en Windows.</li>
+  <li><b>Sin botones recortados:</b> al reducir la ventana, los accesos rápidos
+      y las acciones de revisión se reorganizan en filas legibles.</li>
+  <li><b>Menú más limpio:</b> «Más acciones» muestra Quitar bloque y Eliminar
+      selección; Deshacer aparece solo cuando existe algo que recuperar.</li>
+</ul>
+""",
     "1.13.2": """
 <h2>Novedades de la versión 1.13.2</h2>
 <ul>

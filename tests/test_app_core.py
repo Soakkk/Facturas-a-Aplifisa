@@ -158,9 +158,13 @@ def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
 
 
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
+    from PySide6.QtCore import Qt
+
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     assert v.minimumWidth() == 1024
-    assert v.barra_rapida.parentWidget() is not None
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+    assert v.layout_herramientas.getItemPosition(
+        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
     assert [v.btn_cargar.text(), v.btn_escanear.text(), v.btn_vaciar.text(),
             v.btn_gastos.text()] == [
         "Abrir PDF", "Escanear", "Vaciar todo", "Exportar a Aplifisa"]
@@ -168,3 +172,21 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert "Vaciar todo" not in acciones
     assert "Quitar bloque" in acciones
     assert "Eliminar selección" in acciones
+
+    v.show()
+    _app.processEvents()
+    v.resize(1024, 640)
+    _app.processEvents()
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
+    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
+    assert v.layout_herramientas.getItemPosition(
+        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 1
+    assert v.layout_herramientas.getItemPosition(
+        v.layout_herramientas.indexOf(v.btn_manual))[0] == 2
+    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_manual,
+                  v.btn_mas_acciones):
+        assert boton.width() >= boton.sizeHint().width()
+
+    v.resize(1420, 820)
+    _app.processEvents()
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida

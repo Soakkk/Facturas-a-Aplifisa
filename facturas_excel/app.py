@@ -18,7 +18,8 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QProgressBar,
+    QGridLayout, QHeaderView, QInputDialog, QLabel, QMainWindow, QMenu,
+    QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSplitter, QStyle, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -365,7 +366,12 @@ class VentanaPrincipal(QMainWindow):
         raiz = QVBoxLayout(central)
         raiz.setContentsMargins(0, 0, 0, 0)
         raiz.setSpacing(0)
-        raiz.addWidget(self.barra_rapida)
+        self.fila_barra_estrecha = QFrame()
+        self.fila_barra_estrecha.setObjectName("filaBarraEstrecha")
+        self.layout_barra_estrecha = QHBoxLayout(self.fila_barra_estrecha)
+        self.layout_barra_estrecha.setContentsMargins(0, 0, 0, 0)
+        self.layout_barra_estrecha.addWidget(self.barra_rapida)
+        raiz.addWidget(self.fila_barra_estrecha)
 
         # Sin banner de cabecera: la marca y la version ya salen en el titulo de
         # la ventana, y el espacio se aprovecha para la tabla.
@@ -465,49 +471,35 @@ class VentanaPrincipal(QMainWindow):
         lt.addWidget(titulo_tabla)
         lt.addWidget(ayuda_tabla)
 
-        # Dos filas cortas evitan que Qt aplaste los textos cuando la ventana
-        # se usa a 1024/1366 px o con escalado de Windows.
-        barra_herramientas = QVBoxLayout()
-        barra_herramientas.setSpacing(6)
-        filtros = QHBoxLayout()
-        filtros.setSpacing(8)
-        filtros.addWidget(QLabel("Mostrar:"))
+        # En ventana ancha coincide con el prototipo: filtros y acciones en
+        # una fila. En portátiles se reparten sin comprimir ni cortar textos.
+        self.layout_herramientas = QGridLayout()
+        self.layout_herramientas.setHorizontalSpacing(8)
+        self.layout_herramientas.setVerticalSpacing(6)
+        self.lbl_mostrar = QLabel("Mostrar:")
         self.combo_filtro_estado = ComboSinRueda()
         self.combo_filtro_estado.addItems(
             ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
-        filtros.addWidget(self.combo_filtro_estado)
         self.combo_filtro_bloque = ComboSinRueda()
         self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
         self.combo_filtro_bloque.setToolTip(
             "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
-        filtros.addWidget(self.combo_filtro_bloque)
-        filtros.addStretch(1)
-        barra_herramientas.addLayout(filtros)
-
-        acciones_principales = QHBoxLayout()
-        acciones_principales.setSpacing(8)
         self.btn_siguiente = QPushButton("Siguiente incidencia")
+        self.btn_siguiente.setObjectName("accionTabla")
         self.btn_siguiente.clicked.connect(self._siguiente_incidencia)
-        acciones_principales.addWidget(self.btn_siguiente)
         self.btn_revisada = QPushButton("Marcar revisada")
+        self.btn_revisada.setObjectName("accionTabla")
         self.btn_revisada.setToolTip(
             "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
         self.btn_revisada.clicked.connect(self._marcar_revisada)
-        acciones_principales.addWidget(self.btn_revisada)
-        acciones_principales.addStretch(1)
-        barra_herramientas.addLayout(acciones_principales)
-
-        acciones_secundarias = QHBoxLayout()
-        acciones_secundarias.setSpacing(8)
         self.btn_manual = QPushButton("Gestión manual")
+        self.btn_manual.setObjectName("accionTabla")
         self.btn_manual.setToolTip(
             "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
         self.btn_manual.clicked.connect(self._alternar_gestion_manual)
-        acciones_secundarias.addWidget(self.btn_manual)
-        acciones_secundarias.addStretch(1)
 
         self.menu_acciones = QMenu(self)
         self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
@@ -520,13 +512,13 @@ class VentanaPrincipal(QMainWindow):
         self.menu_acciones.addSeparator()
         self.btn_deshacer_borrado = self.menu_acciones.addAction("Deshacer eliminación")
         self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_deshacer_borrado.setVisible(False)
         self.btn_deshacer_borrado.triggered.connect(self._deshacer_borrado)
         self.btn_mas_acciones = QPushButton("Más acciones")
         self.btn_mas_acciones.setObjectName("menuAcciones")
         self.btn_mas_acciones.setMenu(self.menu_acciones)
-        acciones_secundarias.addWidget(self.btn_mas_acciones)
-        barra_herramientas.addLayout(acciones_secundarias)
-        lt.addLayout(barra_herramientas)
+        self._distribuir_herramientas(self.width())
+        lt.addLayout(self.layout_herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setHorizontalHeaderLabels(COLS)
@@ -620,6 +612,90 @@ class VentanaPrincipal(QMainWindow):
         cont.setLayout(cuerpo)
         raiz.addWidget(cont, 1)
         self.setCentralWidget(central)
+        self._actualizar_barra_responsiva(self.width())
+
+    def _distribuir_herramientas(self, ancho: int):
+        """Una fila como el diseño; dos si falta ancho para leer los textos."""
+        if not hasattr(self, "layout_herramientas"):
+            return
+        elementos = (
+            self.lbl_mostrar, self.combo_filtro_estado,
+            self.combo_filtro_bloque, self.btn_siguiente,
+            self.btn_revisada, self.btn_manual, self.btn_mas_acciones,
+        )
+        for elemento in elementos:
+            self.layout_herramientas.removeWidget(elemento)
+        for columna in range(8):
+            self.layout_herramientas.setColumnStretch(columna, 0)
+
+        if ancho >= 1200:
+            posiciones = (
+                (self.lbl_mostrar, 0, 0),
+                (self.combo_filtro_estado, 0, 1),
+                (self.combo_filtro_bloque, 0, 2),
+                (self.btn_siguiente, 0, 4),
+                (self.btn_revisada, 0, 5),
+                (self.btn_manual, 0, 6),
+                (self.btn_mas_acciones, 0, 7),
+            )
+            self.layout_herramientas.setColumnStretch(3, 1)
+        else:
+            posiciones = (
+                (self.lbl_mostrar, 0, 0),
+                (self.combo_filtro_estado, 0, 1),
+                (self.combo_filtro_bloque, 0, 2, 2),
+                (self.btn_siguiente, 1, 0, 2),
+                (self.btn_revisada, 1, 2, 2),
+                (self.btn_manual, 2, 0, 2),
+                (self.btn_mas_acciones, 2, 2, 2),
+            )
+            self.layout_herramientas.setColumnStretch(0, 1)
+            self.layout_herramientas.setColumnStretch(1, 1)
+            self.layout_herramientas.setColumnStretch(2, 1)
+            self.layout_herramientas.setColumnStretch(3, 1)
+        for posicion in posiciones:
+            widget, fila, columna = posicion[:3]
+            expansion = posicion[3] if len(posicion) == 4 else 1
+            self.layout_herramientas.addWidget(
+                widget, fila, columna, 1, expansion)
+
+    def _actualizar_barra_responsiva(self, ancho: int):
+        """Comparte fila con los menús salvo cuando hacerlo recortaría texto."""
+        if not hasattr(self, "fila_barra_estrecha"):
+            return
+        debe_ir_en_menu = ancho >= 1200
+        esta_en_menu = getattr(self, "_barra_en_menu", False)
+        if debe_ir_en_menu == esta_en_menu:
+            self.fila_barra_estrecha.setVisible(not debe_ir_en_menu)
+            return
+        if debe_ir_en_menu:
+            self.layout_barra_estrecha.removeWidget(self.barra_rapida)
+            self.fila_barra_estrecha.hide()
+            self.menuBar().setCornerWidget(self.barra_rapida, Qt.TopRightCorner)
+        else:
+            self.barra_rapida.setParent(self.fila_barra_estrecha)
+            self.menuBar().setCornerWidget(None, Qt.TopRightCorner)
+            self.layout_barra_estrecha.addWidget(self.barra_rapida)
+            self.fila_barra_estrecha.show()
+        self._barra_en_menu = debe_ir_en_menu
+
+    def showEvent(self, evento):
+        super().showEvent(evento)
+        if sys.platform != "win32" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return
+        # Qt no pinta la barra nativa con QSS. Esta bandera documentada por DWM
+        # hace que Windows use título y controles oscuros como en el prototipo.
+        try:
+            import ctypes
+            valor = ctypes.c_int(1)
+            for atributo in (20, 19):  # Windows 10 reciente / compilaciones antiguas
+                resultado = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    int(self.winId()), atributo, ctypes.byref(valor),
+                    ctypes.sizeof(valor))
+                if resultado == 0:
+                    break
+        except (AttributeError, OSError):
+            pass
 
     def esperar_hilos(self):
         """Espera a que terminen los hilos vivos (evita abortar al salir)."""
@@ -1483,6 +1559,7 @@ class VentanaPrincipal(QMainWindow):
         self._bloques = [b for b in self._bloques if b["nombre"] != nombre]
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_deshacer_borrado.setVisible(False)
         self.combo_filtro_bloque.setCurrentIndex(0)
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
@@ -1513,6 +1590,7 @@ class VentanaPrincipal(QMainWindow):
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
         self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_deshacer_borrado.setVisible(False)
         self.btn_cliente.setEnabled(False)
         self._hay_recargo = False
         self.fila_recargo.setVisible(False)
@@ -1906,6 +1984,7 @@ class VentanaPrincipal(QMainWindow):
             self.filas.pop(fila)
         self._ultimo_borrado.reverse()
         self.btn_deshacer_borrado.setEnabled(True)
+        self.btn_deshacer_borrado.setVisible(True)
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(
@@ -1925,6 +2004,7 @@ class VentanaPrincipal(QMainWindow):
         cantidad = len(self._ultimo_borrado)
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
+        self.btn_deshacer_borrado.setVisible(False)
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
@@ -2208,6 +2288,9 @@ class VentanaPrincipal(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        ancho = event.size().width()
+        self._actualizar_barra_responsiva(ancho)
+        self._distribuir_herramientas(ancho)
         if self.tabla.currentRow() >= 0:
             self._mostrar_miniatura()
 
