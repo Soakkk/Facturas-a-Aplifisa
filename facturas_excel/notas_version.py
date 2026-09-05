@@ -6,6 +6,20 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.5": """
+<h2>Novedades de la versión 1.13.5</h2>
+<ul>
+  <li><b>Archivo documental automático:</b> los PDF quedan ordenados en el
+      Escritorio por cliente, ejercicio y tipo, en Gastos o Ingresos.</li>
+  <li><b>También para escaneos de HP:</b> al cargar un PDF externo se guarda
+      una copia documental completa sin mover el archivo original elegido.</li>
+  <li><b>Lotes grandes sin archivos sobrantes:</b> las divisiones internas de
+      25 páginas se eliminan después de procesarlas y no llegan a la carpeta
+      del cliente.</li>
+  <li><b>Una sola salida para Aplifisa:</b> se crea únicamente el Excel
+      consolidado, junto a los PDF del ejercicio; ya no se generan parciales.</li>
+</ul>
+""",
     "1.13.4": """
 <h2>Novedades de la versión 1.13.4</h2>
 <ul>

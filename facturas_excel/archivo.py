@@ -80,6 +80,59 @@ def mover_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
     return destino
 
 
+def carpeta_tipo_cliente(cliente: str, ejercicio: int, tipo: str,
+                         carpeta_base: Optional[str] = None) -> str:
+    """Carpeta documental estable: Cliente/Ejercicio/Gastos|Ingresos."""
+    base = carpeta_base or carpeta_escaneos()
+    cliente_limpio = sanear(cliente or "Cliente sin identificar")
+    carpeta_tipo = ("Ingresos" if str(tipo).lower().startswith(("i", "v"))
+                    else "Gastos")
+    carpeta_ejercicio = os.path.join(base, cliente_limpio, str(int(ejercicio)))
+    # Cada ejercicio queda preparado para reunir toda la documentación.
+    for nombre in ("Ingresos", "Gastos"):
+        os.makedirs(os.path.join(carpeta_ejercicio, nombre), exist_ok=True)
+    return os.path.join(carpeta_ejercicio, carpeta_tipo)
+
+
+def copiar_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
+                     ejercicio: Optional[int] = None) -> str:
+    """Copia un PDF externo al archivo documental sin tocar el original.
+
+    Es el camino de los PDF creados con HP u otro programa. A diferencia de un
+    escaneo provisional de la propia app, el archivo elegido por el usuario no
+    se mueve ni se renombra en su ubicación de origen.
+    """
+    if not cliente or not os.path.isfile(ruta) or not ruta.lower().endswith(".pdf"):
+        return ruta
+    ejercicio = int(ejercicio or _fecha_de_archivo(ruta).year)
+    carpeta = carpeta_tipo_cliente(cliente, ejercicio, tipo)
+    if (os.path.normcase(os.path.dirname(os.path.abspath(ruta)))
+            == os.path.normcase(os.path.abspath(carpeta))):
+        return ruta
+    base = sanear(os.path.splitext(os.path.basename(ruta))[0])
+    destino = nombre_libre(carpeta, base)
+    try:
+        shutil.copy2(ruta, destino)
+        return destino
+    except OSError:
+        return ruta
+
+
+def ruta_excel_consolidado(cliente: str, ejercicio: int, tipo: str,
+                           carpeta_base: Optional[str] = None) -> str:
+    """Nombre libre para el Excel final, junto a sus PDF originales."""
+    carpeta = carpeta_tipo_cliente(cliente, ejercicio, tipo, carpeta_base)
+    cliente_limpio = sanear(cliente or "Cliente")
+    tipo_limpio = "ingresos" if str(tipo).lower().startswith(("i", "v")) else "gastos"
+    base = f"{cliente_limpio}_{int(ejercicio)}_{tipo_limpio}_consolidado"
+    ruta = os.path.join(carpeta, base + ".xlsx")
+    numero = 2
+    while os.path.exists(ruta):
+        ruta = os.path.join(carpeta, f"{base}_{numero}.xlsx")
+        numero += 1
+    return ruta
+
+
 def _base_de(ruta: str) -> str:
     """Carpeta de escaneos a la que pertenece un PDF.
 

@@ -11,8 +11,9 @@ import argparse
 import os
 import sys
 
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import replace
+from datetime import date
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
@@ -72,7 +73,7 @@ from facturas_excel.registro import (
 from facturas_excel.resumen import (
     eur, porcentaje_iva, resumir, resumir_por_bloque,
 )
-from facturas_excel.rutas import ruta_config
+from facturas_excel.rutas import dir_datos, ruta_config
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
     fecha_de, validar, validar_nif,
@@ -789,7 +790,7 @@ class VentanaPrincipal(QMainWindow):
         config = self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
-        config.addAction("Carpeta donde se guardan los escaneos…",
+        config.addAction("Carpeta de documentación digitalizada…",
                          self._configurar_carpeta_escaneos)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
@@ -1133,10 +1134,11 @@ class VentanaPrincipal(QMainWindow):
     def _configurar_carpeta_escaneos(self):
         actual = ajustes.leer("carpeta_escaneos", escaner.carpeta_por_defecto())
         carpeta = QFileDialog.getExistingDirectory(
-            self, "Carpeta donde guardar los PDF escaneados", actual)
+            self, "Carpeta de documentación digitalizada", actual)
         if carpeta:
             ajustes.guardar("carpeta_escaneos", carpeta)
-            self.lbl_estado.setText(f"Los escaneos se guardarán en {carpeta}")
+            self.lbl_estado.setText(
+                f"Los PDF originales y Excel consolidados se guardarán en {carpeta}")
 
     def _configurar_calidad(self):
         """Con qué detalle se le manda cada factura a Gemini: es lo único que
@@ -1275,13 +1277,18 @@ class VentanaPrincipal(QMainWindow):
                 if ruta.lower().endswith(".pdf"):
                     partes = dividir_pdf(ruta, PAGINAS_POR_BLOQUE)
                     for numero, parte in enumerate(partes, 1):
+                        mover_original = bool(desde_escaner or sin_identificar)
                         elementos.append({
                             "rutas": [parte],
                             "original": ruta,
                             "etiqueta": os.path.splitext(os.path.basename(parte))[0],
                             "parte": numero,
                             "partes": len(partes),
-                            "archivar": bool(desde_escaner or sin_identificar),
+                            # Todo PDF termina en el archivo documental. Los
+                            # externos se COPIAN; solo se mueve el provisional
+                            # creado por el escáner de la propia aplicación.
+                            "archivar": True,
+                            "mover_original": mover_original,
                             "desde_escaner": bool(desde_escaner),
                             "sin_identificar": bool(sin_identificar),
                             "tipo_escaneo": self._tipo_escaneo,
@@ -1291,7 +1298,8 @@ class VentanaPrincipal(QMainWindow):
                         "rutas": [ruta], "original": ruta,
                         "etiqueta": os.path.splitext(os.path.basename(ruta))[0],
                         "parte": 1, "partes": 1,
-                        "archivar": bool(desde_escaner or sin_identificar),
+                        "archivar": False,
+                        "mover_original": False,
                         "desde_escaner": bool(desde_escaner),
                         "sin_identificar": bool(sin_identificar),
                         "tipo_escaneo": self._tipo_escaneo,
@@ -1359,6 +1367,7 @@ class VentanaPrincipal(QMainWindow):
             f"Cola {bloque}/{self._cola_total} · páginas {actual}/{total}")
 
     def _on_fallo(self, msg):
+        self._limpiar_parte_interna(self._elemento_cola_actual or {})
         self._cola_completados += 1
         self._escaneo_reciente = False
         QMessageBox.critical(
@@ -1374,12 +1383,16 @@ class VentanaPrincipal(QMainWindow):
         if elemento.get("archivar"):
             original_anterior = elemento.get("original", "")
             self._rutas_actuales = [original_anterior]
-            self._recolocar_escaneo(nombre, procesadas)
+            self._recolocar_escaneo(
+                nombre, procesadas,
+                copiar=not elemento.get("mover_original", False))
             original_nuevo = self._rutas_actuales[0]
+            elemento["original"] = original_nuevo
             for pendiente in self._cola:
                 if pendiente.get("original") == original_anterior:
                     pendiente["original"] = original_nuevo
                     pendiente["archivar"] = False
+                    pendiente["mover_original"] = False
                     pendiente["desde_escaner"] = False
                     pendiente["sin_identificar"] = False
         elif not elemento:
@@ -1388,6 +1401,22 @@ class VentanaPrincipal(QMainWindow):
             self._recolocar_escaneo(nombre, procesadas)
         if elemento:
             self._rutas_actuales = rutas_parte
+            # Una parte interna no es documentación. Las filas y los datos
+            # crudos deben apuntar siempre al PDF completo archivado y conservar
+            # el número de página global para poder borrar la parte temporal.
+            origen_documento = elemento.get("original", "")
+            desplazamiento = ((elemento.get("parte", 1) - 1)
+                              * PAGINAS_POR_BLOQUE)
+            if origen_documento:
+                for _, pr in procesadas:
+                    pr.origen = origen_documento
+                    pr.pagina += desplazamiento
+                    for factura in pr.facturas:
+                        factura.origen_imagen = origen_documento
+                crudos = [
+                    (imagen, origen_documento, pagina + desplazamiento, datos)
+                    for imagen, _origen, pagina, datos in (crudos or [])
+                ]
         # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
         # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
         self._bloques.append({
@@ -1422,6 +1451,7 @@ class VentanaPrincipal(QMainWindow):
         if hay_datos and len(self._bloques) == 1:
             self.tabla.selectRow(0)
         self._avisar_paginas_no_leidas()
+        self._limpiar_parte_interna(elemento)
         # Un taco del mismo proveedor al mismo cliente deja las dos partes
         # empatadas: hay que preguntarlo o sale todo del reves.
         if self._analisis_del_lote().dudoso:
@@ -1446,15 +1476,34 @@ class VentanaPrincipal(QMainWindow):
             f"en la tabla:{salto}{salto}{detalle}{salto}{salto}"
             "La cola continúa. Puede volver a cargar solo esas páginas.")
 
-    def _recolocar_escaneo(self, cliente, procesadas):
-        """Archiva el PDF recién escaneado por cliente, ejercicio y tipo.
+    def _limpiar_parte_interna(self, elemento: dict) -> None:
+        """Borra una parte ya procesada, nunca el PDF original del usuario."""
+        if int(elemento.get("partes", 1) or 1) <= 1:
+            return
+        raiz = os.path.abspath(os.path.join(dir_datos(), "cola_pdf"))
+        for ruta in elemento.get("rutas", []):
+            ruta_abs = os.path.abspath(ruta)
+            if not os.path.normcase(ruta_abs).startswith(
+                    os.path.normcase(raiz) + os.sep):
+                continue
+            try:
+                os.remove(ruta_abs)
+                carpeta = os.path.dirname(ruta_abs)
+                if os.path.isdir(carpeta) and not os.listdir(carpeta):
+                    os.rmdir(carpeta)
+            except OSError:
+                pass
+
+    def _recolocar_escaneo(self, cliente, procesadas, copiar: bool = False):
+        """Archiva el PDF original por cliente, ejercicio y tipo.
 
         Al escanear no hace falta decir de quién son las facturas: el programa
         lo averigua por el NIF que se repite y coloca el archivo despues. Si no
         lo averigua, el PDF se queda en «Sin identificar» y se puede colocar a
         mano desde «Escaneos guardados».
         """
-        if (not self._escaneo_reciente and not self._escaneo_sin_identificar) \
+        if (not copiar and not self._escaneo_reciente
+                and not self._escaneo_sin_identificar) \
                 or len(self._rutas_actuales) != 1:
             return
         ruta = self._rutas_actuales[0]
@@ -1475,8 +1524,12 @@ class VentanaPrincipal(QMainWindow):
                      f"{ejercicio}, que es el más frecuente. Revise su ubicación.")
             for _, pr in procesadas:
                 pr.aviso = f"{pr.aviso} {aviso}".strip()
-        nueva = archivo.mover_a_cliente(
-            ruta, cliente, tipo, ejercicio=ejercicio)
+        if copiar:
+            nueva = archivo.copiar_a_cliente(
+                ruta, cliente, tipo, ejercicio=ejercicio)
+        else:
+            nueva = archivo.mover_a_cliente(
+                ruta, cliente, tipo, ejercicio=ejercicio)
         if nueva == ruta:
             return
         self._escaneo_sin_identificar = False
@@ -1486,7 +1539,7 @@ class VentanaPrincipal(QMainWindow):
             for f in pr.facturas:
                 f.origen_imagen = nueva
         self.lbl_estado.setText(
-            f"Escaneo archivado en {cliente} / {ejercicio or 'ejercicio actual'} / "
+            f"Documento archivado en {cliente} / {ejercicio or 'ejercicio actual'} / "
             f"{'Ingresos' if tipo == 'ingresos' else 'Gastos'}")
 
     def _analisis_del_lote(self):
@@ -2402,20 +2455,16 @@ class VentanaPrincipal(QMainWindow):
                         if b.get("cliente")), "") or "Cliente")
         return escaner.sanear(nombre)
 
-    def _exportables_por_bloque(self):
-        """Misma selección validada, conservando el bloque/parte de origen."""
-        salida = defaultdict(lambda: {"gasto": [], "venta": []})
-        for fila in range(self.tabla.rowCount()):
-            factura = self._leer_fila(fila)
-            registro = self.filas[fila]
-            if (fila in self._duplicados or factura.tratamiento_manual
-                    or registro.get("estado") == ERROR
-                    or (registro.get("estado") == REVISAR
-                        and not factura.revision_confirmada)):
-                continue
-            salida[registro.get("bloque", "Bloque")][self._tipo_fila(fila)].append(
-                factura)
-        return salida
+    @staticmethod
+    def _ejercicio_exportacion(facturas) -> int:
+        """Ejercicio predominante del lote para ordenar su documentación."""
+        ejercicios = []
+        for factura in facturas:
+            fecha = fecha_de(factura.fecha)
+            if fecha:
+                ejercicios.append(fecha.year)
+        return (Counter(ejercicios).most_common(1)[0][0]
+                if ejercicios else date.today().year)
 
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
@@ -2462,25 +2511,19 @@ class VentanaPrincipal(QMainWindow):
         orden = dialogo_orden.orden()
         for tipo in por_tipo:
             por_tipo[tipo] = ordenar_para_exportar(por_tipo[tipo], orden)
-        por_bloque = self._exportables_por_bloque()
-        for tipos in por_bloque.values():
-            for tipo in tipos:
-                tipos[tipo] = ordenar_para_exportar(tipos[tipo], orden)
-
-        carpeta = QFileDialog.getExistingDirectory(
-            self, "Carpeta para los Excel de Aplifisa", ESCRITORIO)
-        if not carpeta:
-            return
         problemas_export = []      # lo que no cuadre entre archivo y pantalla
-        resumen_archivos = []      # (archivo, lineas, totales) para enseñarlo
+        resumen_archivos = []      # (ruta, lineas, totales) para enseñarlo
         cliente_archivo = self._nombre_cliente_archivo()
-        for tipo, nombre, xml in (
-            ("gasto", f"{cliente_archivo}_gastos.xlsx", "gastos.xml"),
-            ("venta", f"{cliente_archivo}_ingresos.xlsx", "ingresos.xml"),
+        for tipo, xml in (
+            ("gasto", "gastos.xml"),
+            ("venta", "ingresos.xml"),
         ):
             if not por_tipo[tipo]:
                 continue
-            ruta = os.path.join(carpeta, nombre)
+            ejercicio = self._ejercicio_exportacion(por_tipo[tipo])
+            ruta = archivo.ruta_excel_consolidado(
+                cliente_archivo, ejercicio, tipo)
+            nombre = os.path.basename(ruta)
             config = leer_config(ruta_config(xml))
             listas = self._para_aplifisa(por_tipo[tipo])
             exportar_excel(listas, config, ruta)
@@ -2490,21 +2533,7 @@ class VentanaPrincipal(QMainWindow):
             fallos = verificar_excel(listas, config, ruta)
             problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
             resumen_archivos.append(
-                (nombre, len(listas), totales_del_excel(config, ruta)))
-
-            bloques_tipo = [facturas[tipo] for facturas in por_bloque.values()
-                            if facturas[tipo]]
-            if len(bloques_tipo) > 1:
-                for numero, facturas_bloque in enumerate(bloques_tipo, 1):
-                    nombre_parte = (
-                        f"{cliente_archivo}_{'gastos' if tipo == 'gasto' else 'ingresos'}"
-                        f"_parte_{numero:02d}_de_{len(bloques_tipo):02d}.xlsx")
-                    ruta_parte = os.path.join(carpeta, nombre_parte)
-                    lista_parte = self._para_aplifisa(facturas_bloque)
-                    exportar_excel(lista_parte, config, ruta_parte)
-                    fallos = verificar_excel(lista_parte, config, ruta_parte)
-                    problemas_export.extend(
-                        f"{nombre_parte}: {p}" for p in fallos[:5])
+                (ruta, len(listas), totales_del_excel(config, ruta)))
 
         if problemas_export:
             QMessageBox.critical(
@@ -2515,20 +2544,24 @@ class VentanaPrincipal(QMainWindow):
             return
 
         detalle = "\n".join(
-            f"  · {nombre}: {lineas} línea(s), base {eur(t['base_iva'])}, "
+            f"  · {os.path.basename(ruta)}: {lineas} línea(s), "
+            f"base {eur(t['base_iva'])}, "
             f"IVA {eur(t['cuota_iva'])}"
-            for nombre, lineas, t in resumen_archivos)
+            for ruta, lineas, t in resumen_archivos)
+        carpetas = "\n".join(
+            f"  · {carpeta}" for carpeta in sorted({
+                os.path.dirname(ruta) for ruta, _lineas, _totales in resumen_archivos
+            }))
         QMessageBox.information(
             self, "Exportación terminada",
-            f"Archivos preparados para Aplifisa en {carpeta}:\n\n{detalle}\n\n"
+            f"Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
+            f"Guardados junto a los PDF originales:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
             + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
                if excluidas else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
-              "en pantalla, línea por línea.\n\n"
-              "IMPORTANTE: importe en Aplifisa solo el archivo consolidado "
-              "(sin «parte» en el nombre). Los parciales son para control o recuperación.")
+              "en pantalla, línea por línea. No se han creado Excel parciales.")
 
 
 def _argumentos(argv):

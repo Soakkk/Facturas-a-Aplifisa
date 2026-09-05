@@ -10,7 +10,9 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 
 1. **Cargar facturas** (PDF escaneado o imágenes) — entran en una cola y cada
    bloque se procesa en paralelo. Los PDF largos se dividen internamente en
-   partes de 25 páginas; pueden añadirse más documentos mientras la cola sigue.
+   partes internas de 25 páginas; pueden añadirse más documentos mientras la cola sigue.
+   Esas partes son temporales, se eliminan al terminar y nunca aparecen en la
+   documentación del cliente.
    También se pueden arrastrar sobre la ventana o recibir directamente desde
    Escáner Fotos mediante `FacturasAplifisa.exe --import "lote.pdf"`.
 2. El programa **detecta al cliente** (el NIF que se repite en el lote) y, por
@@ -23,22 +25,25 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
    se abre una vista previa grande. Una fila ámbar solo se exporta después de
    pulsar **Marcar revisada**.
-4. **Exportar** `CLIENTE_gastos.xlsx` / `CLIENTE_ingresos.xlsx` → importar en Aplifisa con la
+4. **Exportar** `CLIENTE_EJERCICIO_gastos_consolidado.xlsx` /
+   `CLIENTE_EJERCICIO_ingresos_consolidado.xlsx` → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
-   Si hay varios bloques, también se generan Excel `parte_01_de_04`, etc., para
-   control y recuperación. En Aplifisa se importa solo el consolidado para no
-   duplicar apuntes.
+   Aunque el PDF tenga 100 páginas o varios bloques, solo se genera el Excel
+   consolidado que se importa en Aplifisa; no quedan Excel parciales.
    Los duplicados, documentos sustituidos, suplidos y bienes de inversión se
    apartan de la exportación rutinaria para tratarlos manualmente.
-5. Los PDF creados desde el escáner quedan archivados automáticamente como
-   `Cliente / Ejercicio / Gastos` o `Cliente / Ejercicio / Ingresos`. Las dos
-   carpetas se crean juntas y el ejercicio se obtiene de la fecha de factura.
+5. Tanto los PDF creados desde el escáner como los cargados desde HP u otro
+   programa quedan archivados automáticamente en el Escritorio como
+   `Documentación Facturas / Cliente / Ejercicio / Gastos` o `Ingresos`. Los
+   PDF externos se copian y su original no se mueve. Las dos carpetas se crean
+   juntas y el ejercicio se obtiene de la fecha de factura. El Excel consolidado
+   queda junto a los PDF originales de su tipo.
    Desde **Escaneos guardados** se puede crear el ZIP completo del ejercicio
    para adjuntarlo después como documentación digitalizada en Aplifisa.
 6. El lote en curso se conserva al cerrar el programa, incluidas las
    correcciones y los bloques acumulados. Solo **Vaciar todo** inicia una sesión
-   nueva. Los Excel se nombran `CLIENTE_gastos.xlsx` y
-   `CLIENTE_ingresos.xlsx`.
+   nueva. Cada exportación recibe un nombre libre para no sobrescribir un Excel
+   consolidado anterior.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

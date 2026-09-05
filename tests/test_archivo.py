@@ -15,6 +15,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel import ajustes, archivo
+from facturas_excel import app as app_mod
 from facturas_excel.app import C_BLOQUE, VentanaPrincipal
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import FacturaProcesada
@@ -64,6 +65,34 @@ def test_mover_sin_cliente_no_toca_nada(escaneos):
     ruta = _pdf(os.path.join(escaneos, archivo.SIN_IDENTIFICAR, "x.pdf"))
     assert archivo.mover_a_cliente(ruta, "") == ruta
     assert os.path.exists(ruta)
+
+
+def test_un_pdf_externo_se_copia_y_el_original_no_se_mueve(escaneos):
+    origen = _pdf(os.path.join(os.path.dirname(escaneos), "PDF de HP.pdf"))
+
+    copia = archivo.copiar_a_cliente(
+        origen, "CLIENTE EJEMPLO", "gastos", ejercicio=2025)
+
+    assert os.path.exists(origen)
+    assert os.path.exists(copia)
+    assert copia != origen
+    assert copia.endswith(os.path.join(
+        "CLIENTE EJEMPLO", "2025", "Gastos", "PDF de HP.pdf"))
+
+
+def test_excel_consolidado_va_junto_a_los_pdf_y_no_pisa_otro(escaneos):
+    primero = archivo.ruta_excel_consolidado(
+        "CLIENTE", 2025, "gasto", escaneos)
+    _pdf(os.path.splitext(primero)[0] + ".pdf")  # no afecta: distinta extensión
+    with open(primero, "wb") as fh:
+        fh.write(b"xlsx")
+    segundo = archivo.ruta_excel_consolidado(
+        "CLIENTE", 2025, "gasto", escaneos)
+
+    assert primero.endswith(os.path.join(
+        "CLIENTE", "2025", "Gastos",
+        "CLIENTE_2025_gastos_consolidado.xlsx"))
+    assert segundo.endswith("CLIENTE_2025_gastos_consolidado_2.xlsx")
 
 
 def test_el_listado_ordena_por_fecha_y_dice_de_quien_es(escaneos):
@@ -167,6 +196,41 @@ def test_si_no_se_detecta_el_cliente_el_pdf_se_queda_donde_esta(escaneos):
 
     assert os.path.exists(ruta)          # se puede colocar luego a mano
     assert v._escaneo_sin_identificar
+
+
+def test_pdf_largo_externo_archiva_el_original_y_borra_solo_la_parte_interna(
+        escaneos, tmp_path, monkeypatch):
+    original = _pdf(os.path.join(str(tmp_path), "lote HP de 100 hojas.pdf"))
+    datos_app = tmp_path / "datos_app"
+    carpeta_partes = datos_app / "cola_pdf" / "lote_interno"
+    parte = _pdf(str(carpeta_partes / "lote_parte_02_de_04.pdf"))
+    monkeypatch.setattr(app_mod, "dir_datos", lambda: str(datos_app))
+
+    pr = _procesada()
+    pr.origen = parte
+    pr.pagina = 1
+    pr.facturas[0].origen_imagen = parte
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._elemento_cola_actual = {
+        "rutas": [parte], "original": original,
+        "etiqueta": "lote_parte_02_de_04", "parte": 2, "partes": 4,
+        "archivar": True, "mover_original": False,
+        "desde_escaner": False, "sin_identificar": False,
+        "tipo_escaneo": "gastos",
+    }
+    v._rutas_actuales = [parte]
+
+    v._on_terminado(
+        [(b"imagen", pr)], "CLIENTE", "12345678Z",
+        [(b"imagen", parte, 1, {})])
+
+    copia = v.filas[0]["factura"].origen_imagen
+    assert os.path.exists(original)           # el PDF elegido no se mueve
+    assert os.path.exists(copia)              # copia documental completa
+    assert os.path.join("CLIENTE", "2026", "Gastos") in copia
+    assert not os.path.exists(parte)           # solo era una parte de trabajo
+    assert pr.pagina == 26                     # página real del PDF de 100 hojas
+    assert v._bloques[0]["crudos"][0][1:3] == (copia, 26)
 
 
 def test_la_fecha_sale_del_nombre_no_de_cuando_se_movio(escaneos):

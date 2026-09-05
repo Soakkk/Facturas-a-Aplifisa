@@ -134,7 +134,8 @@ def nombre_libre(carpeta: str, base: str) -> str:
 
 
 def carpeta_por_defecto() -> str:
-    return os.path.join(os.path.expanduser("~"), "Documents", "Facturas escaneadas")
+    return os.path.join(
+        os.path.expanduser("~"), "Desktop", "Documentación Facturas")
 
 
 # ---------------------------------------------------------------- WIA

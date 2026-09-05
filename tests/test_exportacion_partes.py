@@ -19,7 +19,8 @@ def _factura(numero):
     )
 
 
-def test_exporta_consolidado_y_un_excel_por_bloque(tmp_path, monkeypatch):
+def test_exporta_solo_el_excel_consolidado_en_la_carpeta_documental(
+        tmp_path, monkeypatch):
     ventana = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     ventana._cliente_nombre = "CLIENTE PRUEBA"
     ventana._bloques = [
@@ -47,8 +48,10 @@ def test_exporta_consolidado_y_un_excel_por_bloque(tmp_path, monkeypatch):
 
     escritos = []
     monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
-    monkeypatch.setattr(modulo_app.QFileDialog, "getExistingDirectory",
-                        lambda *args: str(tmp_path))
+    monkeypatch.setattr(
+        modulo_app.archivo, "ruta_excel_consolidado",
+        lambda cliente, ejercicio, tipo: str(
+            tmp_path / f"{cliente}_{ejercicio}_{tipo}_consolidado.xlsx"))
     monkeypatch.setattr(modulo_app, "leer_config", lambda ruta: object())
     monkeypatch.setattr(modulo_app, "exportar_excel",
                         lambda facturas, config, ruta: escritos.append(ruta))
@@ -60,8 +63,5 @@ def test_exporta_consolidado_y_un_excel_por_bloque(tmp_path, monkeypatch):
     ventana._exportar_todo()
 
     nombres = [os.path.basename(ruta) for ruta in escritos]
-    assert nombres == [
-        "CLIENTE PRUEBA_gastos.xlsx",
-        "CLIENTE PRUEBA_gastos_parte_01_de_02.xlsx",
-        "CLIENTE PRUEBA_gastos_parte_02_de_02.xlsx",
-    ]
+    assert nombres == ["CLIENTE PRUEBA_2026_gasto_consolidado.xlsx"]
+    assert not any("parte_" in nombre for nombre in nombres)

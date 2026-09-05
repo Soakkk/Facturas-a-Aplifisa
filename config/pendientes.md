@@ -1,6 +1,6 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 2 de septiembre de 2026 (versión 1.10.3). Apunta abajo lo que
+Actualizado el 5 de septiembre de 2026 (versión 1.13.5). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
@@ -8,15 +8,21 @@ veas y lo leo en la siguiente sesión de trabajo.
 ### Lo que se ha resuelto hoy (pruébalo)
 
 **Escanear.** El botón «Escanear facturas» (Ctrl+E) maneja el alimentador de tu
-HP, guarda el PDF en `Documentos\Facturas escaneadas\<CLIENTE>` con el nombre
-puesto y lo mete solo en el lote. No hace falta ni decirle de quién es: lo
-detecta por el NIF y coloca el PDF él solo. Eliges color (b/n, grises, color) y
-calidad (75-300 ppp) en la misma ventana. En «Escaneos» (Ctrl+L) tienes todos
-los PDF generados, para reabrirlos, recolocarlos o quitarlos de en medio.
+HP, guarda el PDF completo en
+`Escritorio\Documentación Facturas\<CLIENTE>\<EJERCICIO>\Gastos|Ingresos` y lo
+mete solo en el lote. Los PDF creados con el programa de HP también se copian a
+esa estructura al cargarlos, sin mover el original elegido. No hace falta ni
+decirle de quién es: lo detecta por el NIF y coloca el PDF él solo. Eliges color
+(b/n, grises, color) y calidad (75-300 ppp) en la misma ventana. En «Escaneos»
+(Ctrl+L) tienes todos los PDF generados, para reabrirlos, recolocarlos o
+quitarlos de en medio.
 
 **Varios PDF en un Excel.** Cada carga o escaneo es un «bloque» que se suma al
 lote. Un requerimiento de 60 facturas se escanea en tres tandas y sale un solo
-Excel. Cada bloque se puede quitar por separado, y «Vaciar todo» empieza de cero.
+Excel consolidado junto a los PDF del cliente. Cada bloque se puede quitar por
+separado, y «Vaciar todo» empieza de cero. Los PDF largos se procesan en partes
+internas de 25 páginas, pero esas partes se borran al terminar y no se generan
+Excel parciales.
 
 **Facturas que se pierden o se repiten.** Si el alimentador arrastra dos hojas
 pegadas, esa factura no daba ningún aviso. Ahora salta por dos vías: el recuento
@@ -119,6 +125,9 @@ sueltas otro PDF o escaneas otro taco, **se pone en la cola** en vez de decirte
 «espera a que termine». Si uno da error, se avisa y sigue con los demás. Lo de
 quién es el cliente se pregunta una sola vez, al final, con todo el lote
 delante. «Vaciar todo» tira también lo que estuviera esperando turno.
+Cuando un PDF largo necesita lotes de 25 páginas, estos se crean únicamente en
+la carpeta interna de trabajo y se eliminan después de procesarse. En el archivo
+del cliente permanece el PDF completo y, al exportar, un único Excel consolidado.
 
 **Un lote grande ya no se queda colgado.** Con 70 hojas el lote se quedaba en
 «69/70» y de ahí no pasaba: si una petición a Gemini se quedaba sin contestar,
@@ -169,6 +178,6 @@ con un caso real que adivinarlo.
   con la factura y se leerá mejor sin pagar más.
 - **Abanica el taco** antes de meterlo en el alimentador y no lo cargues muy
   alto: así arrastra menos hojas pegadas.
-- Pendiente de valorar: el archivo digital ordenado por cliente, ejercicio, tipo
-  y periodo; vigilar una carpeta para procesar solo lo que llegue (útil para las
-  fotos del móvil); y que la app de Escáner Fotos mande aquí el PDF mejorado.
+- Pendiente de valorar: ordenar además por periodo; vigilar una carpeta para
+  procesar solo lo que llegue (útil para las fotos del móvil); y que la app de
+  Escáner Fotos mande aquí el PDF mejorado.
