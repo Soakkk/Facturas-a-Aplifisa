@@ -191,14 +191,62 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 1
     assert v.layout_herramientas.getItemPosition(
         v.layout_herramientas.indexOf(v.btn_manual))[0] == 2
-    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_manual,
+    assert not v.btn_unir_hojas.icon().isNull()
+    assert v.btn_unir_hojas.toolTip().startswith("Seleccione las filas")
+    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_unir_hojas, v.btn_manual,
                   v.btn_mas_acciones):
         assert boton.width() >= boton.sizeHint().width()
-
     v.resize(1420, 820)
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
 
+
+def test_boton_unir_hojas_reconstruye_una_sola_factura(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from facturas_excel import sesion
+    from facturas_excel.procesar import preparar_lote
+
+    cliente = ("CLIENTE DE PRUEBA", "12345678Z")
+    cabecera = {
+        "emisor_nombre": cliente[0], "emisor_nif": cliente[1],
+        "receptor_nombre": "COMPRADOR DE PRUEBA SL", "receptor_nif": "B12345674",
+        "num_factura": "V-700", "fecha": "02/05/2026",
+        "lineas_iva": [{}], "total": None,
+        "cuenta_ingreso": "700", "subclave_ingreso": "I01",
+    }
+    resumen = {
+        "emisor_nombre": cliente[0], "emisor_nif": cliente[1],
+        "receptor_nombre": None, "receptor_nif": None,
+        "num_factura": "V-700", "fecha": "02/05/2024",
+        "lineas_iva": [{"base": 80, "tipo_iva": 10, "cuota_iva": 8}],
+        "total": 88,
+    }
+    crudos = [
+        (b"cabecera", "lote.pdf", 4, cabecera),
+        (b"resumen", "lote.pdf", 5, resumen),
+    ]
+    # Se fuerzan como dos fragmentos para probar el botón, no el automatismo.
+    procesadas = [
+        (b"cabecera", preparar_lote([crudos[0]], *cliente)[0][1]),
+        (b"resumen", preparar_lote([crudos[1]], *cliente)[0][1]),
+    ]
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._bloques = [{
+        "nombre": "Bloque 1", "procesadas": procesadas, "crudos": crudos,
+        "cliente": cliente[0], "nif": cliente[1], "tipo_declarado": "ingresos",
+    }]
+    v._rellenar_tabla()
+    monkeypatch.setattr(v, "_filas_seleccionadas", lambda: [0, 1])
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(sesion, "guardar", lambda datos: None)
+
+    v._unir_hojas_seleccionadas()
+
+    assert len(v._bloques[0]["crudos"]) == 1
+    assert v.tabla.rowCount() == 1
+    assert v.filas[0]["factura"].num_factura == "V-700"
+    assert v.filas[0]["factura"].fecha == "02/05/2026"
+    assert v.filas[0]["factura"].total_impreso == 88
 
 def test_revisar_gemini_copia_la_orden_para_codex(monkeypatch):
     from PySide6.QtWidgets import QMessageBox

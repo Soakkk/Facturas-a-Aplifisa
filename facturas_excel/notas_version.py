@@ -6,6 +6,18 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.12": """
+<h2>Novedades de la versión 1.13.12</h2>
+<ul>
+  <li><b>Unión automática más resistente:</b> si dos hojas consecutivas repiten
+      el mismo número de factura, una fecha mal leída en el pie ya no impide
+      unirlas; se conserva la fecha clara de la cabecera.</li>
+  <li><b>Nuevo botón «Unir hojas»:</b> permite seleccionar fragmentos, incluso
+      de PDF distintos, y convertirlos expresamente en una sola factura.</li>
+  <li><b>Sin duplicar subtotales:</b> la primera hoja aporta identificación y el
+      resumen fiscal completo de la última aporta los importes definitivos.</li>
+</ul>
+""",
     "1.13.11": """
 <h2>Novedades de la versión 1.13.11</h2>
 <ul>

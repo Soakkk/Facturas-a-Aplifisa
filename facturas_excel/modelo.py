@@ -48,6 +48,8 @@ class Factura:
     # --- soporte de revision / control de calidad (no se exporta) ---
     total_impreso: Optional[float] = None   # total que figura escrito en la factura
     origen_imagen: Optional[str] = None     # ruta del archivo escaneado del que sale
+    pagina_origen: int = 0                  # primera página física de esta factura
+    ultima_pagina_origen: int = 0           # última página si ocupa varias hojas
     lineas_factura: int = 1                 # lineas de IVA que tiene la factura entera
     subclave: Optional[str] = None          # GXX del concepto (obligatoria en la 628)
     descripcion_concepto: Optional[str] = None  # como lo llama Aplifisa
@@ -63,7 +65,8 @@ class Factura:
 
     def campos_dict(self) -> dict:
         """Devuelve {nombre_campo: valor} solo de los campos exportables."""
-        excluidos = {"total_impreso", "origen_imagen", "lineas_factura",
+        excluidos = {"total_impreso", "origen_imagen", "pagina_origen",
+                     "ultima_pagina_origen", "lineas_factura",
                      "subclave", "descripcion_concepto", "es_suplido",
                      "confianza_ia", "revision_confirmada",
                      "tratamiento_manual", "iva_incluido_en_base", "eliminada",

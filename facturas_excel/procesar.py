@@ -254,6 +254,9 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         concepto=cuenta or None,
         total_impreso=_num(datos.get("total")),
         origen_imagen=origen,
+        pagina_origen=pagina,
+        ultima_pagina_origen=int(
+            datos.get("_ultima_pagina_consolidada", pagina) or pagina),
         confianza_ia=(str(datos.get("confianza") or "").strip().lower()
                       or None),
         tratamiento_manual=("Bien de inversión"
@@ -669,10 +672,10 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     if not numero_a or numero_a != numero_b:
         if not _continuacion_sin_numero(datos_a, datos_b):
             return False
-    fecha_a = str(datos_a.get("fecha") or "").strip()
-    fecha_b = str(datos_b.get("fecha") or "").strip()
-    if fecha_a and fecha_b and fecha_a != fecha_b:
-        return False
+    # El número impreso y el orden físico mandan sobre una fecha aislada de la
+    # continuación. En el pie pequeño, Gemini puede leer 2026 como 2024. La
+    # cabecera de la primera hoja se conserva al fusionar, así que una fecha
+    # discordante no debe partir una factura cuyo número sí coincide.
     estado_a, estado_b = _estado_pagina(datos_a), _estado_pagina(datos_b)
     if estado_a in {"inicio", "intermedia"} and estado_b in {"intermedia", "final"}:
         return True
@@ -750,6 +753,28 @@ def consolidar_paginas_factura(registros: List[tuple]) -> List[tuple]:
         else:
             salida.append(actual)
     return salida
+
+
+def fusionar_paginas_manual(registros: List[tuple]) -> tuple:
+    """Une las hojas elegidas expresamente por una persona.
+
+    La primera aporta cabecera, número y fecha; las siguientes completan los
+    huecos y la última que tenga un resumen fiscal autocuadrado aporta los
+    importes definitivos. No exige mismo archivo, páginas consecutivas ni que
+    Gemini haya repetido bien el número: esa decisión ya la tomó el usuario.
+    """
+    if len(registros) < 2:
+        raise ValueError("Seleccione al menos dos hojas distintas.")
+    imagen, origen, pagina, datos = registros[0]
+    fusion = deepcopy(datos)
+    paginas = [(origen, pagina)]
+    for _imagen, origen_sig, pagina_sig, datos_sig in registros[1:]:
+        fusion = _fusionar_datos_paginas(fusion, datos_sig)
+        paginas.append((origen_sig, pagina_sig))
+    fusion["_union_manual"] = True
+    fusion["_paginas_union_manual"] = paginas
+    fusion["_ultima_pagina_consolidada"] = pagina
+    return imagen, origen, pagina, fusion
 
 
 

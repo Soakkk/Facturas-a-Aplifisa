@@ -64,8 +64,8 @@ from facturas_excel.modelo import Factura
 from facturas_excel.pdf import PAGINAS_POR_BLOQUE, cargar_imagenes, dividir_pdf
 from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
-    normaliza_nif, preparar_lote, recordar_cuenta_proveedor, recordar_nif,
-    recordar_nombre_proveedor,
+    fusionar_paginas_manual, normaliza_nif, preparar_lote,
+    recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
 )
 from facturas_excel.registro import (
     contrastar, leer_registro, parece_listado,
@@ -505,6 +505,13 @@ class VentanaPrincipal(QMainWindow):
         self.btn_manual.setToolTip(
             "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
         self.btn_manual.clicked.connect(self._alternar_gestion_manual)
+        self.btn_unir_hojas = QPushButton("Unir hojas")
+        self.btn_unir_hojas.setObjectName("accionTabla")
+        self.btn_unir_hojas.setIcon(QIcon(ruta_recurso("link.svg")))
+        self.btn_unir_hojas.setToolTip(
+            "Seleccione las filas que pertenecen a la misma factura. La primera "
+            "aporta la cabecera y la última, el resumen fiscal.")
+        self.btn_unir_hojas.clicked.connect(self._unir_hojas_seleccionadas)
 
         self.menu_acciones = QMenu(self)
         self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
@@ -661,11 +668,12 @@ class VentanaPrincipal(QMainWindow):
         elementos = (
             self.lbl_mostrar, self.combo_filtro_estado,
             self.combo_filtro_bloque, self.btn_siguiente,
-            self.btn_revisada, self.btn_manual, self.btn_mas_acciones,
+            self.btn_revisada, self.btn_manual, self.btn_unir_hojas,
+            self.btn_mas_acciones,
         )
         for elemento in elementos:
             self.layout_herramientas.removeWidget(elemento)
-        for columna in range(8):
+        for columna in range(9):
             self.layout_herramientas.setColumnStretch(columna, 0)
 
         if ancho >= 1200:
@@ -675,8 +683,9 @@ class VentanaPrincipal(QMainWindow):
                 (self.combo_filtro_bloque, 0, 2),
                 (self.btn_siguiente, 0, 4),
                 (self.btn_revisada, 0, 5),
-                (self.btn_manual, 0, 6),
-                (self.btn_mas_acciones, 0, 7),
+                (self.btn_unir_hojas, 0, 6),
+                (self.btn_manual, 0, 7),
+                (self.btn_mas_acciones, 0, 8),
             )
             self.layout_herramientas.setColumnStretch(3, 1)
         else:
@@ -686,8 +695,9 @@ class VentanaPrincipal(QMainWindow):
                 (self.combo_filtro_bloque, 0, 2, 2),
                 (self.btn_siguiente, 1, 0, 2),
                 (self.btn_revisada, 1, 2, 2),
-                (self.btn_manual, 2, 0, 2),
-                (self.btn_mas_acciones, 2, 2, 2),
+                (self.btn_unir_hojas, 2, 0, 2),
+                (self.btn_manual, 2, 2, 2),
+                (self.btn_mas_acciones, 3, 0, 4),
             )
             self.layout_herramientas.setColumnStretch(0, 1)
             self.layout_herramientas.setColumnStretch(1, 1)
@@ -1444,6 +1454,8 @@ class VentanaPrincipal(QMainWindow):
                     pr.pagina += desplazamiento
                     for factura in pr.facturas:
                         factura.origen_imagen = origen_documento
+                        factura.pagina_origen += desplazamiento
+                        factura.ultima_pagina_origen += desplazamiento
                 crudos = [
                     (imagen, origen_documento, pagina + desplazamiento, datos)
                     for imagen, _origen, pagina, datos in (crudos or [])
@@ -2176,6 +2188,89 @@ class VentanaPrincipal(QMainWindow):
             f"{len(candidatas)} línea(s) "
             + ("devueltas al flujo automático." if quitar_marca
                else "apartadas para gestión manual."))
+
+    @staticmethod
+    def _mismo_archivo(a: str, b: str) -> bool:
+        return os.path.normcase(os.path.abspath(a or "")) == \
+            os.path.normcase(os.path.abspath(b or ""))
+
+    def _crudos_de_filas(self, filas: list[int]) -> list[tuple]:
+        """Localiza las páginas originales de las filas, también en sesiones viejas."""
+        encontrados = []
+        usados = set()
+        for fila in filas:
+            registro_tabla = self.filas[fila]
+            f = self._leer_fila(fila)
+            pagina = int(getattr(f, "pagina_origen", 0) or 0)
+            for ib, bloque in enumerate(self._bloques):
+                for ir, crudo in enumerate(bloque.get("crudos", [])):
+                    clave = (ib, ir)
+                    if clave in usados:
+                        continue
+                    imagen, origen, pag, _datos = crudo
+                    coincide_pagina = (pagina and int(pag) == pagina and
+                                       self._mismo_archivo(origen, f.origen_imagen))
+                    # Las sesiones creadas antes de guardar pagina_origen aún
+                    # pueden localizarse por la miniatura y el archivo.
+                    coincide_imagen = (not pagina and imagen == registro_tabla["png"] and
+                                       self._mismo_archivo(origen, f.origen_imagen))
+                    if coincide_pagina or coincide_imagen:
+                        encontrados.append((ib, ir, crudo))
+                        usados.add(clave)
+                        break
+                else:
+                    continue
+                break
+        return encontrados
+
+    def _unir_hojas_seleccionadas(self) -> None:
+        filas = self._filas_seleccionadas()
+        crudos = self._crudos_de_filas(filas)
+        if len(crudos) < 2:
+            QMessageBox.information(
+                self, "Unir hojas",
+                "Seleccione filas de al menos dos hojas distintas. Si una "
+                "factura tiene varias líneas de IVA en la misma hoja, cuentan "
+                "como una sola hoja.")
+            return
+        referencias = []
+        for _ib, _ir, (_img, _origen, pagina, datos) in crudos:
+            referencias.append(
+                f"página {pagina}: {datos.get('num_factura') or 'sin nº'}")
+        pregunta = (
+            "Se unirán estas hojas como UNA sola factura:\n\n· "
+            + "\n· ".join(referencias)
+            + "\n\nLa primera aporta número, fecha y cliente; el resumen fiscal "
+              "completo de la última sustituye los subtotales intermedios."
+        )
+        if QMessageBox.question(
+                self, "Confirmar unión de hojas", pregunta,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+
+        primero_bloque, primero_indice, _ = crudos[0]
+        destino = self._bloques[primero_bloque]
+        seleccion = {(ib, ir) for ib, ir, _ in crudos}
+        posicion = sum(1 for ir in range(primero_indice)
+                       if (primero_bloque, ir) not in seleccion)
+        fusionado = fusionar_paginas_manual([crudo for _, _, crudo in crudos])
+        for ib, bloque in enumerate(self._bloques):
+            bloque["crudos"] = [crudo for ir, crudo in enumerate(bloque.get("crudos", []))
+                                if (ib, ir) not in seleccion]
+        destino["crudos"].insert(posicion, fusionado)
+        self._bloques = [bloque for bloque in self._bloques
+                         if bloque.get("crudos") or bloque is destino]
+        for bloque in self._bloques:
+            bloque["procesadas"] = preparar_lote(
+                bloque.get("crudos", []), bloque.get("cliente", ""),
+                bloque.get("nif", ""))
+        self._actualizar_combo_bloques()
+        self._rellenar_tabla()
+        self._revalidar_todo()
+        self._guardar_sesion()
+        numero = fusionado[3].get("num_factura") or "sin nº"
+        self.lbl_estado.setText(
+            f"{len(crudos)} hojas unidas como una sola factura ({numero}).")
 
     def _eliminar_seleccion(self) -> None:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},

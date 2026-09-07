@@ -1,6 +1,8 @@
 """Facturas cuya cabecera y resumen fiscal estan en hojas distintas."""
 
-from facturas_excel.procesar import consolidar_paginas_factura, preparar_lote
+from facturas_excel.procesar import (
+    consolidar_paginas_factura, fusionar_paginas_manual, preparar_lote,
+)
 
 
 CLIENTE = ("CLIENTE DE EJEMPLO", "12345678Z")
@@ -169,3 +171,36 @@ def test_hoja_sin_numero_de_otro_emisor_no_se_absorbe():
     ]
 
     assert len(consolidar_paginas_factura(registros)) == 2
+
+
+def test_mismo_numero_une_aunque_el_pie_tenga_el_ano_mal_leido():
+    primera = cabecera("V-500")
+    ultima = resumen("V-500")
+    ultima["fecha"] = "01/04/2024"
+
+    unidos = consolidar_paginas_factura([
+        (b"cabecera", "lote.pdf", 7, primera),
+        (b"resumen", "lote.pdf", 8, ultima),
+    ])
+
+    assert len(unidos) == 1
+    assert unidos[0][3]["fecha"] == "01/04/2026"
+    assert len(unidos[0][3]["lineas_iva"]) == 2
+
+
+def test_union_manual_no_exige_mismo_pdf_numero_ni_fecha():
+    primera = cabecera("V-600")
+    ultima = resumen(None)
+    ultima["fecha"] = "01/04/2024"
+
+    unido = fusionar_paginas_manual([
+        (b"cabecera", "primera.pdf", 2, primera),
+        (b"resumen", "segunda.pdf", 9, ultima),
+    ])
+
+    assert unido[:3] == (b"cabecera", "primera.pdf", 2)
+    assert unido[3]["num_factura"] == "V-600"
+    assert unido[3]["fecha"] == "01/04/2026"
+    assert unido[3]["total"] == 1131.93
+    assert len(unido[3]["lineas_iva"]) == 2
+    assert unido[3]["_union_manual"] is True
