@@ -101,6 +101,14 @@ manuscritos, cifras rodeadas con un circulo, lineas tachadas, "NO" junto a un
 articulo o el total impreso tachado con una raya. Aunque el total impreso este
 tachado y al lado haya otro a mano, devuelve SIEMPRE el impreso.
 
+FACTURAS DE VARIAS PAGINAS: la imagen puede ser una hoja intermedia o la ultima
+hoja de una factura cuya cabecera estaba en la pagina anterior. Lee tambien el
+pie de pagina: si alli se repiten el numero de factura y la fecha, devuelvelos
+en num_factura y fecha aunque no aparezca otra cabecera. Extrae de esta hoja el
+resumen fiscal (bases, IVA, recargo y total) aunque los datos del destinatario
+solo estuvieran en la primera. No inventes las partes que no se vean: dejalas a
+null; el programa unira despues las hojas consecutivas por numero de factura.
+
 EN CAMBIO, EL NIF Y EL NUMERO SI PUEDEN VENIR A MANO. El asesor anota a mano el
 CIF/NIF cuando el impreso no se lee o es confuso, y numera las facturas para los
 requerimientos de Hacienda. Asi que:

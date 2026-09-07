@@ -12,6 +12,7 @@ Reutilizable desde la UI y desde scripts.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
@@ -535,8 +536,14 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     en cada bloque: asi, si el cliente estaba mal detectado, se puede rehacer
     todo con el cliente bueno SIN volver a pagar otra lectura a Gemini.
     """
+    # Gemini lee cada imagen por separado. En una factura de varias hojas la
+    # primera suele traer cabecera/cliente y la ultima el resumen fiscal. Antes
+    # ambas acababan como apuntes incompletos distintos. Se juntan primero los
+    # fragmentos consecutivos de la misma factura y despues se construye el
+    # unico apunte, con todas sus lineas de IVA y recargo.
+    consolidados = consolidar_paginas_factura(registros)
     procesadas = [(img, construir(datos, cliente_nif, cliente_nombre, origen, pag))
-                  for img, origen, pag, datos in registros]
+                  for img, origen, pag, datos in consolidados]
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote
     completar_desde_memoria(solo)    # 2º lo sabido de otras veces
@@ -545,6 +552,135 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     aplicar_recordado(solo)          # 5º lo que ya corrigio el usuario a mano
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
+
+
+_CAMPOS_FISCALES = (
+    "total", "base_irpf", "pct_irpf", "cuota_irpf", "suplidos",
+)
+_CAMPOS_BOOLEANOS = (
+    "es_bien_inversion", "manuscrito_en_importes",
+)
+
+
+def _tiene_linea_fiscal(linea: dict) -> bool:
+    return any(_num(linea.get(campo)) is not None for campo in (
+        "base", "tipo_iva", "cuota_iva", "pct_requiv", "cuota_requiv",
+    ))
+
+
+def _tiene_importes(datos: dict) -> bool:
+    if any(_tiene_linea_fiscal(linea)
+           for linea in (datos.get("lineas_iva") or [])
+           if isinstance(linea, dict)):
+        return True
+    return any(_num(datos.get(campo)) is not None
+               for campo in _CAMPOS_FISCALES)
+
+
+def _tiene_las_dos_partes(datos: dict) -> bool:
+    emisor = datos.get("emisor_nif") or datos.get("emisor_nombre")
+    receptor = datos.get("receptor_nif") or datos.get("receptor_nombre")
+    return bool(emisor and receptor)
+
+
+def _mismo_origen(a: str, b: str) -> bool:
+    import os
+    return os.path.normcase(os.path.abspath(a or "")) == \
+        os.path.normcase(os.path.abspath(b or ""))
+
+
+def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
+    """Reconoce fragmentos consecutivos sin ocultar facturas duplicadas.
+
+    Dos paginas completas con el mismo numero se mantienen separadas para que
+    la deteccion de duplicados siga avisando. Solo se unen cuando al menos una
+    de las dos es parcial: le falta una de las partes o le faltan los importes.
+    """
+    _, origen_a, pagina_a, datos_a = anterior
+    _, origen_b, pagina_b, datos_b = siguiente
+    if not _mismo_origen(origen_a, origen_b):
+        return False
+    try:
+        if int(pagina_b) != int(pagina_a) + 1:
+            return False
+    except (TypeError, ValueError):
+        return False
+    numero_a = _num_doc(datos_a.get("num_factura"))
+    numero_b = _num_doc(datos_b.get("num_factura"))
+    if not numero_a or numero_a != numero_b:
+        return False
+    fecha_a = str(datos_a.get("fecha") or "").strip()
+    fecha_b = str(datos_b.get("fecha") or "").strip()
+    if fecha_a and fecha_b and fecha_a != fecha_b:
+        return False
+    completas_a = _tiene_las_dos_partes(datos_a) and _tiene_importes(datos_a)
+    completas_b = _tiene_las_dos_partes(datos_b) and _tiene_importes(datos_b)
+    return not (completas_a and completas_b)
+
+
+def _clave_linea_fiscal(linea: dict) -> tuple:
+    return tuple(_num(linea.get(campo)) for campo in (
+        "base", "tipo_iva", "cuota_iva", "pct_requiv", "cuota_requiv",
+    ))
+
+
+def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
+    fusion = deepcopy(primera)
+
+    # La cabecera buena suele estar en la primera hoja. Completar huecos con
+    # las siguientes sin permitir que una lectura parcial la borre.
+    for campo, valor in siguiente.items():
+        if campo in ("lineas_iva", *_CAMPOS_FISCALES, *_CAMPOS_BOOLEANOS,
+                     "confianza"):
+            continue
+        if fusion.get(campo) in (None, "", []):
+            fusion[campo] = deepcopy(valor)
+
+    lineas, vistas = [], set()
+    for datos in (primera, siguiente):
+        for linea in datos.get("lineas_iva") or []:
+            if not isinstance(linea, dict) or not _tiene_linea_fiscal(linea):
+                continue
+            clave = _clave_linea_fiscal(linea)
+            if clave not in vistas:
+                lineas.append(deepcopy(linea))
+                vistas.add(clave)
+    fusion["lineas_iva"] = lineas or [{}]
+
+    # El resumen definitivo se imprime normalmente en la ultima pagina.
+    for campo in _CAMPOS_FISCALES:
+        if siguiente.get(campo) not in (None, ""):
+            fusion[campo] = deepcopy(siguiente[campo])
+    for campo in _CAMPOS_BOOLEANOS:
+        fusion[campo] = bool(primera.get(campo) or siguiente.get(campo))
+
+    orden_confianza = {"alta": 0, "media": 1, "baja": 2}
+    confianzas = [str(d.get("confianza") or "").strip().lower()
+                  for d in (primera, siguiente)]
+    confianzas = [c for c in confianzas if c]
+    if confianzas:
+        fusion["confianza"] = max(
+            confianzas, key=lambda c: orden_confianza.get(c, 1))
+    return fusion
+
+
+def consolidar_paginas_factura(registros: List[tuple]) -> List[tuple]:
+    """Une paginas consecutivas complementarias de una misma factura.
+
+    Conserva la imagen y el numero de la primera pagina para que la tabla siga
+    mostrando la cabecera. Los datos originales no se modifican, de modo que
+    cambiar el cliente permite reconstruir el lote otra vez sin llamar a IA.
+    """
+    salida: List[tuple] = []
+    for registro in registros:
+        actual = (registro[0], registro[1], registro[2], deepcopy(registro[3]))
+        if salida and _son_paginas_de_la_misma_factura(salida[-1], actual):
+            img, origen, pagina, datos = salida[-1]
+            salida[-1] = (img, origen, pagina,
+                          _fusionar_datos_paginas(datos, actual[3]))
+        else:
+            salida.append(actual)
+    return salida
 
 
 
