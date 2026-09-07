@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.14": """
+<h2>Novedades de la versión 1.13.14</h2>
+<ul>
+  <li><b>Abonos de proveedor:</b> dentro de un lote de gastos se contabilizan
+      como menor gasto en su cuenta, nunca como un ingreso en la 700.</li>
+  <li><b>Signos coherentes:</b> base, cuota, recargo y total quedan en negativo
+      aunque el menos solo se haya leído con claridad en el total.</li>
+  <li><b>Resumen neto:</b> la comprobación de totales suma las facturas normales
+      y resta automáticamente los abonos para mostrar el resultado final.</li>
+  <li><b>Abonos de ventas protegidos:</b> una rectificativa emitida en un lote
+      de ingresos continúa siendo un ingreso negativo.</li>
+</ul>
+""",
     "1.13.13": """
 <h2>Novedades de la versión 1.13.13</h2>
 <ul>

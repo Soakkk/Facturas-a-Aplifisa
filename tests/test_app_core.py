@@ -229,6 +229,51 @@ def test_factura_multi_iva_cuenta_una_vez_al_decidir_el_ejercicio():
     assert v.lbl_alerta_texto.text().count("F-ANTIGUA") == 1
 
 
+def test_abono_de_proveedor_es_menor_gasto_y_el_resumen_es_neto():
+    from facturas_excel.app import C_BASE, C_CUENTA, C_CUOTA, C_GXX, C_TOTAL
+    from facturas_excel.procesar import FacturaProcesada
+
+    normal = Factura(
+        num_factura="F-300", fecha="10/04/2026", nombre="PROVEEDOR UNO SL",
+        nif="B30048276", concepto="600", subclave="G01", base_iva=100,
+        pct_iva=21, cuota_iva=21, total_impreso=121,
+    )
+    # Simula el fallo observado: Gemini invierte emisor/receptor, lo clasifica
+    # como venta y pierde los signos del desglose, aunque el total sí es abono.
+    abono = Factura(
+        num_factura="AB-301", fecha="11/04/2026", nombre="PROVEEDOR DOS SL",
+        nif="B86561412", concepto="700", subclave="I01", base_iva=50,
+        pct_iva=21, cuota_iva=10.5, total_impreso=-60.5,
+    )
+    procesadas = [
+        (b"", FacturaProcesada("gasto", [normal], "600", "G01", "lote.pdf", 1)),
+        (b"", FacturaProcesada("venta", [abono], "700", "I01", "lote.pdf", 2)),
+    ]
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._bloques = [{
+        "nombre": "LOTE GASTOS", "procesadas": procesadas,
+        "cliente": "CLIENTE DE PRUEBA", "nif": "12345678Z",
+        "tipo_declarado": "gastos",
+        "crudos": [(b"", "lote.pdf", 2, {
+            "num_factura": "AB-301", "cuenta_gasto": "600",
+            "subclave_gxx": "G01", "concepto_texto": "mercancías",
+        })],
+    }]
+
+    v._rellenar_tabla()
+    v._revalidar_todo()
+
+    assert v._tipo_fila(1) == "gasto"
+    assert v.tabla.item(1, C_CUENTA).text() == "600"
+    assert v.tabla.item(1, C_GXX).text() == "G01"
+    assert v.tabla.item(1, C_BASE).text() == "-50"
+    assert v.tabla.item(1, C_CUOTA).text() == "-10,50"
+    assert v.tabla.item(1, C_TOTAL).text() == "-60,50"
+    assert v.tabla_resumen.item(0, v.tabla_resumen.columnCount() - 1).text() \
+        == "60,50 €"
+    assert all(v._tipo_fila(r) == "gasto" for r in range(2))
+
+
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     from PySide6.QtCore import Qt
     from facturas_excel.estilo import FUENTE_UI, QSS

@@ -6,7 +6,7 @@ registra como compra lo que habia que devolver al cliente.
 
 from facturas_excel.extraccion import _num
 from facturas_excel.procesar import a_total_factura, construir
-from facturas_excel.validacion import ERROR, OK, validar
+from facturas_excel.validacion import OK, validar
 
 CLIENTE = "12345678Z"
 
@@ -50,9 +50,9 @@ def test_el_total_factura_de_un_abono_es_negativo():
     assert a_total_factura(abono()).facturas[0].base_iva == -15.51
 
 
-def test_un_abono_con_el_signo_perdido_da_error():
+def test_un_abono_con_el_signo_perdido_en_el_desglose_se_corrige():
     pr = abono(lineas_iva=[{"base": 12.29, "tipo_iva": 21.0, "cuota_iva": 2.58,
                             "pct_requiv": 5.20, "cuota_requiv": 0.64}])
-    res = validar(pr.facturas[0])
-    assert res.estado == ERROR
-    assert any("signo no cuadra" in m for m in res.mensajes)
+    f = pr.facturas[0]
+    assert (f.base_iva, f.cuota_iva, f.cuota_requiv) == (-12.29, -2.58, -0.64)
+    assert validar(f).estado == OK

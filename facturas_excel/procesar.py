@@ -192,6 +192,46 @@ def _cuadre_factura(facturas: List[Factura]) -> str:
             f"{len(facturas)} líneas de IVA suman {suma:.2f}.")
 
 
+def normalizar_importes_abono(facturas: List[Factura]) -> bool:
+    """Pone en negativo todos los importes cuando el total identifica un abono.
+
+    El total impreso es la prueba más inequívoca. Algunos documentos muestran
+    el menos solo en el total o Gemini lo pierde en una de las bases/cuotas;
+    dejar signos mezclados convertiría parte de la devolución en gasto.
+    """
+    totales = [f.total_impreso for f in facturas
+               if f.total_impreso is not None]
+    if not totales or not any(total < 0 for total in totales):
+        return False
+    campos = (
+        "base_iva", "cuota_iva", "base_irpf", "cuota_irpf",
+        "base_requiv", "cuota_requiv", "suplidos", "base_sujeta_cero",
+        "no_sujeta", "total_impreso",
+    )
+    for factura in facturas:
+        for campo in campos:
+            valor = getattr(factura, campo)
+            if valor is not None:
+                setattr(factura, campo, -abs(valor))
+    return True
+
+
+def concepto_gasto(datos: dict) -> tuple[str, str | None]:
+    """Cuenta de gasto propuesta, reutilizable al corregir un abono."""
+    cuenta, gxx = normalizar_concepto(
+        datos.get("cuenta_gasto"), datos.get("subclave_gxx"))
+    texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
+    if not cuenta:
+        cuenta = asignar_concepto("gasto", texto)
+    if not gxx and cuenta == "628":
+        gxx = subclave_628(texto)
+    if not gxx and cuenta:
+        posibles = subclaves_de(cuenta)
+        if len(posibles) == 1:
+            gxx = posibles[0][0]
+    return cuenta, gxx
+
+
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
               origen: str = "", pagina: int = 0) -> FacturaProcesada:
     cliente_nif = normaliza_nif(cliente_nif)
@@ -232,13 +272,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         if not es_valido(cuenta, gxx):
             cuenta, gxx = DEFAULT_VENTA, None
     else:
-        cuenta, gxx = normalizar_concepto(
-            datos.get("cuenta_gasto"), datos.get("subclave_gxx"))
-        texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
-        if not cuenta:  # respaldo por palabras clave si Gemini no dio cuenta
-            cuenta = asignar_concepto("gasto", texto)
-        if not gxx and cuenta == "628":
-            gxx = subclave_628(texto)
+        cuenta, gxx = concepto_gasto(datos)
 
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
@@ -308,6 +342,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         for f in facturas:
             f.lineas_factura = len(facturas)
 
+    normalizar_importes_abono(facturas)
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
     # Solo se avisa si lo escrito a mano toca a los IMPORTES. El asesor anota
