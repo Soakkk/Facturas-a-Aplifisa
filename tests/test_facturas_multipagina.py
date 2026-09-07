@@ -86,3 +86,86 @@ def test_una_linea_fiscal_repetida_en_dos_hojas_no_se_duplica():
 
     assert len(unidos) == 1
     assert len(unidos[0][3]["lineas_iva"]) == 2
+
+
+def test_ultima_hoja_sin_numero_usa_cabecera_y_resumen_final():
+    primera = cabecera("V-200")
+    primera["lineas_iva"] = [
+        {"base": 240.0, "tipo_iva": 0, "cuota_iva": 0,
+         "pct_requiv": None, "cuota_requiv": None}
+    ]
+    primera["total"] = 240.0  # subtotal de articulos mal interpretado
+    primera["estado_pagina_factura"] = "inicio"
+    ultima = resumen(None)
+    ultima["estado_pagina_factura"] = "final"
+
+    procesadas = preparar_lote([
+        (b"cabecera", "lote.pdf", 10, primera),
+        (b"resumen", "lote.pdf", 11, ultima),
+    ], CLIENTE[0], CLIENTE[1])
+
+    assert len(procesadas) == 1
+    _, pr = procesadas[0]
+    assert pr.facturas[0].num_factura == "V-200"
+    assert pr.facturas[0].nombre == DESTINATARIO[0]
+    assert [f.base_iva for f in pr.facturas] == [1009.73, 74.37]
+    assert all(f.total_impreso == 1131.93 for f in pr.facturas)
+
+
+def test_lectura_anterior_sin_marcador_tambien_reconoce_la_continuacion():
+    primera = cabecera("V-250")
+    primera["lineas_iva"] = [
+        {"base": 500.0, "tipo_iva": 0, "cuota_iva": 0,
+         "pct_requiv": None, "cuota_requiv": None}
+    ]
+    primera["total"] = 500.0
+    ultima = resumen(None)
+
+    unidos = consolidar_paginas_factura([
+        (b"cabecera", "lote.pdf", 20, primera),
+        (b"resumen", "lote.pdf", 21, ultima),
+    ])
+
+    assert len(unidos) == 1
+    assert unidos[0][3]["num_factura"] == "V-250"
+    assert len(unidos[0][3]["lineas_iva"]) == 2
+
+
+def test_tres_hojas_consecutivas_forman_una_sola_factura():
+    primera = cabecera("V-300")
+    primera["estado_pagina_factura"] = "inicio"
+    intermedia = {
+        "emisor_nombre": CLIENTE[0], "emisor_nif": CLIENTE[1],
+        "num_factura": None, "fecha": None, "lineas_iva": [{}],
+        "total": None, "estado_pagina_factura": "intermedia",
+        "confianza": "alta",
+    }
+    ultima = resumen(None)
+    ultima["estado_pagina_factura"] = "final"
+
+    unidos = consolidar_paginas_factura([
+        (b"uno", "lote.pdf", 3, primera),
+        (b"dos", "lote.pdf", 4, intermedia),
+        (b"tres", "lote.pdf", 5, ultima),
+    ])
+
+    assert len(unidos) == 1
+    assert unidos[0][2] == 3
+    assert unidos[0][3]["_ultima_pagina_consolidada"] == 5
+    assert len(unidos[0][3]["lineas_iva"]) == 2
+
+
+def test_hoja_sin_numero_de_otro_emisor_no_se_absorbe():
+    otra = resumen(None)
+    otra.update({
+        "emisor_nombre": "OTRA EMPRESA DE PRUEBA SL",
+        "emisor_nif": "B76543217",
+        "estado_pagina_factura": "",
+    })
+
+    registros = [
+        (b"uno", "lote.pdf", 1, cabecera("V-400")),
+        (b"dos", "lote.pdf", 2, otra),
+    ]
+
+    assert len(consolidar_paginas_factura(registros)) == 2

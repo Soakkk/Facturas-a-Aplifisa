@@ -6,6 +6,18 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.11": """
+<h2>Novedades de la versión 1.13.11</h2>
+<ul>
+  <li><b>Facturas de dos o más hojas:</b> la cabecera de la primera página se
+      une con el resumen fiscal definitivo de la última aunque esta no repita
+      el número de factura ni el destinatario.</li>
+  <li><b>Subtotales intermedios:</b> un subtotal de artículos al acabar una hoja
+      ya no se toma como base imponible ni como total de una factura separada.</li>
+  <li><b>Un único apunte:</b> se conservan número, fecha y cliente de la cabecera,
+      junto con todas las bases, IVA, recargo y total del resumen final.</li>
+</ul>
+""",
     "1.13.10": """
 <h2>Novedades de la versión 1.13.10</h2>
 <ul>

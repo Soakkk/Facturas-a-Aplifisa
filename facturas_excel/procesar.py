@@ -589,6 +589,64 @@ def _mismo_origen(a: str, b: str) -> bool:
         os.path.normcase(os.path.abspath(b or ""))
 
 
+def _estado_pagina(datos: dict) -> str:
+    estado = str(datos.get("estado_pagina_factura") or "").strip().lower()
+    return estado if estado in {"unica", "inicio", "intermedia", "final"} else ""
+
+
+def _comparten_una_parte(a: dict, b: dict) -> bool:
+    """Prueba conservadora para continuaciones leidas con el prompt antiguo."""
+    for prefijo in ("emisor", "receptor"):
+        nif_a = normaliza_nif(a.get(f"{prefijo}_nif"))
+        nif_b = normaliza_nif(b.get(f"{prefijo}_nif"))
+        if nif_a and nif_a == nif_b:
+            return True
+        nombre_a = a.get(f"{prefijo}_nombre")
+        nombre_b = b.get(f"{prefijo}_nombre")
+        if nombre_a and nombre_b and _mismo_nombre(nombre_a, nombre_b):
+            return True
+    return False
+
+
+def _resumen_fiscal_cuadra(datos: dict) -> bool:
+    """La hoja contiene un resumen fiscal completo, no solo un subtotal."""
+    total = _num(datos.get("total"))
+    lineas = [linea for linea in (datos.get("lineas_iva") or [])
+              if isinstance(linea, dict) and _tiene_linea_fiscal(linea)]
+    if total is None or not lineas:
+        return False
+    suma = sum((_num(linea.get("base")) or 0)
+               + (_num(linea.get("cuota_iva")) or 0)
+               + (_num(linea.get("cuota_requiv")) or 0)
+               for linea in lineas)
+    suma += _num(datos.get("suplidos")) or 0
+    suma -= _num(datos.get("cuota_irpf")) or 0
+    return abs(round(suma, 2) - total) <= TOLERANCIA_CUADRE
+
+
+def _continuacion_sin_numero(anterior: dict, siguiente: dict) -> bool:
+    """Une una ultima hoja sin numero solo cuando hay evidencias suficientes."""
+    estado_a, estado_b = _estado_pagina(anterior), _estado_pagina(siguiente)
+    if estado_a in {"inicio", "intermedia"} and estado_b in {"intermedia", "final"}:
+        return True
+
+    # Compatibilidad con lotes ya leidos antes de que existiera el marcador.
+    # La hoja siguiente ha de ser parcial en identidad, compartir al menos una
+    # parte y traer un resumen fiscal autocuadrado cuyo total englobe el aparente
+    # subtotal de la primera. Asi no se absorbe una factura independiente.
+    if not _num_doc(anterior.get("num_factura")) or \
+            _num_doc(siguiente.get("num_factura")):
+        return False
+    if not _tiene_las_dos_partes(anterior) or _tiene_las_dos_partes(siguiente):
+        return False
+    if not _comparten_una_parte(anterior, siguiente) or \
+            not _resumen_fiscal_cuadra(siguiente):
+        return False
+    total_a = _num(anterior.get("total"))
+    total_b = _num(siguiente.get("total"))
+    return total_a is None or (total_b is not None and abs(total_b) >= abs(total_a))
+
+
 def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     """Reconoce fragmentos consecutivos sin ocultar facturas duplicadas.
 
@@ -600,19 +658,24 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     _, origen_b, pagina_b, datos_b = siguiente
     if not _mismo_origen(origen_a, origen_b):
         return False
+    ultima_a = datos_a.get("_ultima_pagina_consolidada", pagina_a)
     try:
-        if int(pagina_b) != int(pagina_a) + 1:
+        if int(pagina_b) != int(ultima_a) + 1:
             return False
     except (TypeError, ValueError):
         return False
     numero_a = _num_doc(datos_a.get("num_factura"))
     numero_b = _num_doc(datos_b.get("num_factura"))
     if not numero_a or numero_a != numero_b:
-        return False
+        if not _continuacion_sin_numero(datos_a, datos_b):
+            return False
     fecha_a = str(datos_a.get("fecha") or "").strip()
     fecha_b = str(datos_b.get("fecha") or "").strip()
     if fecha_a and fecha_b and fecha_a != fecha_b:
         return False
+    estado_a, estado_b = _estado_pagina(datos_a), _estado_pagina(datos_b)
+    if estado_a in {"inicio", "intermedia"} and estado_b in {"intermedia", "final"}:
+        return True
     completas_a = _tiene_las_dos_partes(datos_a) and _tiene_importes(datos_a)
     completas_b = _tiene_las_dos_partes(datos_b) and _tiene_importes(datos_b)
     return not (completas_a and completas_b)
@@ -636,8 +699,13 @@ def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
         if fusion.get(campo) in (None, "", []):
             fusion[campo] = deepcopy(valor)
 
+    # Si la ultima hoja trae un resumen fiscal que cuadra por si solo, contiene
+    # el resumen de TODA la factura: sustituye a cualquier subtotal de articulos
+    # que Gemini hubiera confundido con base/total en una hoja anterior.
+    fuentes_lineas = (siguiente,) if _resumen_fiscal_cuadra(siguiente) \
+        else (primera, siguiente)
     lineas, vistas = [], set()
-    for datos in (primera, siguiente):
+    for datos in fuentes_lineas:
         for linea in datos.get("lineas_iva") or []:
             if not isinstance(linea, dict) or not _tiene_linea_fiscal(linea):
                 continue
@@ -676,8 +744,9 @@ def consolidar_paginas_factura(registros: List[tuple]) -> List[tuple]:
         actual = (registro[0], registro[1], registro[2], deepcopy(registro[3]))
         if salida and _son_paginas_de_la_misma_factura(salida[-1], actual):
             img, origen, pagina, datos = salida[-1]
-            salida[-1] = (img, origen, pagina,
-                          _fusionar_datos_paginas(datos, actual[3]))
+            fusion = _fusionar_datos_paginas(datos, actual[3])
+            fusion["_ultima_pagina_consolidada"] = actual[2]
+            salida[-1] = (img, origen, pagina, fusion)
         else:
             salida.append(actual)
     return salida

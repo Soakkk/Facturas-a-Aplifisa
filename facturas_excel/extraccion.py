@@ -107,7 +107,15 @@ pie de pagina: si alli se repiten el numero de factura y la fecha, devuelvelos
 en num_factura y fecha aunque no aparezca otra cabecera. Extrae de esta hoja el
 resumen fiscal (bases, IVA, recargo y total) aunque los datos del destinatario
 solo estuvieran en la primera. No inventes las partes que no se vean: dejalas a
-null; el programa unira despues las hojas consecutivas por numero de factura.
+null. Indica ademas si la hoja es "unica", "inicio", "intermedia" o "final":
+- "inicio": tiene cabecera y lineas de articulos, pero no el resumen fiscal final.
+- "intermedia": continua lineas de articulos sin cabecera ni resumen final.
+- "final": continua una factura anterior y contiene sus ultimos articulos o el
+  resumen fiscal definitivo, aunque no repita numero o destinatario.
+- "unica": contiene por si sola cabecera y resumen fiscal definitivo.
+No confundas un SUBTOTAL DE ARTICULOS al final de una hoja inicial/intermedia
+con la base imponible o el total de la factura. En esas hojas deja lineas_iva y
+total vacios/null. El resumen fiscal de la hoja final es el que manda.
 
 EN CAMBIO, EL NIF Y EL NUMERO SI PUEDEN VENIR A MANO. El asesor anota a mano el
 CIF/NIF cuando el impreso no se lee o es confuso, y numera las facturas para los
@@ -124,6 +132,7 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "num_factura": "...",
   "fecha": "dd/mm/aaaa",
   "fecha_operacion": "dd/mm/aaaa o null",
+  "estado_pagina_factura": "unica/inicio/intermedia/final",
   "lineas_iva": [{{"base": 0.0, "tipo_iva": 0.0, "cuota_iva": 0.0,
                   "pct_requiv": null, "cuota_requiv": null}}],
   "base_irpf": null, "pct_irpf": null, "cuota_irpf": null,
