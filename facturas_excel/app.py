@@ -2337,7 +2337,9 @@ class VentanaPrincipal(QMainWindow):
         # Una hoja que se quedo pegada en el alimentador no da ningun error:
         # simplemente esa factura no esta. El salto de numeracion la delata.
         avisos += huecos_de_numeracion(
-            [d["factura"] for d in self.filas])
+            [d["factura"] for d in self.filas],
+            [self._tipo_fila(r) for r in range(len(self.filas))],
+            getattr(self, "_cliente_nombre", ""))
         sustituidas = [r for r in range(len(self.filas))
                        if "SUSTITUIDA" in (self.filas[r]["aviso"] or "")]
         for r in sustituidas:

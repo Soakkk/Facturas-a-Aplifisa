@@ -305,23 +305,41 @@ def _trozos(num_factura: str):
     return texto, numeros
 
 
-def huecos_de_numeracion(facturas: List[Factura]) -> List[str]:
+def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None,
+                         cliente_nombre: str = "") -> List[str]:
     """Numeros que faltan en una serie seguida del mismo emisor.
 
     Devuelve avisos ya escritos. Es un AVISO, no un error: puede que esa
     factura simplemente no la haya traido el cliente.
+
+    En los gastos, el emisor es la contraparte guardada en ``Factura`` y cada
+    proveedor lleva su serie. En los ingresos ocurre al reves: el emisor es el
+    cliente de la asesoria, mientras ``Factura.nombre`` es cada comprador. Por
+    eso todas las ventas del lote se comprueban juntas, no comprador a
+    comprador. Las varias lineas de IVA de un mismo apunte cuentan una vez.
     """
-    series: Dict[tuple, List[tuple]] = {}
-    for f in facturas:
+    series: Dict[tuple, Dict[str, tuple]] = {}
+    for indice, f in enumerate(facturas):
         trozos = _trozos(f.num_factura)
         if not trozos:
             continue
         texto, numeros = trozos
-        clave = ((f.nif or f.nombre or "").strip().upper(), texto, len(numeros))
-        series.setdefault(clave, []).append((numeros, f.nombre or ""))
+        tipo = tipos[indice] if tipos and indice < len(tipos) else ""
+        es_venta = tipo in ("venta", "ingreso")
+        if es_venta:
+            identidad = "__SERIE_INGRESOS__"
+            quien = cliente_nombre or "la serie de ingresos del cliente"
+        else:
+            identidad = (f.nif or f.nombre or "").strip().upper()
+            quien = f.nombre or ""
+        clave = (identidad, texto, len(numeros))
+        numero_completo = str(f.num_factura or "").strip().upper()
+        series.setdefault(clave, {}).setdefault(
+            numero_completo, (numeros, quien))
 
     avisos = []
-    for (_, texto, cuantos), entradas in series.items():
+    for (_, texto, cuantos), por_numero in series.items():
+        entradas = list(por_numero.values())
         if len(entradas) < MINIMO_SERIE:
             continue
         # El contador es el unico hueco numerico que cambia (el resto suele ser

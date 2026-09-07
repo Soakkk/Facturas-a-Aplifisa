@@ -6,6 +6,17 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.10": """
+<h2>Novedades de la versión 1.13.10</h2>
+<ul>
+  <li><b>Numeración correcta en ingresos:</b> la serie se comprueba para el
+      cliente emisor completo, no por cada comprador de sus facturas.</li>
+  <li><b>Sin falsos avisos por IVA:</b> una factura con varias bases o tipos de
+      IVA cuenta una sola vez al buscar hojas ausentes.</li>
+  <li><b>El Excel no cambia:</b> la corrección afecta únicamente al aviso de
+      control; los apuntes y totales continúan como estaban.</li>
+</ul>
+""",
     "1.13.9": """
 <h2>Novedades de la versión 1.13.9</h2>
 <ul>
