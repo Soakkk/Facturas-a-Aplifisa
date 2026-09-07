@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 from collections import Counter
@@ -87,6 +88,15 @@ COLOR_REVISADO = QColor("#1565c0")
 COLOR_MANUAL = QColor("#616161")
 ICONO_REVISADO = "✓"
 ICONO_MANUAL = "M"
+
+_AVISO_EJERCICIOS_ANTIGUO = re.compile(
+    r"\s*El PDF mezcla varios ejercicios; se ha archivado en el \d{4}, "
+    r"que es el más frecuente\. Revise su ubicación\.", re.IGNORECASE)
+
+
+def _sin_aviso_ejercicios_antiguo(aviso: str) -> str:
+    """Quita el aviso global que antes se copiaba en todas las facturas."""
+    return _AVISO_EJERCICIOS_ANTIGUO.sub("", str(aviso or "")).strip()
 
 HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
@@ -338,6 +348,7 @@ class VentanaPrincipal(QMainWindow):
         self._bloques = []
         self._ultimo_borrado = []
         self._duplicados = set()
+        self._ejercicio_lote = None
         self._rutas_actuales = []
         self._hilo_update = None
         self._hilo_descarga_update = None
@@ -1647,11 +1658,6 @@ class VentanaPrincipal(QMainWindow):
             if fecha:
                 ejercicios.append(fecha.year)
         ejercicio = Counter(ejercicios).most_common(1)[0][0] if ejercicios else None
-        if len(set(ejercicios)) > 1:
-            aviso = ("El PDF mezcla varios ejercicios; se ha archivado en el "
-                     f"{ejercicio}, que es el más frecuente. Revise su ubicación.")
-            for _, pr in procesadas:
-                pr.aviso = f"{pr.aviso} {aviso}".strip()
         if copiar:
             nueva = archivo.copiar_a_cliente(
                 ruta, cliente, tipo, ejercicio=ejercicio)
@@ -2347,8 +2353,14 @@ class VentanaPrincipal(QMainWindow):
         res = validar(f)
         estado = res.estado
         msgs = list(res.mensajes)
-        if self.filas[r]["aviso"]:
-            msgs.append(self.filas[r]["aviso"])
+        # Las sesiones de versiones anteriores guardaron un aviso de ejercicio
+        # en TODAS las filas. Se limpia al abrirlas; ahora se señala únicamente
+        # la factura cuya fecha no pertenece al ejercicio predominante.
+        aviso_guardado = _sin_aviso_ejercicios_antiguo(
+            self.filas[r]["aviso"])
+        self.filas[r]["aviso"] = aviso_guardado
+        if aviso_guardado:
+            msgs.append(aviso_guardado)
             if estado == OK:
                 estado = REVISAR
         aviso_tipo = self._aviso_tipo(r)
@@ -2362,6 +2374,12 @@ class VentanaPrincipal(QMainWindow):
             msgs.append(f"FACTURA DUPLICADA: es la misma que la línea "
                         f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
                         f"base y tipo de IVA). Bórrala o quedará registrada dos veces.")
+            estado = ERROR
+        aviso_ejercicio = self._aviso_ejercicio(f)
+        if aviso_ejercicio:
+            msgs.append(aviso_ejercicio)
+            # Igual que un duplicado: no se puede confirmar para ocultarlo,
+            # porque exportarlo llevaría el apunte al ejercicio equivocado.
             estado = ERROR
         confirmada = (estado == REVISAR and f.revision_confirmada
                       and not f.tratamiento_manual)
@@ -2377,8 +2395,116 @@ class VentanaPrincipal(QMainWindow):
                             COLOR_REVISADO if confirmada else COLOR_ESTADO[estado])
         celda.setForeground(QColor("white"))
         celda.setToolTip("\n".join(msgs) if msgs else "Todo correcto")
+        self._resaltar_campos_incidencia(r, estado, msgs)
         self.tabla.blockSignals(False)
         self._resumen()
+
+    @staticmethod
+    def _clave_factura_para_ejercicio(f: Factura, fila: int) -> tuple:
+        """Una factura con varias líneas de IVA cuenta una sola vez."""
+        numero = re.sub(r"\s+", "", str(f.num_factura or "")).upper()
+        nif = normaliza_nif(f.nif)
+        fecha = fecha_de(f.fecha)
+        if numero:
+            return (str(f.origen_imagen or ""), numero, nif,
+                    fecha.isoformat() if fecha else str(f.fecha or ""))
+        # Sin número no es seguro unir dos documentos distintos.
+        return ("fila", fila)
+
+    def _calcular_ejercicio_lote(self):
+        """Ejercicio de trabajo: el más frecuente, contando facturas únicas."""
+        ejercicios = []
+        vistas = set()
+        for r in range(self.tabla.rowCount()):
+            f = self._leer_fila(r)
+            clave = self._clave_factura_para_ejercicio(f, r)
+            if clave in vistas:
+                continue
+            vistas.add(clave)
+            fecha = fecha_de(f.fecha)
+            if fecha:
+                ejercicios.append(fecha.year)
+        return (Counter(ejercicios).most_common(1)[0][0]
+                if ejercicios else None)
+
+    def _aviso_ejercicio(self, f: Factura) -> str:
+        fecha = fecha_de(f.fecha)
+        ejercicio = getattr(self, "_ejercicio_lote", None)
+        if not fecha or not ejercicio or fecha.year == ejercicio:
+            return ""
+        return (f"AÑO DISTINTO: la fecha leída es {f.fecha} (año {fecha.year}), "
+                f"pero el ejercicio del lote es {ejercicio}. Corrija la fecha "
+                "o compruebe si esta factura pertenece al lote.")
+
+    def _resaltar_campos_incidencia(self, fila: int, estado: str,
+                                    mensajes) -> None:
+        """Colorea el dato concreto que explica el semáforo de la fila."""
+        columnas = (C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF,
+                    C_BASE, C_PCT, C_CUOTA, C_TOTAL)
+        for columna in columnas:
+            item = self.tabla.item(fila, columna)
+            if not item:
+                continue
+            item.setBackground(QColor())
+            item.setForeground(QColor())
+            fuente = item.font()
+            fuente.setBold(False)
+            item.setFont(fuente)
+            # Se conservan las ayudas permanentes de cuenta, GXX y suplido.
+            if columna not in (C_CUENTA, C_GXX) and not (
+                    columna == C_BASE and getattr(
+                        self.filas[fila]["factura"], "es_suplido", False)):
+                item.setToolTip("")
+
+        por_columna = {}
+
+        def marcar(columna, mensaje):
+            por_columna.setdefault(columna, []).append(mensaje)
+
+        for mensaje in mensajes:
+            texto = str(mensaje)
+            bajo = texto.lower()
+            if "año distinto" in bajo or bajo.startswith("falta la fecha") \
+                    or bajo.startswith("no se entiende la fecha"):
+                marcar(C_FECHA, texto)
+            if "factura duplicada" in bajo or bajo.startswith(
+                    "falta el nº de factura"):
+                marcar(C_NUM, texto)
+            if bajo.startswith("falta el nombre"):
+                marcar(C_NOMBRE, texto)
+            if "nif/cif" in bajo or bajo.startswith("falta el nif"):
+                marcar(C_NIF, texto)
+            if "concepto" in bajo or "subclave" in bajo or bajo.startswith(
+                    "la cuenta "):
+                marcar(C_CUENTA, texto)
+                if "subclave" in bajo:
+                    marcar(C_GXX, texto)
+            if bajo.startswith("falta la base imponible"):
+                marcar(C_BASE, texto)
+            if bajo.startswith("falta el tipo de iva"):
+                marcar(C_PCT, texto)
+            if bajo.startswith("falta la cuota de iva") or bajo.startswith(
+                    "cuota iva descuadra"):
+                marcar(C_CUOTA, texto)
+            if bajo.startswith("falta el total") or bajo.startswith(
+                    "el total no cuadra") or bajo.startswith("el signo no cuadra"):
+                marcar(C_TOTAL, texto)
+
+        fondo = QColor("#ffcdd2" if estado == ERROR else "#fff3cd")
+        texto_color = QColor("#7f0000" if estado == ERROR else "#6b4f00")
+        for columna, detalles in por_columna.items():
+            item = self.tabla.item(fila, columna)
+            if not item:
+                continue
+            item.setBackground(fondo)
+            item.setForeground(texto_color)
+            fuente = item.font()
+            fuente.setBold(True)
+            item.setFont(fuente)
+            ayuda_anterior = item.toolTip().strip()
+            ayuda = "\n".join(dict.fromkeys(detalles))
+            item.setToolTip(
+                f"{ayuda_anterior}\n\n{ayuda}" if ayuda_anterior else ayuda)
 
     def _aviso_tipo(self, r) -> str:
         """Comprueba por dos vias que la fila esta bien clasificada.
@@ -2409,6 +2535,7 @@ class VentanaPrincipal(QMainWindow):
         return ""
 
     def _revalidar_todo(self):
+        self._ejercicio_lote = self._calcular_ejercicio_lote()
         self._duplicados = encontrar_duplicados(
             [self._leer_fila(r) for r in range(self.tabla.rowCount())])
         for r in range(self.tabla.rowCount()):
@@ -2429,6 +2556,21 @@ class VentanaPrincipal(QMainWindow):
             f = self.filas[r]["factura"]
             avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
                           f"{f.nombre or '?'} — repetida de la línea {original + 1}.")
+        ejercicios_vistos = set()
+        for r in range(len(self.filas)):
+            f = self.filas[r]["factura"]
+            aviso = self._aviso_ejercicio(f)
+            if not aviso:
+                continue
+            clave = self._clave_factura_para_ejercicio(f, r)
+            if clave in ejercicios_vistos:
+                continue
+            ejercicios_vistos.add(clave)
+            fecha = fecha_de(f.fecha)
+            avisos.append(
+                f"Línea {r + 1}: factura {f.num_factura or '?'} de "
+                f"{f.nombre or '?'} — fecha {f.fecha} (año {fecha.year}); "
+                f"el lote es de {self._ejercicio_lote}.")
         # Una hoja que se quedo pegada en el alimentador no da ningun error:
         # simplemente esa factura no esta. El salto de numeracion la delata.
         avisos += huecos_de_numeracion(
@@ -2452,7 +2594,8 @@ class VentanaPrincipal(QMainWindow):
             "\n".join(avisos[:6])
             + (f"\n… y {n - 6} más." if n > 6 else "")
             + "\n\nUna factura repetida se registra dos veces; una que falta "
-              "no se registra nunca.")
+              "no se registra nunca; una fecha de otro año lleva el apunte "
+              "al ejercicio equivocado.")
         self.alerta.setVisible(True)
 
     def _resumen(self):
@@ -2463,6 +2606,8 @@ class VentanaPrincipal(QMainWindow):
             if self.filas[r]["aviso"] and e == OK:
                 e = REVISAR
             if r in self._duplicados:
+                e = ERROR
+            if self._aviso_ejercicio(f):
                 e = ERROR
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")

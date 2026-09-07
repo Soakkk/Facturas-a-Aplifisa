@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.13": """
+<h2>Novedades de la versión 1.13.13</h2>
+<ul>
+  <li><b>Año incorrecto localizado:</b> solo queda en rojo la factura cuya
+      fecha pertenece a un ejercicio distinto del predominante en el lote.</li>
+  <li><b>Aviso concreto:</b> la alerta superior indica línea, número, fecha
+      leída y los dos años para encontrar y corregir el error enseguida.</li>
+  <li><b>El campo problemático queda marcado:</b> fecha, número, NIF, base,
+      IVA, cuota o total se resaltan directamente para localizar la corrección.</li>
+  <li><b>Sin falsos amarillos:</b> se elimina también el antiguo aviso global
+      guardado en sesiones anteriores, que coloreaba todas las facturas.</li>
+</ul>
+""",
     "1.13.12": """
 <h2>Novedades de la versión 1.13.12</h2>
 <ul>

@@ -157,6 +157,78 @@ def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
     assert v.alerta.isHidden()
 
 
+def test_solo_la_factura_de_otro_ejercicio_queda_en_rojo():
+    from facturas_excel.app import C_FECHA, ICONO_ESTADO
+    from facturas_excel.validacion import ERROR
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    aviso_antiguo = (
+        "El PDF mezcla varios ejercicios; se ha archivado en el 2026, "
+        "que es el más frecuente. Revise su ubicación.")
+    for numero, fecha in (("F-100", "17/02/2026"),
+                          ("F-101", "19/02/2026"),
+                          ("F-102", "25/02/2020")):
+        factura = Factura(
+            num_factura=numero, fecha=fecha, nombre="PROVEEDOR DE PRUEBA SL",
+            nif="B30048276", concepto="600", subclave="G01",
+            base_iva=100, pct_iva=4, cuota_iva=4, total_impreso=104,
+            revision_confirmada=True,
+        )
+        v._anadir_fila(b"", factura, "gasto", "600", "G01", aviso_antiguo)
+
+    v._revalidar_todo()
+
+    assert v._ejercicio_lote == 2026
+    for fila in (0, 1):
+        assert "mezcla varios ejercicios" not in v.tabla.item(
+            fila, C_ESTADO).toolTip()
+        assert "AÑO DISTINTO" not in v.tabla.item(fila, C_ESTADO).toolTip()
+        assert v.tabla.item(fila, C_ESTADO).text() != ICONO_ESTADO[ERROR]
+    erronea = v.tabla.item(2, C_ESTADO)
+    assert erronea.text() == ICONO_ESTADO[ERROR]
+    assert "AÑO DISTINTO" in erronea.toolTip()
+    assert "25/02/2020" in erronea.toolTip()
+    assert "lote es 2026" in erronea.toolTip()
+    assert "F-102" in v.lbl_alerta_texto.text()
+    fecha_erronea = v.tabla.item(2, C_FECHA)
+    assert fecha_erronea.background().color().name() == "#ffcdd2"
+    assert fecha_erronea.font().bold()
+    assert "AÑO DISTINTO" in fecha_erronea.toolTip()
+
+    # Al corregir el OCR, el campo vuelve automáticamente a su aspecto normal.
+    fecha_erronea.setText("25/02/2026")
+    v._revalidar_todo()
+    assert not fecha_erronea.background().color().isValid()
+    assert not fecha_erronea.font().bold()
+    assert "AÑO DISTINTO" not in fecha_erronea.toolTip()
+
+
+def test_factura_multi_iva_cuenta_una_vez_al_decidir_el_ejercicio():
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    for pct, base, cuota in ((21, 100, 21), (10, 100, 10)):
+        v._anadir_fila(b"", Factura(
+            num_factura="F-ANTIGUA", fecha="10/01/2020",
+            nombre="PROVEEDOR DE PRUEBA SL", nif="B30048276",
+            concepto="600", subclave="G01", base_iva=base, pct_iva=pct,
+            cuota_iva=cuota, total_impreso=231, lineas_factura=2,
+            origen_imagen="lote.pdf",
+        ), "gasto", "600", "G01", "")
+    for numero in ("F-200", "F-201"):
+        v._anadir_fila(b"", Factura(
+            num_factura=numero, fecha="10/01/2026",
+            nombre="OTRO PROVEEDOR DE PRUEBA SL", nif="B30048276",
+            concepto="600", subclave="G01", base_iva=100, pct_iva=4,
+            cuota_iva=4, total_impreso=104, origen_imagen="lote.pdf",
+        ), "gasto", "600", "G01", "")
+
+    v._revalidar_todo()
+
+    assert v._ejercicio_lote == 2026
+    assert "AÑO DISTINTO" in v.tabla.item(0, C_ESTADO).toolTip()
+    assert "AÑO DISTINTO" in v.tabla.item(1, C_ESTADO).toolTip()
+    assert v.lbl_alerta_texto.text().count("F-ANTIGUA") == 1
+
+
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     from PySide6.QtCore import Qt
     from facturas_excel.estilo import FUENTE_UI, QSS
