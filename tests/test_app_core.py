@@ -173,8 +173,9 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert v.layout_herramientas.getItemPosition(
         v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
     assert [v.btn_cargar.text(), v.btn_escanear.text(), v.btn_vaciar.text(),
-            v.btn_gastos.text()] == [
-        "Abrir PDF", "Escanear", "Vaciar todo", "Exportar a Aplifisa"]
+            v.btn_revisar_gemini.text(), v.btn_gastos.text()] == [
+        "Abrir PDF", "Escanear", "Vaciar todo", "Revisar Gemini",
+        "Exportar a Aplifisa"]
     acciones = [accion.text() for accion in v.menu_acciones.actions()]
     assert "Vaciar todo" not in acciones
     assert "Quitar bloque" in acciones
@@ -197,3 +198,23 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     v.resize(1420, 820)
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+
+
+def test_revisar_gemini_copia_la_orden_para_codex(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from facturas_excel import revision_gemini
+
+    texto = "orden segura para revisar Gemini"
+    monkeypatch.setattr(
+        revision_gemini, "guardar_solicitud",
+        lambda version: (texto, r"C:\datos\solicitud-revision-gemini.md"))
+    mensajes = []
+    monkeypatch.setattr(
+        QMessageBox, "information",
+        staticmethod(lambda *args: mensajes.append(args[2])))
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+
+    v.btn_revisar_gemini.click()
+
+    assert QApplication.clipboard().text() == texto
+    assert mensajes and "copiado al portapapeles" in mensajes[0]

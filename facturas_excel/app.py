@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
     __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
-    sesion, updater,
+    revision_gemini, sesion, updater,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
@@ -799,6 +799,8 @@ class VentanaPrincipal(QMainWindow):
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
                        lambda: self._comprobar_actualizaciones(silencioso=False))
+        menu.addAction("Pedir revisión del modelo Gemini",
+                       self._preparar_revision_gemini)
         menu.addAction("Novedades de esta versión…",
                        lambda: self._mostrar_notas_version(forzar=True))
         menu.addAction("Diagnóstico y sugerencias…",
@@ -830,6 +832,15 @@ class VentanaPrincipal(QMainWindow):
         self.btn_escanear.clicked.connect(self._escanear)
         accesos.addWidget(self.btn_escanear)
 
+        self.btn_revisar_gemini = QPushButton("Revisar Gemini")
+        self.btn_revisar_gemini.setObjectName("accesoRapido")
+        self.btn_revisar_gemini.setIcon(QIcon(ruta_recurso("check.svg")))
+        self.btn_revisar_gemini.setToolTip(
+            "Prepara y copia una orden para que Codex compruebe el modelo "
+            "actual, sus precios y su retirada sin sacrificar calidad.")
+        self.btn_revisar_gemini.clicked.connect(self._preparar_revision_gemini)
+        accesos.addWidget(self.btn_revisar_gemini)
+
         self.btn_vaciar = QPushButton("Vaciar todo")
         self.btn_vaciar.setObjectName("accesoPeligro")
         self.btn_vaciar.setIcon(QIcon(ruta_recurso("trash.svg")))
@@ -848,6 +859,25 @@ class VentanaPrincipal(QMainWindow):
 
     def _mostrar_notas_version_al_arrancar(self):
         self._mostrar_notas_version(forzar=False)
+
+    def _preparar_revision_gemini(self):
+        """Deja una orden lista para pegar en Codex, sin cambios automáticos."""
+        try:
+            texto, ruta = revision_gemini.guardar_solicitud(__version__)
+            QApplication.clipboard().setText(texto)
+        except OSError as error:
+            QMessageBox.warning(
+                self, "Revisar Gemini",
+                f"No se pudo preparar la solicitud:\n{error}")
+            return
+        QMessageBox.information(
+            self, "Revisar Gemini",
+            f"Modelo principal actual: <b>{revision_gemini.modelo_principal()}</b>"
+            "<br><br>La orden de revisión se ha copiado al portapapeles. "
+            "Abra Codex y péguela en una tarea: comprobará disponibilidad, "
+            "retirada, precio y modelos estables, sin cambiar a uno que reduzca "
+            "la calidad.<br><br>También se ha guardado en:<br>"
+            f"<small>{ruta}</small>")
 
     def _mostrar_notas_version(self, forzar: bool = False):
         if not forzar and notas_version.ya_vistas(__version__):

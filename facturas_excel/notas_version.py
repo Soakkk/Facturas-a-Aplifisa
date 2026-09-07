@@ -6,6 +6,17 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.9": """
+<h2>Novedades de la versión 1.13.9</h2>
+<ul>
+  <li><b>Revisar Gemini:</b> un nuevo botón visible prepara la orden para que
+      Codex compruebe disponibilidad, retirada, precio y modelos estables.</li>
+  <li><b>La calidad manda:</b> la solicitud prohíbe cambiar a un modelo más
+      barato si eso puede empeorar la lectura de las facturas.</li>
+  <li><b>Sin cambios a ciegas:</b> el programa conserva el modelo probado y
+      solo pide una migración cuando la documentación y las pruebas la avalen.</li>
+</ul>
+""",
     "1.13.7": """
 <h2>Novedades de la versión 1.13.7</h2>
 <ul>
