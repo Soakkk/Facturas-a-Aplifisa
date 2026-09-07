@@ -64,9 +64,9 @@ from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
 from facturas_excel.pdf import PAGINAS_POR_BLOQUE, cargar_imagenes, dividir_pdf
 from facturas_excel.procesar import (
-    a_total_factura, analizar_cliente, clave_proveedor, detectar_cliente,
-    concepto_gasto, fusionar_paginas_manual, normaliza_nif,
-    normalizar_importes_abono, preparar_lote,
+    a_total_factura, analizar_cliente, clave_proveedor, construir,
+    detectar_cliente,
+    fusionar_paginas_manual, normaliza_nif, preparar_lote,
     recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
 )
 from facturas_excel.registro import (
@@ -1029,6 +1029,7 @@ class VentanaPrincipal(QMainWindow):
             self.combo_recargo.setCurrentIndex(max(0, indice))
             self.combo_recargo.blockSignals(False)
             self._actualizar_combo_bloques()
+            self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
             self.tabla.setRowCount(0)
             self.filas = []
             for fila in datos.get("filas", []):
@@ -1036,7 +1037,6 @@ class VentanaPrincipal(QMainWindow):
                     fila["png"], fila["factura"], fila["tipo"],
                     fila["cuenta"], fila["gxx"], fila.get("aviso", ""),
                     fila.get("bloque", ""), fila.get("fuentes"))
-            self._corregir_abonos_del_lote()
             self._pintar_cliente()
             self._revalidar_todo()
             hay_datos = self.tabla.rowCount() > 0
@@ -1054,6 +1054,55 @@ class VentanaPrincipal(QMainWindow):
             self.tabla.setRowCount(0)
             self.filas = []
             self._limpiar_visor()
+
+    @staticmethod
+    def _numero_guardado(valor) -> str:
+        return "".join(c for c in str(valor or "") if c.isalnum()).upper()
+
+    def _reparar_abonos_emitidos_guardados(self, filas_guardadas) -> None:
+        """Deshace la conversión errónea a gasto de la versión 1.13.14.
+
+        Solo actúa con prueba fuerte: total negativo y NIF del cliente como
+        emisor en los datos originales. Las elecciones sin esa prueba no se
+        tocan.
+        """
+        cliente_nif = normaliza_nif(getattr(self, "_cliente_nif", ""))
+        if not cliente_nif:
+            return
+        bloques = {b.get("nombre", ""): b for b in self._bloques}
+        for fila in filas_guardadas:
+            factura = fila.get("factura")
+            if not factura or factura.total_impreso is None \
+                    or factura.total_impreso >= 0:
+                continue
+            bloque = bloques.get(fila.get("bloque", ""), {})
+            numero = self._numero_guardado(factura.num_factura)
+            datos = next((registro[-1] for registro in bloque.get("crudos", [])
+                          if registro and isinstance(registro[-1], dict)
+                          and self._numero_guardado(
+                              registro[-1].get("num_factura")) == numero), None)
+            if not datos or normaliza_nif(datos.get("emisor_nif")) != cliente_nif \
+                    or normaliza_nif(datos.get("receptor_nif")) == cliente_nif:
+                continue
+            correcta = construir(datos, cliente_nif,
+                                 getattr(self, "_cliente_nombre", ""))
+            if correcta.tipo != "venta":
+                continue
+            fila["tipo"], fila["cuenta"], fila["gxx"] = (
+                "venta", correcta.cuenta, correcta.gxx)
+            factura.tipo_revision = "venta"
+            factura.concepto, factura.subclave = correcta.cuenta, correcta.gxx
+            for fuente in fila.get("fuentes", []):
+                fuente.tipo_revision = "venta"
+                fuente.concepto, fuente.subclave = correcta.cuenta, correcta.gxx
+            for _png, pr in bloque.get("procesadas", []):
+                if not pr.facturas or self._numero_guardado(
+                        pr.facturas[0].num_factura) != numero:
+                    continue
+                pr.tipo, pr.cuenta, pr.gxx = "venta", correcta.cuenta, correcta.gxx
+                for linea in pr.facturas:
+                    linea.tipo_revision = "venta"
+                    linea.concepto, linea.subclave = correcta.cuenta, correcta.gxx
 
     def closeEvent(self, ev):
         # No destruir QThreads vivos (abortaria el proceso)
@@ -1865,111 +1914,7 @@ class VentanaPrincipal(QMainWindow):
                     self._anadir_fila(
                         png, f, f.tipo_revision or vista.tipo, vista.cuenta,
                         vista.gxx, vista.aviso, bloque["nombre"], origenes)
-        self._corregir_abonos_del_lote()
         self.tabla.blockSignals(False)
-
-    @staticmethod
-    def _numero_documento(valor) -> str:
-        return "".join(c for c in str(valor or "") if c.isalnum()).upper()
-
-    def _datos_crudos_factura(self, bloque: dict, factura: Factura) -> dict:
-        numero = self._numero_documento(factura.num_factura)
-        for registro in bloque.get("crudos", []):
-            if not registro:
-                continue
-            datos = registro[-1]
-            if isinstance(datos, dict) and self._numero_documento(
-                    datos.get("num_factura")) == numero:
-                return datos
-        return {}
-
-    def _corregir_abonos_del_lote(self) -> None:
-        """Un abono de un taco de gastos es menor gasto, nunca ingreso.
-
-        Si el PDF se abrió sin declarar el tipo, se usa la mayoría de facturas
-        positivas del mismo bloque. Una rectificativa de ventas sigue siendo
-        ingreso negativo cuando el bloque es de ingresos.
-        """
-        bloques = {b["nombre"]: b for b in self._bloques}
-        filas_por_bloque = {}
-        for fila, registro in enumerate(self.filas):
-            filas_por_bloque.setdefault(registro.get("bloque", ""), []).append(fila)
-
-        for nombre_bloque, filas in filas_por_bloque.items():
-            bloque = bloques.get(nombre_bloque, {})
-            declarado = str(bloque.get("tipo_declarado", "")).lower()
-            esperado = {"gastos": "gasto", "ingresos": "venta"}.get(declarado)
-            if not esperado:
-                tipos_positivos = []
-                for fila in filas:
-                    f = self.filas[fila]["factura"]
-                    if (f.total_impreso or 0) >= 0:
-                        tipos_positivos.append(self._tipo_fila(fila))
-                if tipos_positivos:
-                    tipo, veces = Counter(tipos_positivos).most_common(1)[0]
-                    if veces > len(tipos_positivos) / 2:
-                        esperado = tipo
-            if not esperado:
-                continue
-
-            for fila in filas:
-                registro = self.filas[fila]
-                f = registro["factura"]
-                if f.total_impreso is None or f.total_impreso >= 0:
-                    continue
-                fuentes = registro.get("fuentes") or [f]
-                normalizar_importes_abono(fuentes)
-                normalizar_importes_abono([f])
-                for columna, campo in ((C_BASE, "base_iva"),
-                                       (C_CUOTA, "cuota_iva"),
-                                       (C_TOTAL, "total_impreso")):
-                    self.tabla.item(fila, columna).setText(fmt(getattr(f, campo)))
-                # Una elección manual expresa siempre prevalece.
-                if f.tipo_revision and f.tipo_revision != esperado:
-                    continue
-                combo = self.tabla.cellWidget(fila, C_TIPO)
-                cambia_tipo = combo.currentData() != esperado
-                if cambia_tipo:
-                    combo.blockSignals(True)
-                    combo.setCurrentIndex(combo.findData(esperado))
-                    combo.blockSignals(False)
-                    f.tipo_revision = esperado
-
-                if cambia_tipo and esperado == "gasto":
-                    cuenta, gxx = concepto_gasto(self._datos_crudos_factura(
-                        bloque, f))
-                elif cambia_tipo:
-                    # Solo se usa si una rectificativa de venta estaba al revés;
-                    # la cuenta estándar de ventas es el respaldo seguro.
-                    cuenta, gxx = "700", "I01"
-                else:
-                    cuenta = self.tabla.item(fila, C_CUENTA).text()
-                    gxx = self.tabla.item(fila, C_GXX).text() or None
-                self.tabla.item(fila, C_CUENTA).setText(cuenta or (
-                    "600" if esperado == "gasto" else "700"))
-                self.tabla.item(fila, C_GXX).setText(gxx or (
-                    "G01" if esperado == "gasto" else "I01"))
-                # Mantener también el bloque procesado coherente para cambios
-                # de régimen, reconstrucciones de tabla y futuras sesiones.
-                numero = self._numero_documento(f.num_factura)
-                for _png, pr in bloque.get("procesadas", []):
-                    misma_instancia = any(
-                        linea is fuente for linea in pr.facturas
-                        for fuente in fuentes)
-                    misma_referencia = (
-                        pr.facturas
-                        and self._numero_documento(
-                            pr.facturas[0].num_factura) == numero
-                        and pr.facturas[0].pagina_origen == f.pagina_origen)
-                    if not misma_instancia and not misma_referencia:
-                        continue
-                    pr.tipo, pr.cuenta, pr.gxx = esperado, cuenta, gxx
-                    normalizar_importes_abono(pr.facturas)
-                    for linea in pr.facturas:
-                        if cambia_tipo:
-                            linea.tipo_revision = esperado
-                            linea.concepto = cuenta
-                            linea.subclave = gxx
 
     def _on_recargo(self):
         """Cambiar el régimen rehace la tabla: cambia como se registra el gasto."""

@@ -229,49 +229,37 @@ def test_factura_multi_iva_cuenta_una_vez_al_decidir_el_ejercicio():
     assert v.lbl_alerta_texto.text().count("F-ANTIGUA") == 1
 
 
-def test_abono_de_proveedor_es_menor_gasto_y_el_resumen_es_neto():
-    from facturas_excel.app import C_BASE, C_CUENTA, C_CUOTA, C_GXX, C_TOTAL
+def test_repara_sesion_si_un_abono_emitido_se_guardo_como_gasto():
     from facturas_excel.procesar import FacturaProcesada
 
-    normal = Factura(
-        num_factura="F-300", fecha="10/04/2026", nombre="PROVEEDOR UNO SL",
-        nif="B30048276", concepto="600", subclave="G01", base_iva=100,
-        pct_iva=21, cuota_iva=21, total_impreso=121,
+    cliente = "12345678Z"
+    f = Factura(
+        num_factura="AB-400", fecha="16/04/2026", nombre="COMPRADOR PRUEBA SL",
+        nif="B30048276", concepto="600", subclave="G01", base_iva=-50,
+        pct_iva=21, cuota_iva=-10.5, total_impreso=-60.5,
+        tipo_revision="gasto",
     )
-    # Simula el fallo observado: Gemini invierte emisor/receptor, lo clasifica
-    # como venta y pierde los signos del desglose, aunque el total sí es abono.
-    abono = Factura(
-        num_factura="AB-301", fecha="11/04/2026", nombre="PROVEEDOR DOS SL",
-        nif="B86561412", concepto="700", subclave="I01", base_iva=50,
-        pct_iva=21, cuota_iva=10.5, total_impreso=-60.5,
-    )
-    procesadas = [
-        (b"", FacturaProcesada("gasto", [normal], "600", "G01", "lote.pdf", 1)),
-        (b"", FacturaProcesada("venta", [abono], "700", "I01", "lote.pdf", 2)),
-    ]
+    pr = FacturaProcesada("gasto", [f], "600", "G01", "lote.pdf", 1)
+    crudo = {
+        "emisor_nombre": "CLIENTE DE PRUEBA", "emisor_nif": cliente,
+        "receptor_nombre": "COMPRADOR PRUEBA SL", "receptor_nif": "B30048276",
+        "num_factura": "AB-400", "fecha": "16/04/2026",
+        "lineas_iva": [{"base": -50, "tipo_iva": 21, "cuota_iva": -10.5}],
+        "total": -60.5, "cuenta_ingreso": "700", "subclave_ingreso": "I01",
+    }
+    fila = {"factura": f, "tipo": "gasto", "cuenta": "600", "gxx": "G01",
+            "bloque": "LOTE", "fuentes": [f]}
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
-    v._bloques = [{
-        "nombre": "LOTE GASTOS", "procesadas": procesadas,
-        "cliente": "CLIENTE DE PRUEBA", "nif": "12345678Z",
-        "tipo_declarado": "gastos",
-        "crudos": [(b"", "lote.pdf", 2, {
-            "num_factura": "AB-301", "cuenta_gasto": "600",
-            "subclave_gxx": "G01", "concepto_texto": "mercancías",
-        })],
-    }]
+    v._cliente_nif, v._cliente_nombre = cliente, "CLIENTE DE PRUEBA"
+    v._bloques = [{"nombre": "LOTE", "procesadas": [(b"", pr)],
+                   "crudos": [(b"", "lote.pdf", 1, crudo)]}]
 
-    v._rellenar_tabla()
-    v._revalidar_todo()
+    v._reparar_abonos_emitidos_guardados([fila])
 
-    assert v._tipo_fila(1) == "gasto"
-    assert v.tabla.item(1, C_CUENTA).text() == "600"
-    assert v.tabla.item(1, C_GXX).text() == "G01"
-    assert v.tabla.item(1, C_BASE).text() == "-50"
-    assert v.tabla.item(1, C_CUOTA).text() == "-10,50"
-    assert v.tabla.item(1, C_TOTAL).text() == "-60,50"
-    assert v.tabla_resumen.item(0, v.tabla_resumen.columnCount() - 1).text() \
-        == "60,50 €"
-    assert all(v._tipo_fila(r) == "gasto" for r in range(2))
+    assert (fila["tipo"], fila["cuenta"], fila["gxx"]) == (
+        "venta", "700", "I01")
+    assert (pr.tipo, pr.cuenta, pr.gxx) == ("venta", "700", "I01")
+    assert f.tipo_revision == "venta"
 
 
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():

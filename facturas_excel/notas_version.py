@@ -6,6 +6,17 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.15": """
+<h2>Novedades de la versión 1.13.15</h2>
+<ul>
+  <li><b>Rectificativas de ventas:</b> si el cliente emitió el abono, se
+      mantiene como ingreso en la cuenta 700 con todos los importes negativos.</li>
+  <li><b>Clasificación contable correcta:</b> el signo negativo reduce el
+      importe, pero ya no cambia por sí solo una venta a gasto.</li>
+  <li><b>Resumen neto por tipo:</b> los abonos restan dentro de Gastos o
+      Ingresos según quién haya emitido la factura.</li>
+</ul>
+""",
     "1.13.14": """
 <h2>Novedades de la versión 1.13.14</h2>
 <ul>
