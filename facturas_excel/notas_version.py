@@ -6,6 +6,17 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.16": """
+<h2>Novedades de la versión 1.13.16</h2>
+<ul>
+  <li><b>Tabla nuevamente legible:</b> se corrige el fondo negro que podía
+      ocultar visualmente los datos después de revisar o corregir una fila.</li>
+  <li><b>Colores del sistema:</b> al desaparecer una incidencia se recuperan
+      correctamente el fondo normal, las filas alternas y el texto del tema.</li>
+  <li><b>Los datos nunca faltaron:</b> era únicamente un defecto de pintura;
+      importes, comprobaciones y exportación permanecían intactos.</li>
+</ul>
+""",
     "1.13.15": """
 <h2>Novedades de la versión 1.13.15</h2>
 <ul>

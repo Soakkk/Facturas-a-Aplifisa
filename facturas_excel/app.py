@@ -2496,8 +2496,11 @@ class VentanaPrincipal(QMainWindow):
             item = self.tabla.item(fila, columna)
             if not item:
                 continue
-            item.setBackground(QColor())
-            item.setForeground(QColor())
+            # QColor() se veía negro en algunos estilos de Windows. El rol
+            # vacío permite que Qt vuelva a pintar el fondo normal/alterno y
+            # el color de texto definido por el tema.
+            item.setData(Qt.BackgroundRole, None)
+            item.setData(Qt.ForegroundRole, None)
             fuente = item.font()
             fuente.setBold(False)
             item.setFont(fuente)

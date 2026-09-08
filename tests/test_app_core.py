@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtCore import QMimeData, Qt, QUrl
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel.app import (
@@ -198,9 +198,29 @@ def test_solo_la_factura_de_otro_ejercicio_queda_en_rojo():
     # Al corregir el OCR, el campo vuelve automáticamente a su aspecto normal.
     fecha_erronea.setText("25/02/2026")
     v._revalidar_todo()
-    assert not fecha_erronea.background().color().isValid()
+    assert fecha_erronea.data(Qt.BackgroundRole) is None
+    assert fecha_erronea.data(Qt.ForegroundRole) is None
     assert not fecha_erronea.font().bold()
     assert "AÑO DISTINTO" not in fecha_erronea.toolTip()
+
+
+def test_las_celdas_correctas_no_reciben_fondo_negro_al_revalidar():
+    from facturas_excel.app import C_BASE, C_FECHA, C_NOMBRE
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._anadir_fila(b"", Factura(
+        num_factura="F-150", fecha="18/02/2026", nombre="PROVEEDOR PRUEBA SL",
+        nif="B30048276", concepto="600", subclave="G01", base_iva=100,
+        pct_iva=4, cuota_iva=4, total_impreso=104,
+    ), "gasto", "600", "G01", "")
+
+    v._revalidar_todo()
+
+    for columna in (C_FECHA, C_NOMBRE, C_BASE):
+        item = v.tabla.item(0, columna)
+        assert item.data(Qt.BackgroundRole) is None
+        assert item.data(Qt.ForegroundRole) is None
+        assert item.text()
 
 
 def test_factura_multi_iva_cuenta_una_vez_al_decidir_el_ejercicio():
