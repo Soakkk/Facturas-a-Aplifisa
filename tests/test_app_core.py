@@ -284,6 +284,7 @@ def test_repara_sesion_si_un_abono_emitido_se_guardo_como_gasto():
 
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     from PySide6.QtCore import Qt
+    from facturas_excel.app import C_BLOQUE, C_CUENTA, C_GXX
     from facturas_excel.estilo import FUENTE_UI, QSS
 
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
@@ -297,6 +298,9 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
     assert v.layout_herramientas.getItemPosition(
         v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
+    assert v.tabla.isColumnHidden(C_BLOQUE)
+    assert v.tabla.columnWidth(C_CUENTA) <= 70
+    assert v.tabla.columnWidth(C_GXX) <= 60
     assert [v.btn_cargar.text(), v.btn_escanear.text(), v.btn_vaciar.text(),
             v.btn_revisar_gemini.text(), v.btn_gastos.text()] == [
         "Abrir PDF", "Escanear", "Vaciar todo", "Revisar Gemini",
@@ -324,6 +328,49 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     v.resize(1420, 820)
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+
+
+def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():
+    from facturas_excel.app import (
+        C_BASE_IRPF, C_CUOTA_IRPF, C_FECHA, C_NUM, C_PCT_IRPF,
+    )
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nombre = "PERSONA DE PRUEBA"
+    v._cliente_nif = "12345678Z"
+    v._bloques = [{"nombre": "LOTE", "crudos": [
+        (b"", "lote.pdf", 1, {
+            "emisor_nombre": "TRANSPORTES DE PRUEBA",
+            "emisor_nif": "12345678Z",
+        })]}]
+    datos = (
+        ("V-3", "30/06/2024", None),
+        ("V-1", "21/05/2024", 1.0),
+        ("V-2", "04/06/2024", None),
+    )
+    for numero, fecha, irpf in datos:
+        f = Factura(
+            num_factura=numero, fecha=fecha, nombre="CLIENTE FACTURA SL",
+            nif="B30048276", concepto="705", subclave="I01",
+            base_iva=100, pct_iva=21, cuota_iva=21,
+            total_impreso=120 if irpf else 121,
+        )
+        if irpf:
+            f.base_irpf, f.pct_irpf, f.cuota_irpf = 100, irpf, 1
+        v._anadir_fila(b"", f, "venta", "705", "I01", "")
+    v._revalidar_todo()
+
+    assert v.tabla.item(1, C_BASE_IRPF).text() == "100"
+    assert v.tabla.item(1, C_PCT_IRPF).text() == "1,00"
+    assert v.tabla.item(1, C_CUOTA_IRPF).text() == "1"
+    assert "SIN IRPF" in v.tabla.item(0, C_PCT_IRPF).toolTip()
+
+    v._ordenar_tabla_por(C_FECHA)
+    assert [v.tabla.item(r, C_NUM).text() for r in range(3)] == [
+        "V-1", "V-2", "V-3"]
+    v._ordenar_tabla_por(C_PCT_IRPF)
+    assert v.tabla.item(0, C_NUM).text() == "V-1"
+    assert v.tabla.item(0, C_PCT_IRPF).text() == "1,00"
 
 
 def test_boton_unir_hojas_reconstruye_una_sola_factura(monkeypatch):

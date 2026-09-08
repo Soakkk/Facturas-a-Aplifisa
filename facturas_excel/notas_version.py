@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.17": """
+<h2>Novedades de la versión 1.13.17</h2>
+<ul>
+  <li><b>IRPF visible y editable:</b> la tabla muestra base de retención,
+      porcentaje y cuota; en transportistas avisa si falta el 1%.</li>
+  <li><b>Ordenación por cabeceras:</b> pulse Fecha, IRPF, nombre, importe o
+      cualquier otra columna para ordenar; un segundo clic invierte el orden.</li>
+  <li><b>Retenciones primero:</b> al pulsar por primera vez una columna de IRPF
+      aparecen arriba las facturas que sí tienen retención.</li>
+  <li><b>Más espacio útil:</b> Bloque se oculta en la tabla —permanece en el
+      filtro y el resumen— y Cuenta/GXX ocupan menos ancho.</li>
+</ul>
+""",
     "1.13.16": """
 <h2>Novedades de la versión 1.13.16</h2>
 <ul>

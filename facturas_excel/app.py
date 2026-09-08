@@ -105,9 +105,11 @@ EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 # Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
 # con su base y sin % ni cuota de IVA (es como lo registra Aplifisa).
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Total", "Bloque"]
+        "NIF", "Base", "% IVA", "Cuota", "Base IRPF", "% IRPF",
+        "Retención", "Total", "Bloque"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_TOTAL, C_BLOQUE = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, \
+    C_BLOQUE = range(len(COLS))
 
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
 # IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
@@ -350,6 +352,8 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado = []
         self._duplicados = set()
         self._ejercicio_lote = None
+        self._columna_orden = None
+        self._orden_ascendente = True
         self._rutas_actuales = []
         self._hilo_update = None
         self._hilo_descarga_update = None
@@ -548,7 +552,20 @@ class VentanaPrincipal(QMainWindow):
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setHorizontalHeaderLabels([cabecera.upper() for cabecera in COLS])
-        self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        cabecera_tabla = self.tabla.horizontalHeader()
+        cabecera_tabla.setSectionResizeMode(QHeaderView.Interactive)
+        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
+        cabecera_tabla.setSectionsClickable(True)
+        cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
+        for columna, ancho in {
+                C_ESTADO: 62, C_TIPO: 96, C_CUENTA: 64, C_GXX: 55,
+                C_FECHA: 92, C_NUM: 100, C_NOMBRE: 190, C_NIF: 92,
+                C_BASE: 82, C_PCT: 55, C_CUOTA: 74, C_BASE_IRPF: 82,
+                C_PCT_IRPF: 62, C_CUOTA_IRPF: 78, C_TOTAL: 86}.items():
+            self.tabla.setColumnWidth(columna, ancho)
+        # El bloque sigue disponible en el filtro y en el resumen inferior;
+        # repetirlo en cada fila solo quitaba espacio a los datos contables.
+        self.tabla.setColumnHidden(C_BLOQUE, True)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla.itemChanged.connect(self._on_celda)
@@ -1986,6 +2003,8 @@ class VentanaPrincipal(QMainWindow):
             C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
             C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
             C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva),
+            C_BASE_IRPF: fmt(f.base_irpf), C_PCT_IRPF: fmt(f.pct_irpf),
+            C_CUOTA_IRPF: fmt(f.cuota_irpf),
             C_TOTAL: fmt(f.total_impreso),
             C_BLOQUE: bloque,
         }
@@ -2133,8 +2152,84 @@ class VentanaPrincipal(QMainWindow):
         f.base_iva = parse_numero(self.tabla.item(r, C_BASE).text())
         f.pct_iva = parse_numero(self.tabla.item(r, C_PCT).text())
         f.cuota_iva = parse_numero(self.tabla.item(r, C_CUOTA).text())
+        f.base_irpf = parse_numero(self.tabla.item(r, C_BASE_IRPF).text())
+        f.pct_irpf = parse_numero(self.tabla.item(r, C_PCT_IRPF).text())
+        f.cuota_irpf = parse_numero(self.tabla.item(r, C_CUOTA_IRPF).text())
         f.total_impreso = parse_numero(self.tabla.item(r, C_TOTAL).text())
         return f
+
+    def _ordenar_tabla_por(self, columna: int) -> None:
+        """Ordena la tabla sin desalinear las filas internas ni los combos."""
+        if self.tabla.rowCount() < 2 or columna == C_BLOQUE:
+            return
+        if self._columna_orden == columna:
+            ascendente = not self._orden_ascendente
+        else:
+            # En retenciones interesa ver primero las facturas que sí tienen.
+            ascendente = columna not in (
+                C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF)
+        self._columna_orden = columna
+        self._orden_ascendente = ascendente
+
+        registros = []
+        for fila in range(self.tabla.rowCount()):
+            f = self._leer_fila(fila)
+            registros.append({
+                "png": self.filas[fila]["png"], "factura": f,
+                "tipo": self._tipo_fila(fila),
+                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
+                "gxx": self.tabla.item(fila, C_GXX).text(),
+                "aviso": self.filas[fila].get("aviso", ""),
+                "bloque": self.filas[fila].get("bloque", ""),
+                "fuentes": self.filas[fila].get("fuentes", [f]),
+                "estado": self.filas[fila].get("estado", OK),
+            })
+
+        def valor(registro):
+            f = registro["factura"]
+            if columna == C_ESTADO:
+                return {ERROR: 0, REVISAR: 1, OK: 2}.get(registro["estado"], 3)
+            if columna == C_TIPO:
+                return registro["tipo"]
+            if columna == C_CUENTA:
+                return registro["cuenta"]
+            if columna == C_GXX:
+                return registro["gxx"]
+            if columna == C_FECHA:
+                fecha = fecha_de(f.fecha)
+                return fecha.toordinal() if fecha else None
+            atributos = {
+                C_NUM: "num_factura", C_NOMBRE: "nombre", C_NIF: "nif",
+                C_BASE: "base_iva", C_PCT: "pct_iva", C_CUOTA: "cuota_iva",
+                C_BASE_IRPF: "base_irpf", C_PCT_IRPF: "pct_irpf",
+                C_CUOTA_IRPF: "cuota_irpf",
+                C_TOTAL: "total_impreso",
+            }
+            dato = getattr(f, atributos.get(columna, "num_factura"), None)
+            return dato.casefold() if isinstance(dato, str) else dato
+
+        con_valor = [registro for registro in registros
+                     if valor(registro) not in (None, "")]
+        sin_valor = [registro for registro in registros
+                     if valor(registro) in (None, "")]
+        con_valor.sort(key=valor, reverse=not ascendente)
+        ordenados = con_valor + sin_valor
+
+        self.tabla.blockSignals(True)
+        self.tabla.setRowCount(0)
+        self.filas = []
+        for registro in ordenados:
+            self._anadir_fila(
+                registro["png"], registro["factura"], registro["tipo"],
+                registro["cuenta"], registro["gxx"], registro["aviso"],
+                registro["bloque"], registro["fuentes"])
+        self.tabla.blockSignals(False)
+        orden_qt = (Qt.AscendingOrder if ascendente else Qt.DescendingOrder)
+        self.tabla.horizontalHeader().setSortIndicator(columna, orden_qt)
+        self.tabla.horizontalHeader().setSortIndicatorShown(True)
+        self._revalidar_todo()
+        if self.tabla.rowCount():
+            self.tabla.selectRow(0)
 
     def _tipo_fila(self, r):
         w = self.tabla.cellWidget(r, C_TIPO)
@@ -2419,6 +2514,11 @@ class VentanaPrincipal(QMainWindow):
             msgs.append(aviso_tipo)
             if estado == OK:
                 estado = REVISAR
+        aviso_irpf = self._aviso_irpf_transportista(r, f)
+        if aviso_irpf:
+            msgs.append(aviso_irpf)
+            if estado == OK:
+                estado = REVISAR
         if r in self._duplicados:
             # Rojo, no ambar: importar dos veces la misma factura la paga dos
             # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
@@ -2491,7 +2591,8 @@ class VentanaPrincipal(QMainWindow):
                                     mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
         columnas = (C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF,
-                    C_BASE, C_PCT, C_CUOTA, C_TOTAL)
+                    C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF,
+                    C_CUOTA_IRPF, C_TOTAL)
         for columna in columnas:
             item = self.tabla.item(fila, columna)
             if not item:
@@ -2540,6 +2641,18 @@ class VentanaPrincipal(QMainWindow):
             if bajo.startswith("falta la cuota de iva") or bajo.startswith(
                     "cuota iva descuadra"):
                 marcar(C_CUOTA, texto)
+            if bajo.startswith("irpf incompleto"):
+                marcar(C_BASE_IRPF, texto)
+                marcar(C_PCT_IRPF, texto)
+                marcar(C_CUOTA_IRPF, texto)
+            if bajo.startswith("cuota irpf descuadra"):
+                marcar(C_CUOTA_IRPF, texto)
+            if "transportista sin irpf" in bajo:
+                marcar(C_BASE_IRPF, texto)
+                marcar(C_PCT_IRPF, texto)
+                marcar(C_CUOTA_IRPF, texto)
+            if bajo.startswith("irpf de transportista"):
+                marcar(C_PCT_IRPF, texto)
             if bajo.startswith("falta el total") or bajo.startswith(
                     "el total no cuadra") or bajo.startswith("el signo no cuadra"):
                 marcar(C_TOTAL, texto)
@@ -2586,6 +2699,31 @@ class VentanaPrincipal(QMainWindow):
         if len(tipos) >= 5 and tipos.count(tipo) == 1:
             return ("Es la única factura de su bloque que sale como "
                     f"{'gasto' if tipo == 'gasto' else 'ingreso'}: compruébela")
+        return ""
+
+    def _cliente_es_transportista(self) -> bool:
+        """Detecta la actividad en el nombre fiscal o comercial del emisor."""
+        nombres = [getattr(self, "_cliente_nombre", "")]
+        cliente_nif = normaliza_nif(getattr(self, "_cliente_nif", ""))
+        for bloque in self._bloques:
+            for registro in bloque.get("crudos", []):
+                if not registro or not isinstance(registro[-1], dict):
+                    continue
+                datos = registro[-1]
+                if normaliza_nif(datos.get("emisor_nif")) == cliente_nif:
+                    nombres.append(datos.get("emisor_nombre") or "")
+        return any("TRANSPORT" in str(nombre).upper() for nombre in nombres)
+
+    def _aviso_irpf_transportista(self, r: int, f: Factura) -> str:
+        """Control visible del 1% en los ingresos de transportistas."""
+        if self._tipo_fila(r) != "venta" or not self._cliente_es_transportista():
+            return ""
+        if f.base_irpf is None and f.pct_irpf is None and f.cuota_irpf is None:
+            return ("INGRESO DE TRANSPORTISTA SIN IRPF: compruebe si esta "
+                    "factura debe llevar la retención del 1%.")
+        if f.pct_irpf is not None and abs(f.pct_irpf - 1.0) > 0.01:
+            return (f"IRPF DE TRANSPORTISTA: figura un {f.pct_irpf:g}% en vez "
+                    "del 1%; compruébelo.")
         return ""
 
     def _revalidar_todo(self):
@@ -2663,6 +2801,8 @@ class VentanaPrincipal(QMainWindow):
                 e = ERROR
             if self._aviso_ejercicio(f):
                 e = ERROR
+            if self._aviso_irpf_transportista(r, f) and e == OK:
+                e = REVISAR
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
         self.lbl_estado.setText(
