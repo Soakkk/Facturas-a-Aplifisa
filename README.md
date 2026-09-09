@@ -53,6 +53,12 @@ La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión
 visibles sin perder la imagen original.
 
+## Control por factura y ejemplos reales
+
+La revisión conjunta, la unión de hojas sin identificación y el guardado local
+de ejemplos para adjuntar en ZIP se describen en
+[Fiabilidad y muestras](docs/fiabilidad-y-muestras.md).
+
 ## Requisitos
 
 - Windows 10/11.

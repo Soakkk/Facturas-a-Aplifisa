@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
     __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
-    revision_gemini, sesion, updater,
+    revision_gemini, sesion, updater, muestras_revision,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
@@ -50,7 +50,10 @@ from facturas_excel.clientes import (
     recordar_nombre, regimen_recargo,
 )
 from facturas_excel.conceptos import (
-    SUBCLAVES_628, descripcion_de, es_valido, texto_para,
+    SUBCLAVES_628, catalogo, descripcion_de, es_valido, texto_para,
+)
+from facturas_excel.control_facturas import (
+    clave_documento, controles_documentos, sin_cuadre_antiguo,
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
@@ -76,6 +79,7 @@ from facturas_excel.resumen import (
     eur, porcentaje_iva, resumir, resumir_por_bloque,
 )
 from facturas_excel.rutas import dir_datos, ruta_config
+from facturas_excel.union_bloques import unir_ultimo_bloque
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
     fecha_de, validar, validar_nif,
@@ -366,6 +370,11 @@ class VentanaPrincipal(QMainWindow):
         self._cola_completados = 0
         self._elemento_cola_actual = None
         self._decisiones_conflicto_nif = {}
+        self._error_muestras = ""
+        self._timer_muestras = QTimer(self)
+        self._timer_muestras.setSingleShot(True)
+        self._timer_muestras.setInterval(800)
+        self._timer_muestras.timeout.connect(self._guardar_muestra_revision)
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -844,6 +853,8 @@ class VentanaPrincipal(QMainWindow):
                        lambda: self._mostrar_notas_version(forzar=True))
         menu.addAction("Diagnóstico y sugerencias…",
                        lambda: self._mostrar_pendientes(al_arrancar=False))
+        menu.addAction("Abrir carpeta de ejemplos para revisión", self._abrir_muestras)
+        menu.addAction("Preparar ZIP de ejemplos para revisión…", self._exportar_muestras)
         menu.addAction("Acerca de", self._acerca_de)
 
         # Accesos diarios en una franja compacta bajo los menús. Separarlos
@@ -1002,11 +1013,72 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Actualizaciones",
                                 f"No se pudo comprobar:\n{msg}")
 
+    def _avisar_error_muestras(self, error):
+        mensaje = str(error)
+        if mensaje != self._error_muestras:
+            QMessageBox.warning(
+                self, "No se ha guardado el ejemplo para revisión",
+                "El trabajo con las facturas puede continuar, pero no se ha podido "
+                "conservar una muestra local:\n\n" + mensaje
+                + "\n\nCompruebe el espacio disponible y la carpeta de ejemplos.")
+        self._error_muestras = mensaje
+
+    def _capturar_original(self, ruta):
+        try:
+            return muestras_revision.guardar_original(ruta)
+        except (OSError, ValueError) as error:
+            self._avisar_error_muestras(error)
+            return None
+
+    def _guardar_muestra_revision(self):
+        self._timer_muestras.stop()
+        try:
+            filas = [{**registro, "factura": self._leer_fila(i),
+                      "tipo": self._tipo_fila(i)}
+                     for i, registro in enumerate(self.filas)]
+            filas += [{**borrada["registro"], "tipo": borrada["tipo"]}
+                      for borrada in self._ultimo_borrado]
+            muestras_revision.guardar_revision(filas)
+            return True
+        except (OSError, ValueError) as error:
+            self._avisar_error_muestras(error)
+            return False
+
+    def _abrir_muestras(self):
+        try:
+            archivo.abrir(str(muestras_revision.carpeta()))
+        except OSError as error:
+            self._avisar_error_muestras(error)
+
+    def _exportar_muestras(self):
+        self._revalidar_todo()
+        if not self._guardar_muestra_revision():
+            return
+        destino, _ = QFileDialog.getSaveFileName(
+            self, "Guardar ejemplos para adjuntar a la revisión",
+            "Ejemplos-Facturas-Aplifisa.zip", "Archivo ZIP (*.zip)")
+        if not destino:
+            return
+        if not destino.lower().endswith(".zip"):
+            destino += ".zip"
+        try:
+            muestras_revision.exportar_zip(destino)
+        except (OSError, ValueError) as error:
+            self._avisar_error_muestras(error)
+            return
+        QMessageBox.information(
+            self, "Ejemplos preparados",
+            "ZIP guardado en:\n" + destino
+            + "\n\nIncluye los originales guardados, sus lecturas y las revisiones. "
+            "Adjunte este ZIP en la conversación para revisar casos reales. "
+            "No se ha enviado automáticamente.")
+
     def _guardar_sesion(self) -> None:
         """Conserva lote, correcciones, imágenes y bloques para la próxima vez."""
         if not self._bloques and not self.filas:
             sesion.borrar()
             return
+        self._guardar_muestra_revision()
         filas = []
         for fila in range(self.tabla.rowCount()):
             registro = self.filas[fila]
@@ -1386,6 +1458,7 @@ class VentanaPrincipal(QMainWindow):
             rutas = [r for r in rutas if r not in listados]
             if not rutas:
                 return
+        muestras = {ruta: self._capturar_original(ruta) for ruta in rutas}
         api_key = leer_api_key()
         if not api_key:
             QMessageBox.warning(self, "Falta la API key",
@@ -1400,7 +1473,7 @@ class VentanaPrincipal(QMainWindow):
                         mover_original = bool(desde_escaner or sin_identificar)
                         elementos.append({
                             "rutas": [parte],
-                            "original": ruta,
+                            "original": ruta, "muestra_id": muestras.get(ruta),
                             "etiqueta": os.path.splitext(os.path.basename(parte))[0],
                             "parte": numero,
                             "partes": len(partes),
@@ -1415,7 +1488,7 @@ class VentanaPrincipal(QMainWindow):
                         })
                 else:
                     elementos.append({
-                        "rutas": [ruta], "original": ruta,
+                        "rutas": [ruta], "original": ruta, "muestra_id": muestras.get(ruta),
                         "etiqueta": os.path.splitext(os.path.basename(ruta))[0],
                         "parte": 1, "partes": 1,
                         "archivar": False,
@@ -1498,6 +1571,14 @@ class VentanaPrincipal(QMainWindow):
     def _on_terminado(self, procesadas, nombre, nif, crudos=None):
         elemento = self._elemento_cola_actual or {}
         rutas_parte = list(self._rutas_actuales)
+        if (elemento.get("parte", 1) > 1 and self._bloques
+                and self._bloques[-1].get("original") == elemento.get("original")
+                and self._bloques[-1].get("nif")):
+            # La segunda parte puede empezar solo con importes y no aportar
+            # candidato a cliente. Mantener el cliente del mismo PDF completo.
+            anterior = self._bloques[-1]
+            nombre, nif = anterior["cliente"], anterior["nif"]
+            procesadas = preparar_lote(crudos or [], nombre, nif)
         # Si el escaneo salió sin saber de quién era, ahora ya se sabe: el PDF
         # se muda solo a la carpeta del cliente antes de nombrar el bloque.
         if elemento.get("archivar"):
@@ -1539,10 +1620,26 @@ class VentanaPrincipal(QMainWindow):
                     (imagen, origen_documento, pagina + desplazamiento, datos)
                     for imagen, _origen, pagina, datos in (crudos or [])
                 ]
+        referencias = {}
+        for _, origen, _, _ in (crudos or []):
+            if origen not in referencias:
+                identificador = elemento.get("muestra_id")
+                if not identificador and os.path.isfile(origen):
+                    identificador = self._capturar_original(origen)
+                if identificador:
+                    referencias[origen] = identificador
+        for _, pr in procesadas:
+            for f in pr.facturas:
+                f.original_id = referencias.get(f.origen_imagen, "")
+        try:
+            muestras_revision.guardar_lecturas(crudos or [], referencias)
+        except (OSError, ValueError) as error:
+            self._avisar_error_muestras(error)
         # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
         # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
         self._bloques.append({
             "nombre": self._nombre_bloque(elemento.get("etiqueta")),
+            "original": elemento.get("original", ""),
             "procesadas": procesadas,
             # Lo leido por Gemini, tal cual: permite rehacer el lote con otro
             # cliente sin gastar otra lectura.
@@ -1554,6 +1651,7 @@ class VentanaPrincipal(QMainWindow):
             "tipo_declarado": (self._tipo_escaneo
                                if self._escaneo_reciente else ""),
         })
+        unir_ultimo_bloque(self._bloques)
         self._escaneo_reciente = False
         self._avisar_si_otro_cliente(nombre, nif)
         # El nombre del cliente se guarda para proponerlo al escanear el
@@ -1577,6 +1675,7 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(bool(self._bloques))
         if hay_datos and len(self._bloques) == 1:
             self.tabla.selectRow(0)
+        self._guardar_muestra_revision()
         self._avisar_paginas_no_leidas()
         self._limpiar_parte_interna(elemento)
         self._cola_completados += 1
@@ -1881,6 +1980,7 @@ class VentanaPrincipal(QMainWindow):
                 "Lo leído se perderá y habría que volver a pasarlo por Gemini.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
+        self._guardar_muestra_revision()
         self._bloques = []
         self._cola = []
         self._decisiones_conflicto_nif = {}
@@ -1929,8 +2029,8 @@ class VentanaPrincipal(QMainWindow):
                 for f in visibles:
                     origenes = fuentes if recargo else [f]
                     self._anadir_fila(
-                        png, f, f.tipo_revision or vista.tipo, vista.cuenta,
-                        vista.gxx, vista.aviso, bloque["nombre"], origenes)
+                        png, f, f.tipo_revision or vista.tipo, f.concepto,
+                        f.subclave, vista.aviso, bloque["nombre"], origenes)
         self.tabla.blockSignals(False)
 
     def _on_recargo(self):
@@ -2028,6 +2128,16 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.blockSignals(senales_bloqueadas)
 
     # ---------- edicion / validacion ----------
+    def _invalidar_revision_documento(self, fila):
+        clave = clave_documento(self.filas[fila]["factura"])
+        for registro in self.filas:
+            if clave_documento(registro["factura"]) == clave:
+                registro["factura"].revision_confirmada = False
+                registro["factura"].edicion_manual = True
+                for fuente in registro.get("fuentes", []):
+                    fuente.revision_confirmada = False
+                    fuente.edicion_manual = True
+
     def _on_celda(self, item):
         """Lo que se corrige a mano se guarda para ese proveedor.
 
@@ -2035,7 +2145,7 @@ class VentanaPrincipal(QMainWindow):
         con el que se le llama, su NIF y la cuenta que le toca.
         """
         if item.row() < len(self.filas):
-            self.filas[item.row()]["factura"].revision_confirmada = False
+            self._invalidar_revision_documento(item.row())
         columna = item.column()
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
@@ -2052,11 +2162,11 @@ class VentanaPrincipal(QMainWindow):
     def _on_tipo_cambiado(self, control) -> None:
         fila = self._fila_del_control_tipo(control)
         if 0 <= fila < len(self.filas):
-            self.filas[fila]["factura"].revision_confirmada = False
+            self._invalidar_revision_documento(fila)
             self.filas[fila]["factura"].tipo_revision = control.currentData()
             for fuente in self.filas[fila].get("fuentes", []):
                 fuente.tipo_revision = control.currentData()
-        self._revalidar_fila(fila)
+        self._revalidar_todo()
 
     def _nombre_escrito_a_mano(self, r) -> str:
         """El nombre que pone una persona manda, y se copia al resto de
@@ -2100,6 +2210,7 @@ class VentanaPrincipal(QMainWindow):
             if otra == r or normaliza_nif(self._leer_fila(otra).nif) != nif:
                 continue
             if self.tabla.item(otra, columna).text() != valor:
+                self._invalidar_revision_documento(otra)
                 self.tabla.item(otra, columna).setText(valor)
                 puestas += 1
         self.tabla.blockSignals(False)
@@ -2126,6 +2237,7 @@ class VentanaPrincipal(QMainWindow):
             g = self._leer_fila(otra)
             if clave_proveedor(g.nombre) != clave or validar_nif(normaliza_nif(g.nif)):
                 continue
+            self._invalidar_revision_documento(otra)
             g.nif = nif
             self.tabla.item(otra, C_NIF).setText(nif)
             self.filas[otra]["aviso"] = (
@@ -2360,7 +2472,8 @@ class VentanaPrincipal(QMainWindow):
                     if clave in usados:
                         continue
                     imagen, origen, pag, _datos = crudo
-                    coincide_pagina = (pagina and int(pag) == pagina and
+                    ultima = max(pagina, int(f.ultima_pagina_origen or pagina))
+                    coincide_pagina = (pagina and pagina <= int(pag) <= ultima and
                                        self._mismo_archivo(origen, f.origen_imagen))
                     # Las sesiones creadas antes de guardar pagina_origen aún
                     # pueden localizarse por la miniatura y el archivo.
@@ -2369,11 +2482,7 @@ class VentanaPrincipal(QMainWindow):
                     if coincide_pagina or coincide_imagen:
                         encontrados.append((ib, ir, crudo))
                         usados.add(clave)
-                        break
-                else:
-                    continue
-                break
-        return encontrados
+        return sorted(encontrados, key=lambda r: (r[0], r[1]))
 
     def _unir_hojas_seleccionadas(self) -> None:
         filas = self._filas_seleccionadas()
@@ -2400,22 +2509,44 @@ class VentanaPrincipal(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
 
+        self._guardar_muestra_revision()
+        fuentes = [fuente for fila in filas
+                   for fuente in self.filas[fila].get("fuentes", [self.filas[fila]["factura"]])]
+        documentos = {clave_documento(f) for f in fuentes}
         primero_bloque, primero_indice, _ = crudos[0]
         destino = self._bloques[primero_bloque]
         seleccion = {(ib, ir) for ib, ir, _ in crudos}
         posicion = sum(1 for ir in range(primero_indice)
                        if (primero_bloque, ir) not in seleccion)
         fusionado = fusionar_paginas_manual([crudo for _, _, crudo in crudos])
+        nueva = preparar_lote([fusionado], destino.get("cliente", ""), destino.get("nif", ""))[0]
+        original_id = next((f.original_id for f in fuentes if f.original_id), "")
+        for f in nueva[1].facturas:
+            f.original_id = original_id
+            f.edicion_manual = True
+        insertada = False
         for ib, bloque in enumerate(self._bloques):
+            restantes = []
+            for imagen, pr in bloque["procesadas"]:
+                if any(clave_documento(f) in documentos for f in pr.facturas):
+                    if bloque is destino and not insertada:
+                        restantes.append(nueva)
+                        insertada = True
+                else:
+                    restantes.append((imagen, pr))
+            bloque["procesadas"] = restantes
             bloque["crudos"] = [crudo for ir, crudo in enumerate(bloque.get("crudos", []))
                                 if (ib, ir) not in seleccion]
+        if not insertada:
+            destino["procesadas"].append(nueva)
         destino["crudos"].insert(posicion, fusionado)
         self._bloques = [bloque for bloque in self._bloques
-                         if bloque.get("crudos") or bloque is destino]
-        for bloque in self._bloques:
-            bloque["procesadas"] = preparar_lote(
-                bloque.get("crudos", []), bloque.get("cliente", ""),
-                bloque.get("nif", ""))
+                         if bloque.get("procesadas") or bloque is destino]
+        try:
+            muestras_revision.guardar_lecturas(
+                [fusionado], {fusionado[1]: original_id} if original_id else {})
+        except (OSError, ValueError) as error:
+            self._avisar_error_muestras(error)
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
         self._revalidar_todo()
@@ -2431,6 +2562,7 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.information(
                 self, "Eliminar facturas", "Seleccione una o varias filas completas.")
             return
+        self._guardar_muestra_revision()
         self._ultimo_borrado = []
         for fila in filas:
             registro = self.filas[fila]
@@ -2502,8 +2634,8 @@ class VentanaPrincipal(QMainWindow):
         # Las sesiones de versiones anteriores guardaron un aviso de ejercicio
         # en TODAS las filas. Se limpia al abrirlas; ahora se señala únicamente
         # la factura cuya fecha no pertenece al ejercicio predominante.
-        aviso_guardado = _sin_aviso_ejercicios_antiguo(
-            self.filas[r]["aviso"])
+        aviso_guardado = sin_cuadre_antiguo(_sin_aviso_ejercicios_antiguo(
+            self.filas[r]["aviso"]))
         self.filas[r]["aviso"] = aviso_guardado
         if aviso_guardado:
             msgs.append(aviso_guardado)
@@ -2519,6 +2651,17 @@ class VentanaPrincipal(QMainWindow):
             msgs.append(aviso_irpf)
             if estado == OK:
                 estado = REVISAR
+        errores_documento = getattr(self, "_errores_documento", {}).get(r, [])
+        if errores_documento:
+            msgs.extend(errores_documento)
+            estado = ERROR
+        lado = "gasto" if self._tipo_fila(r) == "gasto" else "ingreso"
+        if f.concepto and not any(c == str(f.concepto).strip()
+                                 and (not f.subclave or g == f.subclave)
+                                 for c, g, _ in catalogo(lado)):
+            msgs.append(f"La cuenta {f.concepto} ({f.subclave or 'sin subclave'}) "
+                        f"no corresponde a {lado}. Compruebe cuenta y contraparte.")
+            estado = ERROR
         if r in self._duplicados:
             # Rojo, no ambar: importar dos veces la misma factura la paga dos
             # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
@@ -2728,8 +2871,9 @@ class VentanaPrincipal(QMainWindow):
 
     def _revalidar_todo(self):
         self._ejercicio_lote = self._calcular_ejercicio_lote()
-        self._duplicados = encontrar_duplicados(
-            [self._leer_fila(r) for r in range(self.tabla.rowCount())])
+        self._errores_documento, self._duplicados = controles_documentos(
+            [self._leer_fila(r) for r in range(self.tabla.rowCount())],
+            [self._tipo_fila(r) for r in range(self.tabla.rowCount())])
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
         # El resumen se rehace SIEMPRE, tambien con la tabla vacia: si no, al
@@ -2739,6 +2883,7 @@ class VentanaPrincipal(QMainWindow):
         self._pintar_alerta()
         if hasattr(self, "combo_filtro_estado"):
             self._aplicar_filtro()
+        self._timer_muestras.start()
 
     def _pintar_alerta(self):
         """Banner rojo arriba con las duplicadas y las sustituidas: las dos
@@ -2794,15 +2939,7 @@ class VentanaPrincipal(QMainWindow):
         estados = []
         for r in range(self.tabla.rowCount()):
             f = self.filas[r]["factura"]
-            e = validar(f).estado
-            if self.filas[r]["aviso"] and e == OK:
-                e = REVISAR
-            if r in self._duplicados:
-                e = ERROR
-            if self._aviso_ejercicio(f):
-                e = ERROR
-            if self._aviso_irpf_transportista(r, f) and e == OK:
-                e = REVISAR
+            e = self.filas[r].get("estado", validar(f).estado)
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
         self.lbl_estado.setText(
@@ -2990,7 +3127,9 @@ class VentanaPrincipal(QMainWindow):
         for fila in range(self.tabla.rowCount()):
             f = self._leer_fila(fila)
             registro = self.filas[fila]
-            if fila in self._duplicados:
+            if getattr(self, "_errores_documento", {}).get(fila) and not f.tratamiento_manual:
+                errores.append(fila)
+            elif fila in self._duplicados:
                 excluidas.append((fila, "duplicada"))
             elif f.tratamiento_manual:
                 excluidas.append((fila, f.tratamiento_manual))
@@ -3022,6 +3161,7 @@ class VentanaPrincipal(QMainWindow):
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
         self._revalidar_todo()
+        self._guardar_muestra_revision()
         clientes = {b.get("nif") or b.get("cliente") for b in self._bloques
                     if b.get("nif") or b.get("cliente")}
         if len(clientes) > 1:

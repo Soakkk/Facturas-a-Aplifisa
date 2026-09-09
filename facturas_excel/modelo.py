@@ -46,6 +46,9 @@ class Factura:
     no_sujeta: Optional[float] = None
 
     # --- soporte de revision / control de calidad (no se exporta) ---
+    original_id: str = ""                  # SHA256 del original capturado para revisión
+    edicion_manual: bool = False           # evita reconstrucciones que pisen correcciones
+    documento_id: str = ""                 # une las líneas de una lectura concreta
     total_impreso: Optional[float] = None   # total que figura escrito en la factura
     origen_imagen: Optional[str] = None     # ruta del archivo escaneado del que sale
     pagina_origen: int = 0                  # primera página física de esta factura
@@ -65,7 +68,7 @@ class Factura:
 
     def campos_dict(self) -> dict:
         """Devuelve {nombre_campo: valor} solo de los campos exportables."""
-        excluidos = {"total_impreso", "origen_imagen", "pagina_origen",
+        excluidos = {"original_id", "edicion_manual", "documento_id", "total_impreso", "origen_imagen", "pagina_origen",
                      "ultima_pagina_origen", "lineas_factura",
                      "subclave", "descripcion_concepto", "es_suplido",
                      "confianza_ia", "revision_confirmada",

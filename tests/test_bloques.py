@@ -34,7 +34,8 @@ def procesada(f):
 
 
 def cargar_bloque(v, ruta, facturas, nif="12345678Z", cliente="CLIENTE UNO"):
-    v._rutas_actuales = [ruta]
+    # Separadores aceptados tanto por Windows como por macOS en estas rutas ficticias.
+    v._rutas_actuales = [ruta.replace("\\", "/")]
     v._on_terminado([(b"", procesada(f)) for f in facturas], cliente, nif)
 
 

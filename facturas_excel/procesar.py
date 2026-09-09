@@ -16,6 +16,7 @@ from copy import deepcopy
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
+from uuid import uuid4
 
 from . import clientes, proveedores
 from .conceptos import (
@@ -24,7 +25,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
-from .validacion import validar_nif
+from .validacion import validar_nif, fecha_de
 
 
 def normaliza_nif(nif) -> str:
@@ -262,6 +263,20 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
             aviso = "Rol emisor/destinatario dudoso: revisa si es gasto o venta."
 
+    # Un nombre coincidente no confirma un NIF explícito de otra persona.
+    for rol, nom, leido in (("emisor", e_nom, e_nif),
+                            ("destinatario", r_nom, r_nif)):
+        if (_mismo_nombre(nom, cliente_nombre) and leido != cliente_nif
+                and validar_nif(leido)):
+            aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
+                    f"pero su NIF {leido} es distinto del cliente seleccionado " \
+                    f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    if datos.get("_union_inferida"):
+        paginas = ", ".join(str(p) for p in datos.get("_paginas_union_inferida", []))
+        aviso = f"{aviso} Unión inferida de páginas {paginas}: " \
+                f"{datos.get('_motivo_union_inferida', 'continuidad de hojas')}. " \
+                "Comprueba que pertenecen a la misma factura.".strip()
+
     # Cuenta contable
     if tipo == "venta":
         # Los ingresos tienen su propia lista en Aplifisa (700 ventas, 705
@@ -277,6 +292,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
     comun = dict(
+        documento_id=uuid4().hex,
         num_factura=datos.get("num_factura") or None,
         fecha=datos.get("fecha") or None,
         fecha_operacion=datos.get("fecha_operacion") or None,
@@ -393,9 +409,23 @@ def marcar_sustituidas(procesadas: List[FacturaProcesada]) -> int:
         objetivo = _num_doc(pr.sustituye_a)
         if not objetivo:
             continue
-        nuevo = pr.facturas[0].num_factura if pr.facturas else "?"
-        for vieja in por_numero.get(objetivo, []):
-            if vieja is pr:
+        if not pr.facturas:
+            continue
+        nueva = pr.facturas[0]
+        nuevo = nueva.num_factura
+        candidatas = [vieja for vieja in por_numero.get(objetivo, [])
+                      if vieja is not pr and vieja.facturas and vieja.tipo == pr.tipo
+                      and normaliza_nif(nueva.nif)
+                      and normaliza_nif(vieja.facturas[0].nif) == normaliza_nif(nueva.nif)]
+        if len(candidatas) > 1:
+            _anadir_aviso(pr, "Sustitución ambigua: hay varias facturas con el "
+                              "mismo número y contraparte. Comprueba cuál sustituye.")
+            continue
+        for vieja in candidatas:
+            fecha_vieja, fecha_nueva = fecha_de(vieja.facturas[0].fecha), fecha_de(nueva.fecha)
+            if fecha_vieja is None or fecha_nueva is None or fecha_vieja > fecha_nueva:
+                _anadir_aviso(pr, "Sustitución pendiente de comprobar: las fechas "
+                                  "no permiten confirmar la factura anterior.")
                 continue
             _anadir_aviso(vieja, f"SUSTITUIDA por la factura {nuevo} del mismo "
                                  f"lote: NO la importes o duplicarás el gasto.")
@@ -507,6 +537,7 @@ def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
     base.suplidos = None
     base.es_suplido = False   # el suplido ya esta dentro del total
     base.iva_incluido_en_base = True
+    base.lineas_factura = 1
     return replace(pr, facturas=[base])
 
 
@@ -628,7 +659,7 @@ def _mismo_origen(a: str, b: str) -> bool:
 
 
 def _estado_pagina(datos: dict) -> str:
-    estado = str(datos.get("estado_pagina_factura") or "").strip().lower()
+    estado = str(datos.get("_estado_ultima_pagina", datos.get("estado_pagina_factura")) or "").strip().lower()
     return estado if estado in {"unica", "inicio", "intermedia", "final"} else ""
 
 
@@ -704,6 +735,19 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
         return False
     numero_a = _num_doc(datos_a.get("num_factura"))
     numero_b = _num_doc(datos_b.get("num_factura"))
+    if numero_a and numero_b and numero_a != numero_b:
+        return False
+    for prefijo in ("emisor", "receptor"):
+        nif_a = normaliza_nif(datos_a.get(f"{prefijo}_nif"))
+        nif_b = normaliza_nif(datos_b.get(f"{prefijo}_nif"))
+        if nif_a and nif_b and nif_a != nif_b:
+            return False
+    if _estado_pagina(datos_a) in {"final", "unica"} or _estado_pagina(datos_b) == "unica":
+        return False
+    completas_a = _tiene_las_dos_partes(datos_a) and _tiene_importes(datos_a)
+    completas_b = _tiene_las_dos_partes(datos_b) and _tiene_importes(datos_b)
+    if completas_a and completas_b:
+        return False
     if not numero_a or numero_a != numero_b:
         if not _continuacion_sin_numero(datos_a, datos_b):
             return False
@@ -784,6 +828,12 @@ def consolidar_paginas_factura(registros: List[tuple]) -> List[tuple]:
             img, origen, pagina, datos = salida[-1]
             fusion = _fusionar_datos_paginas(datos, actual[3])
             fusion["_ultima_pagina_consolidada"] = actual[2]
+            fusion["_estado_ultima_pagina"] = _estado_pagina(actual[3])
+            sin_numero = not _num_doc(datos.get("num_factura")) or not _num_doc(actual[3].get("num_factura"))
+            if sin_numero or datos.get("_union_inferida"):
+                fusion["_union_inferida"] = True
+                fusion["_motivo_union_inferida"] = "continuidad de hojas sin número repetido"
+                fusion["_paginas_union_inferida"] = list(range(int(pagina), int(actual[2]) + 1))
             salida[-1] = (img, origen, pagina, fusion)
         else:
             salida.append(actual)
