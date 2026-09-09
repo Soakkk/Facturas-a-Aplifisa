@@ -16,6 +16,29 @@ Si la unión depende de la continuidad y falta un número repetido, aparece un a
 
 La unión funciona también entre partes internas de 25 páginas. Si la factura anterior fue editada, revisada, eliminada o apartada, no se reconstruye automáticamente: se conserva la decisión y se indica la posible continuación. «Unir hojas» permite resolver los casos manualmente y conserva las correcciones de otras facturas del lote.
 
+## Cambios preparados después de 1.13.18
+
+También se reconoce un resumen fiscal situado antes de su cabecera, aunque
+Gemini lo haya etiquetado como una hoja única. Se exige el mismo número y fecha,
+un NIF compartido sin contradicciones, resumen que cuadra y cabecera marcada
+como inicio sin importes. Solo se unen páginas adyacentes del mismo original.
+Después de la unión la factura queda cerrada para no absorber otra copia.
+
+El archivo documental utiliza carpetas `Nombre — NIF/Ejercicio/Tipo` con un
+índice local `.clientes.json`. No cambia el nombre de carpeta por una variante
+leída después. Los PDF externos se conservan y una copia idéntica en el destino
+se reutiliza. Los escaneos nuevos esperan en `Sin identificar` hasta conocer su
+cliente y ejercicio.
+
+`Organizar carpetas` propone la migración del archivo antiguo, sin mover nada
+antes de revisar la tabla. Los nombres comparables solo generan propuestas
+cuando corresponden a un único NIF conocido. Las coincidencias ambiguas se
+mantienen pendientes para asignarlas expresamente. La propuesta se comprueba
+otra vez al aplicarla y no sobreescribe archivos. Las copias idénticas se apartan
+en `_Duplicados`; los movimientos quedan registrados en `_Organizacion` y pueden
+deshacerse. La organización exige terminar y vaciar el lote para conservar las
+rutas usadas por las vistas previas de la sesión.
+
 ## Ejemplos reales para revisión
 
 Al abrir un documento o recibirlo del escáner se guarda una copia local del original antes de llamar a Gemini. Se guardan también las lecturas recibidas por página y versiones de los datos corregidos con sus avisos. Una misma copia no se duplica por volver a guardarla.

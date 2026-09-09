@@ -22,6 +22,17 @@ def bloque(hojas, nif="12345678Z", origen="lote.pdf"):
                 procesadas=preparar_lote(crudos, "CLIENTE DE EJEMPLO", nif), muestras={"a": "id"})
 
 
+def test_une_hojas_invertidas_entre_bloques():
+    final = resumen(num_factura="F-1", fecha="01/04/2026", emisor_nif="B12345674")
+    final["estado_pagina_factura"] = "unica"
+    bloques = [bloque([(25, final)]), bloque([(26, cabecera())])]
+    assert unir_ultimo_bloque(bloques)
+    pr = bloques[0]["procesadas"][0][1]
+    assert pr.facturas[0].base_iva == 100
+    assert pr.facturas[0].ultima_pagina_origen == 26
+    assert not bloques[1]["procesadas"]
+
+
 def test_une_25_26_y_conserva_otras_facturas_corregidas():
     a = bloque([(1, cabecera("OTRA")), (25, cabecera())])
     b = bloque([(26, resumen()), (28, cabecera("ULTIMA"))])

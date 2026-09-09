@@ -6,6 +6,22 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.19": """
+<h2>Novedades de la versión 1.13.19</h2>
+<ul>
+  <li><b>Una carpeta por NIF:</b> los nuevos escaneos se guardan en
+      Nombre — NIF / Ejercicio / Gastos o Ingresos. Otra escritura del nombre
+      no crea otra carpeta para el mismo NIF.</li>
+  <li><b>Sin copias repetidas al importar:</b> si el mismo PDF ya está archivado
+      en su destino, se reutiliza. El original externo se conserva.</li>
+  <li><b>Hojas invertidas:</b> se une automáticamente un resumen anterior a su
+      cabecera cuando coinciden número, fecha e identidad y los importes cuadran.</li>
+  <li><b>Escaneos más fáciles de localizar:</b> búsqueda por cliente, NIF o
+      archivo y filtro de gastos e ingresos.</li>
+</ul>
+<p>Las carpetas antiguas se conservan. Su reorganización es opcional, con
+vista previa y posibilidad de deshacer.</p>
+""",
     "1.13.18": """
 <h2>Novedades de la versión 1.13.18</h2>
 <ul>

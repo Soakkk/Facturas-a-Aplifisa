@@ -716,6 +716,23 @@ def _continuacion_sin_numero(anterior: dict, siguiente: dict) -> bool:
     return total_a is None or (total_b is not None and abs(total_b) >= abs(total_a))
 
 
+def _resumen_antes_de_cabecera(a: dict, b: dict) -> bool:
+    """Reconoce dos hojas invertidas mediante identidad y datos complementarios."""
+    numero = _num_doc(a.get("num_factura"))
+    fecha = fecha_de(a.get("fecha"))
+    return bool(
+        numero and numero == _num_doc(b.get("num_factura"))
+        and fecha and fecha == fecha_de(b.get("fecha"))
+        and not a.get("_ultima_pagina_consolidada")
+        and not _tiene_las_dos_partes(a) and _resumen_fiscal_cuadra(a)
+        and _tiene_las_dos_partes(b) and not _tiene_importes(b)
+        and _estado_pagina(b) == "inicio"
+        and any(normaliza_nif(a.get(f"{p}_nif"))
+                and normaliza_nif(a.get(f"{p}_nif")) == normaliza_nif(b.get(f"{p}_nif"))
+                for p in ("emisor", "receptor"))
+    )
+
+
 def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     """Reconoce fragmentos consecutivos sin ocultar facturas duplicadas.
 
@@ -742,6 +759,8 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
         nif_b = normaliza_nif(datos_b.get(f"{prefijo}_nif"))
         if nif_a and nif_b and nif_a != nif_b:
             return False
+    if _resumen_antes_de_cabecera(datos_a, datos_b):
+        return True
     if _estado_pagina(datos_a) in {"final", "unica"} or _estado_pagina(datos_b) == "unica":
         return False
     completas_a = _tiene_las_dos_partes(datos_a) and _tiene_importes(datos_a)
@@ -828,7 +847,9 @@ def consolidar_paginas_factura(registros: List[tuple]) -> List[tuple]:
             img, origen, pagina, datos = salida[-1]
             fusion = _fusionar_datos_paginas(datos, actual[3])
             fusion["_ultima_pagina_consolidada"] = actual[2]
-            fusion["_estado_ultima_pagina"] = _estado_pagina(actual[3])
+            fusion["_estado_ultima_pagina"] = (
+                "final" if _resumen_antes_de_cabecera(datos, actual[3])
+                else _estado_pagina(actual[3]))
             sin_numero = not _num_doc(datos.get("num_factura")) or not _num_doc(actual[3].get("num_factura"))
             if sin_numero or datos.get("_union_inferida"):
                 fusion["_union_inferida"] = True

@@ -172,7 +172,7 @@ def test_el_escaneo_se_coloca_solo_al_detectar_al_cliente(escaneos):
     assert not os.path.exists(ruta)
     colocado = v._rutas_actuales[0]
     assert "CLIENTE DETECTADO_gastos_" in os.path.basename(colocado)
-    assert os.path.join("CLIENTE DETECTADO", "2026", "Gastos") in colocado
+    assert os.path.join("CLIENTE DETECTADO — 12345678Z", "2026", "Gastos") in colocado
     # el bloque toma el nombre nuevo y la factura apunta al PDF movido
     assert v.tabla.item(0, C_BLOQUE).text().startswith("CLIENTE DETECTADO")
     assert v.filas[0]["factura"].origen_imagen == colocado
@@ -200,7 +200,7 @@ def test_se_archiva_en_el_ejercicio_de_la_factura_no_en_el_del_escaneo(escaneos)
     pr.facturas[0].fecha = "31/12/2024"
     v._on_terminado([(b"", pr)], "CLIENTE", "12345678Z")
 
-    assert os.path.join("CLIENTE", "2024", "Gastos") in v._rutas_actuales[0]
+    assert os.path.join("CLIENTE — 12345678Z", "2024", "Gastos") in v._rutas_actuales[0]
 
 
 def test_si_no_se_detecta_el_cliente_el_pdf_se_queda_donde_esta(escaneos):
@@ -244,7 +244,7 @@ def test_pdf_largo_externo_archiva_el_original_y_borra_solo_la_parte_interna(
     copia = v.filas[0]["factura"].origen_imagen
     assert os.path.exists(original)           # el PDF elegido no se mueve
     assert os.path.exists(copia)              # copia documental completa
-    assert os.path.join("CLIENTE", "2026", "Gastos") in copia
+    assert os.path.join("CLIENTE — 12345678Z", "2026", "Gastos") in copia
     assert not os.path.exists(parte)           # solo era una parte de trabajo
     assert pr.pagina == 26                     # página real del PDF de 100 hojas
     assert v._bloques[0]["crudos"][0][1:3] == (copia, 26)

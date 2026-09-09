@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import List, Optional
 
-from . import ajustes
+from . import ajustes, identidad_archivo
 from .escaner import carpeta_por_defecto, nombre_libre, ruta_destino, sanear
 
 SIN_IDENTIFICAR = "Sin identificar"
@@ -47,7 +47,7 @@ def sin_identificar(ruta: str) -> bool:
 
 def mover_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
                     dia: Optional[date] = None,
-                    ejercicio: Optional[int] = None) -> str:
+                    ejercicio: Optional[int] = None, nif: str = "") -> str:
     """Muda el PDF a la carpeta del cliente con su nombre bueno.
 
     Devuelve la ruta nueva; si algo falla (el archivo esta abierto en otro
@@ -61,15 +61,15 @@ def mover_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
     cliente_limpio = sanear(cliente)
     tipo_limpio = "ingresos" if str(tipo).lower().startswith("i") else "gastos"
     carpeta_tipo = "Ingresos" if tipo_limpio == "ingresos" else "Gastos"
-    carpeta_final = os.path.join(_base_de(ruta), cliente_limpio,
-                                 str(ejercicio), carpeta_tipo)
+    carpeta_final = carpeta_tipo_cliente(cliente, ejercicio, tipo,
+                                          _base_de(ruta), nif=nif)
     if (os.path.normcase(os.path.dirname(os.path.abspath(ruta)))
             == os.path.normcase(os.path.abspath(carpeta_final))
             and os.path.basename(ruta).lower().startswith(
                 f"{cliente_limpio}_{tipo_limpio}_{dia:%Y-%m-%d}".lower())):
         return ruta
-    destino = ruta_destino(_base_de(ruta), cliente_limpio, tipo_limpio,
-                           dia, ejercicio)
+    destino = nombre_libre(carpeta_final,
+                            f"{cliente_limpio}_{tipo_limpio}_{dia:%Y-%m-%d}")
     if os.path.normcase(destino) == os.path.normcase(ruta):
         return ruta
     try:
@@ -81,10 +81,11 @@ def mover_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
 
 
 def carpeta_tipo_cliente(cliente: str, ejercicio: int, tipo: str,
-                         carpeta_base: Optional[str] = None) -> str:
+                         carpeta_base: Optional[str] = None, nif: str = "") -> str:
     """Carpeta documental estable: Cliente/Ejercicio/Gastos|Ingresos."""
     base = carpeta_base or carpeta_escaneos()
-    cliente_limpio = sanear(cliente or "Cliente sin identificar")
+    cliente_limpio = identidad_archivo.carpeta_cliente(
+        base, cliente or "Cliente sin identificar", nif)
     carpeta_tipo = ("Ingresos" if str(tipo).lower().startswith(("i", "v"))
                     else "Gastos")
     carpeta_ejercicio = os.path.join(base, cliente_limpio, str(int(ejercicio)))
@@ -95,7 +96,7 @@ def carpeta_tipo_cliente(cliente: str, ejercicio: int, tipo: str,
 
 
 def copiar_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
-                     ejercicio: Optional[int] = None) -> str:
+                     ejercicio: Optional[int] = None, nif: str = "") -> str:
     """Copia un PDF externo al archivo documental sin tocar el original.
 
     Es el camino de los PDF creados con HP u otro programa. A diferencia de un
@@ -105,10 +106,13 @@ def copiar_a_cliente(ruta: str, cliente: str, tipo: str = "gastos",
     if not cliente or not os.path.isfile(ruta) or not ruta.lower().endswith(".pdf"):
         return ruta
     ejercicio = int(ejercicio or _fecha_de_archivo(ruta).year)
-    carpeta = carpeta_tipo_cliente(cliente, ejercicio, tipo)
+    carpeta = carpeta_tipo_cliente(cliente, ejercicio, tipo, nif=nif)
     if (os.path.normcase(os.path.dirname(os.path.abspath(ruta)))
             == os.path.normcase(os.path.abspath(carpeta))):
         return ruta
+    existente = identidad_archivo.copia_existente(ruta, carpeta)
+    if existente:
+        return existente
     base = sanear(os.path.splitext(os.path.basename(ruta))[0])
     destino = nombre_libre(carpeta, base)
     try:
@@ -221,6 +225,8 @@ class Escaneo:
     tamano: int          # bytes
     ejercicio: Optional[int] = None
     tipo: str = ""
+    nif: str = ""
+    carpeta_cliente: str = ""
 
     @property
     def tamano_texto(self) -> str:
@@ -233,9 +239,12 @@ class Escaneo:
 def listar(carpeta_base: Optional[str] = None) -> List[Escaneo]:
     """Todos los PDF escaneados, del mas nuevo al mas viejo. La papelera no."""
     base = carpeta_base or carpeta_escaneos()
+    indice = {f["carpeta"]: (nif, f["nombre"])
+              for nif, f in identidad_archivo.leer(base).items()}
     encontrados: List[Escaneo] = []
     for raiz, carpetas, archivos in os.walk(base):
-        carpetas[:] = [c for c in carpetas if c != PAPELERA]
+        carpetas[:] = [c for c in carpetas if c not in (
+            PAPELERA, identidad_archivo.DUPLICADOS, identidad_archivo.HISTORIAL)]
         for archivo in archivos:
             if not archivo.lower().endswith(".pdf"):
                 continue
@@ -252,14 +261,15 @@ def listar(carpeta_base: Optional[str] = None) -> List[Escaneo]:
                 tamano = os.path.getsize(ruta)
             except OSError:
                 continue
+            nif, nombre_cliente = indice.get(cliente, ("", cliente))
             encontrados.append(Escaneo(
                 ruta=ruta,
-                cliente=cliente if os.path.normcase(raiz) != os.path.normcase(base) else "—",
+                cliente=nombre_cliente if os.path.normcase(raiz) != os.path.normcase(base) else "—",
                 nombre=archivo,
                 fecha=_fecha_de_archivo(ruta),
                 tamano=tamano,
                 ejercicio=ejercicio,
-                tipo=tipo))
+                tipo=tipo, nif=nif, carpeta_cliente=cliente))
     return sorted(encontrados, key=lambda e: (e.fecha, e.nombre), reverse=True)
 
 
@@ -279,10 +289,10 @@ def a_papelera(ruta: str) -> str:
     return destino
 
 
-def renombrar_cliente(ruta: str, cliente: str) -> str:
+def renombrar_cliente(ruta: str, cliente: str, nif: str = "") -> str:
     """Corrige a mano de quien es un escaneo (se movio mal o se tecleo mal)."""
     return mover_a_cliente(ruta, sanear(cliente), _tipo_de_nombre(ruta),
-                           ejercicio=_ejercicio_de_ruta(ruta))
+                           ejercicio=_ejercicio_de_ruta(ruta), nif=nif)
 
 
 def _ejercicio_de_ruta(ruta: str) -> Optional[int]:
@@ -296,12 +306,17 @@ def _ejercicio_de_ruta(ruta: str) -> Optional[int]:
 
 
 def _tipo_de_nombre(ruta: str) -> str:
+    carpeta = os.path.basename(os.path.dirname(ruta)).lower()
+    if carpeta in {"gastos", "ingresos"}:
+        return carpeta
     return "ingresos" if "_ingresos_" in os.path.basename(ruta).lower() else "gastos"
 
 
 def comprimir_ejercicio(carpeta_base: str, cliente: str, ejercicio: int) -> str:
     """Crea un ZIP con Ingresos y Gastos para adjuntarlo después en Aplifisa."""
-    cliente = sanear(cliente)
+    # El nombre de carpeta puede incluir un NIF después de los 60 caracteres
+    # que admite sanear; no truncarlo al preparar el ZIP.
+    identidad_archivo.dentro(carpeta_base, cliente)
     ejercicio = int(ejercicio)
     carpeta_cliente = os.path.join(carpeta_base, cliente)
     origen = os.path.join(carpeta_cliente, str(ejercicio))
@@ -318,7 +333,7 @@ def comprimir_ejercicio(carpeta_base: str, cliente: str, ejercicio: int) -> str:
     if not pdfs:
         raise ValueError("Ese ejercicio no contiene ningún PDF.")
 
-    base_nombre = f"{cliente}_{ejercicio}_documentacion_digitalizada"
+    base_nombre = f"Documentacion_{ejercicio}"
     destino = os.path.join(carpeta_cliente, base_nombre + ".zip")
     numero = 2
     while os.path.exists(destino):

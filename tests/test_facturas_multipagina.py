@@ -9,6 +9,38 @@ CLIENTE = ("CLIENTE DE EJEMPLO", "12345678Z")
 DESTINATARIO = ("COMPRADOR DE EJEMPLO SL", "B12345674")
 
 
+def test_resumen_invertido_etiquetado_unica_completa_identidad_y_cierra_factura():
+    from copy import deepcopy
+    final = dict(resumen(), estado_pagina_factura="unica")
+    inicio = dict(cabecera(), estado_pagina_factura="inicio")
+    registros = [(b"final", "taco.pdf", 22, final),
+                 (b"inicio", "taco.pdf", 23, inicio)]
+    originales = deepcopy(registros)
+    procesadas = preparar_lote(registros, *CLIENTE)
+    assert len(procesadas) == 1
+    pr = procesadas[0][1]
+    assert len(pr.facturas) == 2
+    assert all(f.nif == DESTINATARIO[1] and f.nombre == DESTINATARIO[0]
+               and f.total_impreso == 1131.93 for f in pr.facturas)
+    assert [f.base_iva for f in pr.facturas] == [1009.73, 74.37]
+    assert registros == originales
+    assert len(consolidar_paginas_factura(registros + [
+        (b"copia", "taco.pdf", 24, inicio)])) == 2
+
+
+def test_invertidas_no_superan_contradicciones_ni_falta_de_evidencia():
+    for cambio in ({"num_factura": "OTRA"}, {"emisor_nif": "B12345674"},
+                   {"fecha": "01/04/2025"}, {"fecha": None},
+                   {"estado_pagina_factura": "unica"},
+                   {"total": 1131.93}):
+        final = dict(resumen(), estado_pagina_factura="unica")
+        inicio = dict(cabecera(), estado_pagina_factura="inicio")
+        inicio.update(cambio)
+        assert len(consolidar_paginas_factura([
+            (b"final", "taco.pdf", 22, final),
+            (b"inicio", "taco.pdf", 23, inicio)])) == 2
+
+
 def cabecera(numero="F-100"):
     return {
         "emisor_nombre": CLIENTE[0], "emisor_nif": CLIENTE[1],

@@ -35,12 +35,17 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    apartan de la exportación rutinaria para tratarlos manualmente.
 5. Tanto los PDF creados desde el escáner como los cargados desde HP u otro
    programa quedan archivados automáticamente en el Escritorio como
-   `Documentación Facturas / Cliente / Ejercicio / Gastos` o `Ingresos`. Los
+   `Documentación Facturas / Nombre — NIF / Ejercicio / Gastos` o `Ingresos`. Los
    PDF externos se copian y su original no se mueve. Las dos carpetas se crean
    juntas y el ejercicio se obtiene de la fecha de factura. Los Excel no forman
    parte de este archivo permanente.
    Desde **Escaneos guardados** se puede crear el ZIP completo del ejercicio
    para adjuntarlo después como documentación digitalizada en Aplifisa.
+   La carpeta del cliente se mantiene por NIF aunque cambie el nombre leído.
+   Volver a importar un PDF idéntico reutiliza la copia ya archivada.
+   La pantalla permite buscar por nombre o NIF y filtrar gastos e ingresos.
+   **Organizar carpetas** muestra una propuesta para el archivo antiguo:
+   conserva las copias idénticas en `_Duplicados` y permite deshacer.
 6. El lote en curso se conserva al cerrar el programa, incluidas las
    correcciones y los bloques acumulados. Solo **Vaciar todo** inicia una sesión
    nueva. Los CIF/NIF/DNI corregidos manualmente se recuerdan por cliente o

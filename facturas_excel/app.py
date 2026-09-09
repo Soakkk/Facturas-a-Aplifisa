@@ -1364,12 +1364,7 @@ class VentanaPrincipal(QMainWindow):
         opciones["nombre_dispositivo"] = dialogo.combo_escaner.currentText()
         # Sin cliente no se para: el PDF nace en "Sin identificar" y se muda
         # solo a su carpeta cuando el programa averigua de quién es por el NIF.
-        if opciones["cliente"]:
-            destino = escaner.ruta_destino(
-                opciones["carpeta"], opciones["cliente"], opciones["tipo"])
-        else:
-            destino = archivo.ruta_provisional(opciones["carpeta"],
-                                               opciones["tipo"])
+        destino = archivo.ruta_provisional(opciones["carpeta"], opciones["tipo"])
         self._tipo_escaneo = opciones["tipo"]
         self._escaneo_reciente = True
         self._hojas_puestas = opciones.get("hojas", 0)
@@ -1586,7 +1581,7 @@ class VentanaPrincipal(QMainWindow):
             self._rutas_actuales = [original_anterior]
             self._recolocar_escaneo(
                 nombre, procesadas,
-                copiar=not elemento.get("mover_original", False))
+                copiar=not elemento.get("mover_original", False), nif=nif)
             original_nuevo = self._rutas_actuales[0]
             elemento["original"] = original_nuevo
             for pendiente in self._cola:
@@ -1599,7 +1594,7 @@ class VentanaPrincipal(QMainWindow):
         elif not elemento:
             # También conserva el contrato de llamadas directas (pruebas y
             # pequeñas integraciones que entregan un bloque ya procesado).
-            self._recolocar_escaneo(nombre, procesadas)
+            self._recolocar_escaneo(nombre, procesadas, nif=nif)
         if elemento:
             self._rutas_actuales = rutas_parte
             # Una parte interna no es documentación. Las filas y los datos
@@ -1800,7 +1795,7 @@ class VentanaPrincipal(QMainWindow):
             except OSError:
                 pass
 
-    def _recolocar_escaneo(self, cliente, procesadas, copiar: bool = False):
+    def _recolocar_escaneo(self, cliente, procesadas, copiar: bool = False, nif=""):
         """Archiva el PDF original por cliente, ejercicio y tipo.
 
         Al escanear no hace falta decir de quién son las facturas: el programa
@@ -1825,12 +1820,17 @@ class VentanaPrincipal(QMainWindow):
             if fecha:
                 ejercicios.append(fecha.year)
         ejercicio = Counter(ejercicios).most_common(1)[0][0] if ejercicios else None
-        if copiar:
-            nueva = archivo.copiar_a_cliente(
-                ruta, cliente, tipo, ejercicio=ejercicio)
-        else:
-            nueva = archivo.mover_a_cliente(
-                ruta, cliente, tipo, ejercicio=ejercicio)
+        try:
+            if copiar:
+                nueva = archivo.copiar_a_cliente(
+                    ruta, cliente, tipo, ejercicio=ejercicio, nif=nif)
+            else:
+                nueva = archivo.mover_a_cliente(
+                    ruta, cliente, tipo, ejercicio=ejercicio, nif=nif)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Archivo documental",
+                f"No se pudo archivar el PDF: {e}\nEl original sigue en {ruta}.")
+            return
         if nueva == ruta:
             return
         self._escaneo_sin_identificar = False
