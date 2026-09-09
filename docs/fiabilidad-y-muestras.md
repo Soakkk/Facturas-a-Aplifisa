@@ -38,4 +38,4 @@ Los JSON incluyen versión de aplicación y de formato. Cada factura conserva la
 
 Se añadieron pruebas de regresión de integridad, identidad, continuidad, conservación de decisiones humanas, captura de ejemplos y ZIP. Las pruebas utilizan un perfil temporal propio y datos ficticios; no modifican los datos reales del asesor.
 
-Esta documentación describe cambios de la rama de desarrollo. Su disponibilidad en el programa instalado depende de publicar e instalar la versión correspondiente.
+Estos cambios están incluidos desde la versión 1.13.18. Instale esa versión o una posterior para utilizarlos.

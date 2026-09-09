@@ -6,6 +6,23 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.18": """
+<h2>Novedades de la versión 1.13.18</h2>
+<ul>
+  <li><b>Facturas completas:</b> se recalcula el total al corregir las líneas;
+      los duplicados contradictorios y las facturas incompletas no se exportan.</li>
+  <li><b>Identidad y cuentas:</b> se avisa de NIF incompatibles y se impide
+      exportar una cuenta que no corresponde a gasto o ingreso.</li>
+  <li><b>Facturas de varias hojas:</b> se mantiene la unión de cabecera y resumen
+      fiscal sin identificación, con aviso para comprobarla. También funciona
+      entre partes internas de 25 páginas y respeta las correcciones.</li>
+  <li><b>Ejemplos reales guardados:</b> se conservan localmente los originales,
+      las lecturas y las revisiones. En Ayuda, «Preparar ZIP de ejemplos para
+      revisión» permite guardar un ZIP para adjuntarlo a la conversación.</li>
+  <li><b>Tus decisiones se conservan:</b> unir hojas no modifica las otras
+      facturas del lote ni recupera automáticamente documentos apartados.</li>
+</ul>
+""",
     "1.13.17": """
 <h2>Novedades de la versión 1.13.17</h2>
 <ul>

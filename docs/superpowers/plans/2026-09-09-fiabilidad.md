@@ -26,8 +26,8 @@
 ## 4. Verificación y entrega
 - [x] Ejecutar núcleo, regresiones y batería completa con aislamiento de datos de pruebas; distinguir limitaciones de Windows.
 - [x] Revisar diff y compatibilidad; revisión independiente de código y resolver observaciones.
-- [ ] Crear commit y entregar parche/instrucciones y resumen de validación. Publicación del instalador queda como paso separado.
+- [x] Crear commit y entregar parche/instrucciones y resumen de validación. Publicación del instalador queda como paso separado.
 
 ## Evidencia de ejecución
 
-310 pruebas completas aprobadas en macOS antes de la entrega, con cinco avisos conocidos de SWIG. Revisión independiente detectó y se corrigieron enlaces a originales reutilizados, pérdida de decisiones humanas y continuidad entre tres partes. Pendiente validación remota Windows y cierre de entrega.
+310 pruebas completas aprobadas en macOS antes de la entrega, con cinco avisos conocidos de SWIG. Revisión independiente detectó y se corrigieron enlaces a originales reutilizados, pérdida de decisiones humanas y continuidad entre tres partes. Pruebas remotas Windows aprobadas. Publicación autorizada por el usuario; instalador generado mediante el flujo oficial de etiquetas.
