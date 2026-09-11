@@ -19,7 +19,7 @@ from datetime import date
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QGridLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSplitter, QStyle, QTableWidget,
@@ -56,10 +56,12 @@ from facturas_excel.control_facturas import (
     clave_documento, controles_documentos, sin_cuadre_antiguo,
 )
 from facturas_excel.consulta import (
-    PeriodoLote, coincide_busqueda, detectar_periodo, periodo_manual,
+    PeriodoLote, coincide_busqueda, detectar_periodo, facturas_unicas, periodo_manual,
 )
 from facturas_excel.config_columnas import leer_config
-from facturas_excel.estilo import aplicar_tema
+from facturas_excel.estilo import (
+    ACCENT, ACCENT_FAINT, BORDER, INK, MUTED, SUCCESS, WARNING, DANGER, aplicar_tema,
+)
 from facturas_excel.ficha_incidencias import (
     TITULOS as TITULOS_ESTADO, FichaIncidencias,
 )
@@ -90,10 +92,10 @@ from facturas_excel.validacion import (
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
-COLOR_ESTADO = {OK: QColor("#2e7d32"), REVISAR: QColor("#f9a825"), ERROR: QColor("#c62828")}
+COLOR_ESTADO = {OK: QColor(SUCCESS), REVISAR: QColor(WARNING), ERROR: QColor(DANGER)}
 ICONO_ESTADO = {OK: "OK", REVISAR: "!", ERROR: "X"}
-COLOR_REVISADO = QColor("#1565c0")
-COLOR_MANUAL = QColor("#616161")
+COLOR_REVISADO = QColor(ACCENT)
+COLOR_MANUAL = QColor(MUTED)
 ICONO_REVISADO = "✓"
 ICONO_MANUAL = "M"
 
@@ -121,7 +123,7 @@ C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, \
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
 # IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
 # la cabecera ("IVA 21%") en vez de repetirlo dentro de cada celda.
-COLS_RESUMEN_INICIO = ["Bloque", "Tipo", "Facturas", "Líneas", "Base"]
+COLS_RESUMEN_INICIO = ["Ámbito", "Tipo", "Facturas", "Líneas", "Base"]
 COLS_RESUMEN_FIN = ["Recargo", "IRPF", "Suplidos", "Total factura"]
 TODOS_LOS_BLOQUES = "Todos los bloques"
 
@@ -406,10 +408,10 @@ class VentanaPrincipal(QMainWindow):
         self.layout_barra_estrecha.addWidget(self.barra_rapida)
         raiz.addWidget(self.fila_barra_estrecha)
 
-        # Sin banner de cabecera: la marca y la version ya salen en el titulo de
-        # la ventana, y el espacio se aprovecha para la tabla.
+        # Mesa de revisión: cabecera clara, buscador global, tabla + original
+        # y comprobación debajo. Ningún filtro cambia el alcance del exportador.
         cuerpo = QVBoxLayout()
-        cuerpo.setContentsMargins(10, 12, 10, 8)
+        cuerpo.setContentsMargins(16, 12, 16, 10)
         cuerpo.setSpacing(10)
 
         # El lote ocupa una sola fila. Las acciones frecuentes viven junto al
@@ -419,12 +421,13 @@ class VentanaPrincipal(QMainWindow):
         bloque_cliente = QHBoxLayout(cliente_bar)
         bloque_cliente.setContentsMargins(12, 7, 12, 7)
         bloque_cliente.setSpacing(10)
-        etiqueta = QLabel("CLIENTE")
+        etiqueta = QLabel("Cliente")
         etiqueta.setObjectName("tituloSeccion")
         self.lbl_cliente = QLabel("Pendiente de detectar")
         self.lbl_cliente.setObjectName("cliente")
+        self.lbl_cliente.setWordWrap(True)
         bloque_cliente.addWidget(etiqueta)
-        bloque_cliente.addWidget(self.lbl_cliente)
+        bloque_cliente.addWidget(self.lbl_cliente, 1)
         self.btn_cliente = QPushButton("Cambiar")
         self.btn_cliente.setObjectName("compacto")
         self.btn_cliente.setMaximumWidth(110)
@@ -434,7 +437,7 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
         bloque_cliente.addWidget(self.btn_cliente)
-        lbl_periodo = QLabel("PERIODO")
+        lbl_periodo = QLabel("Periodo")
         lbl_periodo.setObjectName("tituloSeccion")
         bloque_cliente.addWidget(lbl_periodo)
         self.combo_periodo = ComboSinRueda()
@@ -446,7 +449,6 @@ class VentanaPrincipal(QMainWindow):
         self.combo_periodo.addItem("Automático", "auto")
         self.combo_periodo.currentIndexChanged.connect(self._on_periodo)
         bloque_cliente.addWidget(self.combo_periodo)
-        bloque_cliente.addStretch(1)
         # Solo aparece si el lote trae facturas con recargo de equivalencia:
         # para el resto de clientes no significa nada y estorba.
         self.fila_recargo = QWidget()
@@ -479,8 +481,36 @@ class VentanaPrincipal(QMainWindow):
         self.combo_recargo.currentIndexChanged.connect(self._on_recargo)
         lr_recargo.addWidget(self.combo_recargo, 1)
         self.fila_recargo.setVisible(False)
-        bloque_cliente.addWidget(self.fila_recargo)
         raiz.addWidget(cliente_bar)
+        cuerpo.addWidget(self.fila_recargo)
+
+        self.encabezado_mesa = QWidget()
+        encabezado = QHBoxLayout(self.encabezado_mesa)
+        encabezado.setContentsMargins(0, 0, 0, 0)
+        titulo_mesa = QLabel("Todo tu lote, a la vista")
+        titulo_mesa.setObjectName("tituloMesa")
+        encabezado.addWidget(titulo_mesa)
+        self.lbl_lote = QLabel("Lote completo · sin facturas cargadas")
+        self.lbl_lote.setObjectName("contadorLote")
+        self.lbl_lote.setWordWrap(True)
+        encabezado.addWidget(self.lbl_lote, 1)
+        self.lbl_lote.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        cuerpo.addWidget(self.encabezado_mesa)
+
+        self.btn_revisar_lote = QPushButton("1 · Revisar facturas", self)
+        self.btn_revisar_lote.setObjectName("paso")
+        self.btn_revisar_lote.setCheckable(True)
+        self.btn_revisar_lote.setChecked(True)
+        self.btn_revisar_lote.clicked.connect(self._volver_a_revision)
+        self.btn_revisar_lote.hide()
+        self.btn_cuadrar = QPushButton("Cuadrar con Aplifisa")
+        self.btn_cuadrar.setObjectName("accesoRapido")
+        self.btn_cuadrar.clicked.connect(self.btn_registro.trigger)
+        self.btn_registro.changed.connect(
+            lambda: self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled()))
+        self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled())
+        barra_acciones = self.barra_rapida.layout()
+        barra_acciones.insertWidget(barra_acciones.count() - 1, self.btn_cuadrar)
 
         self.progreso = QProgressBar()
         self.progreso.setVisible(False)
@@ -492,25 +522,37 @@ class VentanaPrincipal(QMainWindow):
         self.alerta.setObjectName("alerta")
         self.alerta.setVisible(False)
         lal = QVBoxLayout(self.alerta)
-        lal.setContentsMargins(14, 10, 14, 10)
+        lal.setContentsMargins(14, 8, 14, 8)
         lal.setSpacing(2)
         self.lbl_alerta_titulo = QLabel()
         self.lbl_alerta_titulo.setObjectName("alertaTitulo")
         self.lbl_alerta_texto = QLabel()
         self.lbl_alerta_texto.setObjectName("alertaTexto")
         self.lbl_alerta_texto.setWordWrap(True)
-        lal.addWidget(self.lbl_alerta_titulo)
+        fila_alerta = QHBoxLayout()
+        fila_alerta.addWidget(self.lbl_alerta_titulo, 1)
+        self.btn_ver_incidencias = QPushButton("Ver incidencias")
+        self.btn_ver_incidencias.clicked.connect(self._siguiente_incidencia)
+        fila_alerta.addWidget(self.btn_ver_incidencias)
+        lal.addLayout(fila_alerta)
         lal.addWidget(self.lbl_alerta_texto)
-        cuerpo.addWidget(self.alerta)
 
         split = QSplitter(Qt.Horizontal)
+        self.split_revision = split
+        split.setChildrenCollapsible(False)
+        split.setHandleWidth(12)
         tabla_card = QFrame()
         tabla_card.setObjectName("tarjeta")
         lt = QVBoxLayout(tabla_card)
-        lt.setContentsMargins(12, 12, 12, 12)
-        titulo_tabla = QLabel("DATOS EXTRAÍDOS")
+        lt.setContentsMargins(12, 10, 12, 10)
+        fila_datos = QHBoxLayout()
+        titulo_tabla = QLabel("Datos extraídos")
         titulo_tabla.setObjectName("tituloSeccion")
-        lt.addWidget(titulo_tabla)
+        fila_datos.addWidget(titulo_tabla)
+        self.lbl_resultados = QLabel("Sin facturas")
+        self.lbl_resultados.setObjectName("textoSuave")
+        fila_datos.addWidget(self.lbl_resultados, 1, Qt.AlignRight)
+        lt.addLayout(fila_datos)
 
         # En ventana ancha coincide con el prototipo: filtros y acciones en
         # una fila. En portátiles se reparten sin comprimir ni cortar textos.
@@ -524,7 +566,8 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_mostrar.setToolTip("Filtrar las facturas mostradas")
         self.combo_filtro_estado = ComboSinRueda()
         self.combo_filtro_estado.addItems(
-            ["Todas", "Solo por revisar", "Solo con errores", "Solo correctas"])
+            ["Todas las facturas", "Solo por revisar", "Solo con errores",
+             "Solo correctas", "Fuera del trimestre"])
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
         self.combo_filtro_bloque = ComboSinRueda()
         self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
@@ -533,15 +576,37 @@ class VentanaPrincipal(QMainWindow):
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
         self.txt_buscar = QLineEdit()
+        self.txt_buscar.setObjectName("buscadorLote")
+        self.txt_buscar.setMinimumWidth(260)
         self.txt_buscar.addAction(
             QIcon(ruta_recurso("search.svg")), QLineEdit.LeadingPosition)
         self.txt_buscar.setPlaceholderText(
-            "Buscar proveedor/cliente, NIF, factura o 121,00")
+            "Proveedor o cliente, NIF, nº de factura o importe…")
         self.txt_buscar.setClearButtonEnabled(True)
         self.txt_buscar.setToolTip(
             "Busca en todo el lote cargado. Si escribe un importe con dos "
             "decimales, busca en base, IVA, retención y total.")
         self.txt_buscar.textChanged.connect(self._aplicar_filtro)
+        self.grupo_tipo = QButtonGroup(self)
+        self.botones_tipo = {}
+        for valor, texto in (("todos", "Todos"), ("gasto", "Gastos"),
+                             ("venta", "Ingresos")):
+            boton = QPushButton(texto)
+            boton.setObjectName("filtroTipo")
+            boton.setCheckable(True)
+            boton.setProperty("tipoFiltro", valor)
+            self.grupo_tipo.addButton(boton)
+            self.botones_tipo[valor] = boton
+        self.botones_tipo["todos"].setChecked(True)
+        self.grupo_tipo.buttonClicked.connect(self._aplicar_filtro)
+        barra_busqueda = QHBoxLayout()
+        barra_busqueda.setSpacing(8)
+        barra_busqueda.addWidget(self.txt_buscar, 1)
+        for boton in self.botones_tipo.values():
+            barra_busqueda.addWidget(boton)
+        barra_busqueda.addWidget(self.combo_filtro_estado)
+        cuerpo.addLayout(barra_busqueda)
+        cuerpo.addWidget(self.alerta)
         self.combo_filtro_registro = ComboSinRueda()
         self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
         self.combo_filtro_registro.setToolTip(
@@ -573,6 +638,13 @@ class VentanaPrincipal(QMainWindow):
         self.btn_unir_hojas.clicked.connect(self._unir_hojas_seleccionadas)
 
         self.menu_acciones = QMenu(self)
+        self.menu_acciones.addAction(self.accion_campos_completos)
+        self.menu_acciones.addAction("Limpiar filtros", self._limpiar_filtros)
+        self.accion_unir_compacta = self.menu_acciones.addAction(
+            "Unir hojas", self.btn_unir_hojas.click)
+        self.accion_manual_compacta = self.menu_acciones.addAction(
+            "Gestión manual", self.btn_manual.click)
+        self.menu_acciones.addSeparator()
         self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
         self.btn_quitar_bloque.setIcon(QIcon(ruta_recurso("trash.svg")))
         self.btn_quitar_bloque.setToolTip(
@@ -590,25 +662,33 @@ class VentanaPrincipal(QMainWindow):
         self.btn_mas_acciones = QPushButton("Más acciones")
         self.btn_mas_acciones.setObjectName("menuAcciones")
         self.btn_mas_acciones.setMenu(self.menu_acciones)
-        self._distribuir_herramientas(self.width())
         lt.addLayout(self.layout_herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
-        self.tabla.setHorizontalHeaderLabels([cabecera.upper() for cabecera in COLS])
+        self.tabla.setHorizontalHeaderLabels(COLS)
+        self.tabla.setShowGrid(False)
+        self.tabla.setWordWrap(False)
+        self.tabla.verticalHeader().setDefaultSectionSize(38)
         cabecera_tabla = self.tabla.horizontalHeader()
         cabecera_tabla.setSectionResizeMode(QHeaderView.Interactive)
-        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
+        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Interactive)
         cabecera_tabla.setSectionsClickable(True)
         cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
         for columna, ancho in {
-                C_ESTADO: 62, C_TIPO: 96, C_CUENTA: 64, C_GXX: 55,
-                C_FECHA: 92, C_NUM: 100, C_NOMBRE: 190, C_NIF: 92,
+                C_ESTADO: 58, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
+                C_FECHA: 92, C_NUM: 100, C_NOMBRE: 172, C_NIF: 104,
                 C_BASE: 82, C_PCT: 55, C_CUOTA: 74, C_BASE_IRPF: 82,
                 C_PCT_IRPF: 62, C_CUOTA_IRPF: 78, C_TOTAL: 86}.items():
             self.tabla.setColumnWidth(columna, ancho)
         # El bloque sigue disponible en el filtro y en el resumen inferior;
         # repetirlo en cada fila solo quitaba espacio a los datos contables.
-        self.tabla.setColumnHidden(C_BLOQUE, True)
+        # Reordenación visual: los índices de edición/exportación no cambian.
+        orden_visual = [C_ESTADO, C_NOMBRE, C_NUM, C_FECHA, C_BASE, C_CUOTA,
+                        C_CUOTA_IRPF, C_TOTAL, C_TIPO, C_NIF, C_PCT,
+                        C_CUENTA, C_GXX, C_BASE_IRPF, C_PCT_IRPF, C_BLOQUE]
+        for destino, columna in enumerate(orden_visual):
+            cabecera_tabla.moveSection(cabecera_tabla.visualIndex(columna), destino)
+        self._ver_campos_completos(self.accion_campos_completos.isChecked())
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla.itemChanged.connect(self._on_celda)
@@ -619,10 +699,10 @@ class VentanaPrincipal(QMainWindow):
 
         visor_card = QFrame()
         visor_card.setObjectName("tarjeta")
-        visor_card.setMinimumWidth(360)
+        visor_card.setMinimumWidth(290)
         lv = QVBoxLayout(visor_card)
         lv.setContentsMargins(12, 12, 12, 12)
-        titulo_visor = QLabel("DOCUMENTO ORIGINAL")
+        titulo_visor = QLabel("Documento original")
         titulo_visor.setObjectName("tituloSeccion")
         self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_origen.setObjectName("textoSuave")
@@ -655,8 +735,8 @@ class VentanaPrincipal(QMainWindow):
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
         self.lbl_img.setObjectName("visor")
         self.lbl_img.setAlignment(Qt.AlignCenter)
-        self.lbl_img.setMinimumWidth(330)
-        self.lbl_img.setMinimumHeight(430)
+        self.lbl_img.setMinimumWidth(250)
+        self.lbl_img.setMinimumHeight(180)
         self.lbl_img.setCursor(QCursor(Qt.PointingHandCursor))
         self.lbl_img.setToolTip("Haga clic para abrir una vista previa grande.")
         self.lbl_img.clicked.connect(self._abrir_vista_previa)
@@ -669,10 +749,12 @@ class VentanaPrincipal(QMainWindow):
         lv.addWidget(titulo_visor)
         lv.addLayout(barra_documento)
         lv.addWidget(self.visor_scroll, 1)
+        lv.addWidget(self.btn_revisada)
         split.addWidget(visor_card)
         split.setStretchFactor(0, 7)
         split.setStretchFactor(1, 3)
         split.setSizes([980, 420])
+        split.splitterMoved.connect(lambda *_: self._distribuir_herramientas(self.width()))
         cuerpo.addWidget(split, 1)
 
         resumen_card = QFrame()
@@ -681,10 +763,10 @@ class VentanaPrincipal(QMainWindow):
         lr.setContentsMargins(12, 10, 12, 10)
         lr.setSpacing(2)
         fila_titulo = QHBoxLayout()
-        self.lbl_resumen_titulo = QLabel("⌄  COMPROBACIÓN DE TOTALES")
+        self.lbl_resumen_titulo = QLabel("Comprobación de totales")
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
-        fila_titulo.addWidget(self.lbl_resumen_titulo)
-        fila_titulo.addStretch(1)
+        self.lbl_resumen_titulo.setWordWrap(True)
+        fila_titulo.addWidget(self.lbl_resumen_titulo, 1)
         btn_cerrar_resumen = QPushButton("Ocultar")
         btn_cerrar_resumen.setToolTip(
             "Es solo una comprobación. Se vuelve a ver en el menú Ver.")
@@ -699,15 +781,17 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
                                           + len(COLS_RESUMEN_FIN))
         self.tabla_resumen.setHorizontalHeaderLabels(
-            [cabecera.upper() for cabecera in _cabeceras_resumen([])])
+            _cabeceras_resumen([]))
+        self.tabla_resumen.setShowGrid(False)
         self.tabla_resumen.verticalHeader().setVisible(False)
         self.tabla_resumen.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_resumen.setSelectionMode(QTableWidget.NoSelection)
         self.tabla_resumen.setAlternatingRowColors(True)
         # Sin ajuste de linea: un nombre de PDF largo no debe estirar la fila.
         self.tabla_resumen.setWordWrap(False)
-        self.tabla_resumen.verticalHeader().setDefaultSectionSize(26)
-        self.tabla_resumen.setMaximumHeight(190)
+        self.tabla_resumen.verticalHeader().setDefaultSectionSize(28)
+        self.tabla_resumen.setMinimumHeight(75)
+        self.tabla_resumen.setMaximumHeight(195)
         self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         lr.addWidget(self.tabla_resumen)
         self.resumen_card = resumen_card
@@ -726,105 +810,122 @@ class VentanaPrincipal(QMainWindow):
             "saldo de la cuenta desde el programa: esto es la cuenta que lleva "
             "el propio programa.")
         pie.addWidget(self.lbl_gasto)
+        pie.addWidget(self.btn_gastos)
         cuerpo.addLayout(pie)
         cont = QWidget()
         cont.setLayout(cuerpo)
         raiz.addWidget(cont, 1)
         self.setCentralWidget(central)
         self._actualizar_barra_responsiva(self.width())
+        self._distribuir_herramientas(self.width())
 
     def _distribuir_herramientas(self, ancho: int):
-        """Una fila como el diseño; dos si falta ancho para leer los textos."""
-        if not hasattr(self, "layout_herramientas"):
+        """Las acciones se ajustan al panel real, también al mover el divisor."""
+        if not hasattr(self, "tabla"):
             return
         elementos = (
-            self.lbl_mostrar, self.combo_filtro_estado,
-            self.combo_filtro_bloque, self.txt_buscar,
-            self.combo_filtro_registro, self.btn_siguiente,
-            self.btn_revisada, self.btn_manual, self.btn_unir_hojas,
+            self.lbl_mostrar, self.combo_filtro_bloque, self.combo_filtro_registro,
+            self.btn_siguiente, self.btn_manual, self.btn_unir_hojas,
             self.btn_mas_acciones,
         )
         for elemento in elementos:
             self.layout_herramientas.removeWidget(elemento)
         for columna in range(9):
             self.layout_herramientas.setColumnStretch(columna, 0)
-
-        if ancho >= 1200:
+        ancho_tabla = min(ancho, self.tabla.parentWidget().width())
+        amplia = ancho_tabla >= 790
+        self.btn_unir_hojas.setVisible(amplia)
+        self.btn_manual.setVisible(amplia)
+        self.accion_unir_compacta.setVisible(not amplia)
+        self.accion_manual_compacta.setVisible(not amplia)
+        if amplia:
             posiciones = (
-                (self.lbl_mostrar, 0, 0),
-                (self.combo_filtro_estado, 0, 1),
-                (self.combo_filtro_bloque, 0, 2),
-                (self.txt_buscar, 0, 3),
-                (self.btn_siguiente, 0, 4),
-                (self.btn_revisada, 0, 5),
-                (self.btn_unir_hojas, 0, 6),
-                (self.btn_manual, 0, 7),
-                (self.btn_mas_acciones, 0, 8),
-                (self.combo_filtro_registro, 1, 1, 3),
+                (self.lbl_mostrar, 0, 0), (self.combo_filtro_bloque, 0, 1),
+                (self.btn_siguiente, 0, 2), (self.btn_unir_hojas, 0, 3),
+                (self.btn_manual, 0, 4), (self.btn_mas_acciones, 0, 5),
+                (self.combo_filtro_registro, 1, 0, 6),
             )
-            self.layout_herramientas.setColumnStretch(3, 1)
+            self.layout_herramientas.setColumnStretch(1, 1)
         else:
             posiciones = (
-                (self.lbl_mostrar, 0, 0),
-                (self.combo_filtro_estado, 0, 1),
-                (self.combo_filtro_bloque, 0, 2, 2),
-                (self.txt_buscar, 0, 4, 5),
-                (self.btn_siguiente, 1, 0, 2),
-                (self.btn_revisada, 1, 2, 2),
-                (self.btn_unir_hojas, 2, 0, 2),
-                (self.btn_manual, 2, 2, 2),
-                (self.btn_mas_acciones, 3, 0, 4),
-                (self.combo_filtro_registro, 4, 0, 4),
+                (self.lbl_mostrar, 0, 0), (self.combo_filtro_bloque, 0, 1),
+                (self.btn_siguiente, 0, 2),
+                (self.btn_mas_acciones, 0, 3),
+                (self.combo_filtro_registro, 1, 0, 4),
             )
-            self.layout_herramientas.setColumnStretch(0, 1)
             self.layout_herramientas.setColumnStretch(1, 1)
-            self.layout_herramientas.setColumnStretch(2, 1)
-            self.layout_herramientas.setColumnStretch(3, 1)
+        self.combo_filtro_bloque.setMinimumWidth(135)
+        self.combo_filtro_bloque.setMaximumWidth(260)
         for posicion in posiciones:
             widget, fila, columna = posicion[:3]
             expansion = posicion[3] if len(posicion) == 4 else 1
-            self.layout_herramientas.addWidget(
-                widget, fila, columna, 1, expansion)
+            self.layout_herramientas.addWidget(widget, fila, columna, 1, expansion)
 
     def _actualizar_barra_responsiva(self, ancho: int):
-        """Comparte fila con los menús salvo cuando hacerlo recortaría texto."""
+        """En poca altura los accesos, sin marca duplicada, comparten el menú."""
         if not hasattr(self, "fila_barra_estrecha"):
             return
-        debe_ir_en_menu = ancho >= 1200
-        esta_en_menu = getattr(self, "_barra_en_menu", False)
-        if debe_ir_en_menu == esta_en_menu:
-            self.fila_barra_estrecha.setVisible(not debe_ir_en_menu)
+        compacta = self.height() < 760
+        for marca in self._marcas_barra:
+            marca.setVisible(not compacta)
+        self.barra_rapida.layout().setContentsMargins(
+            6 if compacta else 16, 0 if compacta else 8,
+            8 if compacta else 16, 0 if compacta else 10)
+        if compacta != getattr(self, "_barra_en_menu", False):
+            if compacta:
+                self.layout_barra_estrecha.removeWidget(self.barra_rapida)
+                self.menuBar().setCornerWidget(self.barra_rapida, Qt.TopRightCorner)
+            else:
+                self.barra_rapida.setParent(self.fila_barra_estrecha)
+                self.menuBar().setCornerWidget(None, Qt.TopRightCorner)
+                self.layout_barra_estrecha.addWidget(self.barra_rapida)
+            self._barra_en_menu = compacta
+        self.barra_rapida.show()
+        self.fila_barra_estrecha.setVisible(not compacta)
+        if hasattr(self, "encabezado_mesa"):
+            self.encabezado_mesa.setVisible(self.height() >= 800)
+        if hasattr(self, "tabla_resumen"):
+            self._ajustar_altura_resumen()
+
+    def _ajustar_altura_resumen(self):
+        limite = 96 if self.height() < 760 else 175
+        altura = (self.tabla_resumen.horizontalHeader().height()
+                  + 28 * max(1, self.tabla_resumen.rowCount()) + 4)
+        self.tabla_resumen.setFixedHeight(min(limite, max(65, altura)))
+
+    def _volver_a_revision(self):
+        self.btn_revisar_lote.setChecked(True)
+        self.tabla.setFocus()
+
+    def _ver_campos_completos(self, visible: bool):
+        if not hasattr(self, "tabla"):
             return
-        if debe_ir_en_menu:
-            self.layout_barra_estrecha.removeWidget(self.barra_rapida)
-            self.fila_barra_estrecha.hide()
-            self.menuBar().setCornerWidget(self.barra_rapida, Qt.TopRightCorner)
-        else:
-            self.barra_rapida.setParent(self.fila_barra_estrecha)
-            self.menuBar().setCornerWidget(None, Qt.TopRightCorner)
-            self.layout_barra_estrecha.addWidget(self.barra_rapida)
-            self.fila_barra_estrecha.show()
-        self._barra_en_menu = debe_ir_en_menu
+        # Los campos siguen siendo editables en la vista completa. El tipo
+        # siempre se muestra para no confundir un filtro con reclasificación.
+        secundarios = (C_CUENTA, C_GXX, C_NIF, C_PCT, C_BASE_IRPF, C_PCT_IRPF)
+        for columna in secundarios:
+            self.tabla.setColumnHidden(columna, not visible)
+        self.tabla.setColumnHidden(C_BLOQUE, True)
 
     def showEvent(self, evento):
         super().showEvent(evento)
         if sys.platform != "win32" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
             return
-        # Qt no pinta la barra nativa con QSS. Esta bandera documentada por DWM
-        # hace que Windows use título y controles oscuros como en el prototipo.
+        # Mantiene el acabado claro incluso si Windows usa modo oscuro.
         try:
             import ctypes
-            valor = ctypes.c_int(1)
-            for atributo in (20, 19):  # Windows 10 reciente / compilaciones antiguas
+            valor = ctypes.c_int(0)
+            for atributo in (20, 19):
                 resultado = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     int(self.winId()), atributo, ctypes.byref(valor),
                     ctypes.sizeof(valor))
                 if resultado == 0:
                     break
-            # La captura usa el mismo azul marino en título y barra de menús.
-            for atributo, color in ((35, 0x003A1A07), (36, 0x00FFFFFF),
-                                    (34, 0x003A1A07)):
-                valor_color = ctypes.c_uint(color)
+            # DWM recibe COLORREF (0x00BBGGRR).
+            for atributo, tono in ((35, "#FFFFFF"), (36, INK), (34, BORDER)):
+                qcolor = QColor(tono)
+                valor_color = ctypes.c_uint(
+                    qcolor.red() | (qcolor.green() << 8) | (qcolor.blue() << 16))
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     int(self.winId()), atributo, ctypes.byref(valor_color),
                     ctypes.sizeof(valor_color))
@@ -870,10 +971,17 @@ class VentanaPrincipal(QMainWindow):
         self.btn_registro.setEnabled(False)
 
         ver = self.menuBar().addMenu("Ver")
-        self.accion_resumen = ver.addAction("Comprobación de totales por bloque")
+        self.accion_resumen = ver.addAction("Comprobación de totales del lote")
         self.accion_resumen.setCheckable(True)
         self.accion_resumen.setChecked(bool(ajustes.leer("ver_resumen", True)))
         self.accion_resumen.toggled.connect(self._ver_resumen)
+        self.accion_detalle_bloques = ver.addAction("Desglosar totales por escaneo")
+        self.accion_detalle_bloques.setCheckable(True)
+        self.accion_detalle_bloques.toggled.connect(self._pintar_resumen)
+        self.accion_campos_completos = ver.addAction("Mostrar todos los campos contables")
+        self.accion_campos_completos.setCheckable(True)
+        self.accion_campos_completos.setChecked(False)
+        self.accion_campos_completos.toggled.connect(self._ver_campos_completos)
 
         config = self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
@@ -896,13 +1004,27 @@ class VentanaPrincipal(QMainWindow):
         menu.addAction("Preparar ZIP de ejemplos para revisión…", self._exportar_muestras)
         menu.addAction("Acerca de", self._acerca_de)
 
-        # Accesos diarios en una franja compacta bajo los menús. Separarlos
-        # evita que menús y botones se pisen a 1024 px de ancho.
+        # Las funciones secundarias siguen disponibles sin ocupar la mesa.
         self.barra_rapida = QWidget()
         self.barra_rapida.setObjectName("barraRapida")
         accesos = QHBoxLayout(self.barra_rapida)
-        accesos.setContentsMargins(6, 3, 8, 3)
-        accesos.setSpacing(6)
+        accesos.setContentsMargins(16, 8, 16, 10)
+        accesos.setSpacing(10)
+        marca_icono = QLabel("fa")
+        marca_icono.setObjectName("marcaIcono")
+        marca_icono.setAlignment(Qt.AlignCenter)
+        marca_icono.setFixedSize(36, 36)
+        accesos.addWidget(marca_icono)
+        marca = QVBoxLayout()
+        marca.setSpacing(0)
+        titulo = QLabel("Facturas a Aplifisa")
+        titulo.setObjectName("marca")
+        subtitulo = QLabel(f"Mesa de revisión  ·  v{__version__}")
+        subtitulo.setObjectName("textoSuave")
+        marca.addWidget(titulo)
+        marca.addWidget(subtitulo)
+        self._marcas_barra = [marca_icono, titulo, subtitulo]
+        accesos.addLayout(marca)
         accesos.addStretch(1)
 
         self.btn_cargar = QPushButton("Abrir PDF")
@@ -916,34 +1038,32 @@ class VentanaPrincipal(QMainWindow):
         self.btn_escanear.setObjectName("accesoRapido")
         self.btn_escanear.setIcon(QIcon(ruta_recurso("scan.svg")))
         self.btn_escanear.setToolTip(
-            "Escanea el taco del alimentador, guarda el PDF con el nombre del "
-            "cliente y lo mete en el lote.  (Ctrl+E)")
+            "Escanea el taco y lo añade al lote completo.  (Ctrl+E)")
         self.btn_escanear.clicked.connect(self._escanear)
         accesos.addWidget(self.btn_escanear)
 
-        self.btn_revisar_gemini = QPushButton("Revisar Gemini")
-        self.btn_revisar_gemini.setObjectName("accesoRapido")
-        self.btn_revisar_gemini.setIcon(QIcon(ruta_recurso("check.svg")))
-        self.btn_revisar_gemini.setToolTip(
-            "Prepara y copia una orden para que Codex compruebe el modelo "
-            "actual, sus precios y su retirada sin sacrificar calidad.")
+        self.btn_revisar_gemini = QPushButton("Revisar Gemini", self)
         self.btn_revisar_gemini.clicked.connect(self._preparar_revision_gemini)
-        accesos.addWidget(self.btn_revisar_gemini)
-
-        self.btn_vaciar = QPushButton("Vaciar todo")
-        self.btn_vaciar.setObjectName("accesoPeligro")
-        self.btn_vaciar.setIcon(QIcon(ruta_recurso("trash.svg")))
-        self.btn_vaciar.setToolTip("Quita todas las facturas del lote actual.")
+        self.btn_revisar_gemini.hide()
+        self.btn_vaciar = QPushButton("Vaciar todo", self)
         self.btn_vaciar.clicked.connect(self._vaciar_todo)
-        accesos.addWidget(self.btn_vaciar)
+        self.btn_vaciar.hide()
+        utilidades = QMenu(self)
+        utilidades.addAction("Revisar Gemini", self.btn_revisar_gemini.click)
+        utilidades.addSeparator()
+        utilidades.addAction(
+            QIcon(ruta_recurso("trash.svg")), "Vaciar todo", self.btn_vaciar.click)
+        self.btn_utilidades = QPushButton("Más")
+        self.btn_utilidades.setMenu(utilidades)
+        accesos.addWidget(self.btn_utilidades)
 
         self.btn_gastos = QPushButton("Exportar a Aplifisa")
-        self.btn_gastos.setObjectName("accesoExito")
-        self.btn_gastos.setIcon(QIcon(ruta_recurso("export.svg")))
+        self.btn_gastos.setObjectName("primario")
         self.btn_gastos.setEnabled(False)
+        self.btn_gastos.setToolTip(
+            "Exporta el lote completo, no solo el resultado de la búsqueda. (Ctrl+G)")
         self.btn_gastos.clicked.connect(self._exportar_todo)
         self.btn_ventas = self.btn_gastos
-        accesos.addWidget(self.btn_gastos)
 
 
     def _mostrar_notas_version_al_arrancar(self):
@@ -1344,7 +1464,7 @@ class VentanaPrincipal(QMainWindow):
         dialogo.exec()
         fila = dialogo.fila_seleccionada()
         if 0 <= fila < self.tabla.rowCount():
-            self.combo_filtro_registro.setCurrentIndex(0)
+            self._limpiar_filtros()
             self.tabla.selectRow(fila)
             self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
         self.lbl_estado.setText(
@@ -2235,6 +2355,9 @@ class VentanaPrincipal(QMainWindow):
         }
         for col, val in valores.items():
             item = QTableWidgetItem("" if val is None else str(val))
+            if col in (C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF,
+                       C_CUOTA_IRPF, C_TOTAL):
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if col == C_GXX:
                 item.setToolTip(
                     "Subclave del suministro. En Aplifisa la 628 NO puede ir "
@@ -2249,7 +2372,7 @@ class VentanaPrincipal(QMainWindow):
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 item.setToolTip("Escaneo o PDF del que salió esta factura.")
             self.tabla.setItem(r, col, item)
-        self.tabla.setRowHeight(r, 42)
+        self.tabla.setRowHeight(r, 34)
         self.tabla.blockSignals(senales_bloqueadas)
 
     # ---------- edicion / validacion ----------
@@ -2491,6 +2614,12 @@ class VentanaPrincipal(QMainWindow):
         bloque = self.combo_filtro_bloque.currentText()
         busqueda = self.txt_buscar.text()
         filtro_registro = self.combo_filtro_registro.currentData() or "todas"
+        tipo = self.grupo_tipo.checkedButton().property("tipoFiltro")
+        self.txt_buscar.setPlaceholderText({
+            "gasto": "Proveedor, NIF, nº de factura o importe…",
+            "venta": "Cliente, NIF, nº de factura o importe…",
+            "todos": "Proveedor o cliente, NIF, nº de factura o importe…",
+        }[tipo])
         for fila in range(self.tabla.rowCount()):
             estado = self._estado_fila(fila)
             visible = (
@@ -2498,7 +2627,11 @@ class VentanaPrincipal(QMainWindow):
                 or (opcion == 1 and estado == ICONO_ESTADO[REVISAR])
                 or (opcion == 2 and estado == ICONO_ESTADO[ERROR])
                 or (opcion == 3 and estado in {ICONO_ESTADO[OK], ICONO_REVISADO})
+                or (opcion == 4 and self._periodo_lote.es_trimestre
+                    and not self._periodo_lote.contiene(self.filas[fila]["factura"]))
             )
+            if tipo != "todos" and self._tipo_fila(fila) != tipo:
+                visible = False
             if bloque != TODOS_LOS_BLOQUES and self.filas[fila]["bloque"] != bloque:
                 visible = False
             if visible and not coincide_busqueda(self._leer_fila(fila), busqueda):
@@ -2511,11 +2644,25 @@ class VentanaPrincipal(QMainWindow):
                 elif estado_registro != filtro_registro:
                     visible = False
             self.tabla.setRowHidden(fila, not visible)
+        visibles = [self.filas[r]["factura"] for r in range(self.tabla.rowCount())
+                    if not self.tabla.isRowHidden(r)]
+        self.lbl_resultados.setText(
+            f"{facturas_unicas(visibles)} facturas · {len(visibles)} líneas visibles")
+        if self.tabla.currentRow() >= 0 and self.tabla.isRowHidden(self.tabla.currentRow()):
+            self.tabla.clearSelection()
+        if not self.tabla.selectionModel().selectedRows():
+            primera = next((r for r in range(self.tabla.rowCount())
+                            if not self.tabla.isRowHidden(r)), None)
+            if primera is not None:
+                self.tabla.selectRow(primera)
+            else:
+                self._limpiar_visor()
         self._pintar_resumen()
 
     def _hay_filtro_activo(self) -> bool:
         return bool(
             self.combo_filtro_estado.currentIndex()
+            or not self.botones_tipo["todos"].isChecked()
             or self.combo_filtro_bloque.currentText() != TODOS_LOS_BLOQUES
             or self.txt_buscar.text().strip()
             or (self.combo_filtro_registro.isVisible()
@@ -2536,11 +2683,26 @@ class VentanaPrincipal(QMainWindow):
                           and not f.revision_confirmada
                           and not f.tratamiento_manual))
             if pendiente:
-                self.combo_filtro_estado.setCurrentIndex(0)
+                # Una búsqueda no debe esconder la incidencia que se visita.
+                self._limpiar_filtros()
                 self.tabla.selectRow(fila)
                 self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
                 return
         self.lbl_estado.setText("Todo el lote está correcto y listo para exportar.")
+
+    def _limpiar_filtros(self):
+        for control in (self.txt_buscar, self.combo_filtro_estado,
+                        self.combo_filtro_bloque, self.combo_filtro_registro):
+            control.blockSignals(True)
+        self.txt_buscar.clear()
+        self.combo_filtro_estado.setCurrentIndex(0)
+        self.combo_filtro_bloque.setCurrentIndex(0)
+        self.combo_filtro_registro.setCurrentIndex(0)
+        self.botones_tipo["todos"].setChecked(True)
+        for control in (self.txt_buscar, self.combo_filtro_estado,
+                        self.combo_filtro_bloque, self.combo_filtro_registro):
+            control.blockSignals(False)
+        self._aplicar_filtro()
 
     def _filas_seleccionadas(self) -> list[int]:
         return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})
@@ -2841,9 +3003,12 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.blockSignals(True)
         celda.setText(ICONO_MANUAL if f.tratamiento_manual else
                       ICONO_REVISADO if confirmada else ICONO_ESTADO[estado])
-        celda.setBackground(COLOR_MANUAL if f.tratamiento_manual else
+        celda.setData(Qt.BackgroundRole, None)
+        celda.setForeground(COLOR_MANUAL if f.tratamiento_manual else
                             COLOR_REVISADO if confirmada else COLOR_ESTADO[estado])
-        celda.setForeground(QColor("white"))
+        fuente_estado = celda.font()
+        fuente_estado.setBold(True)
+        celda.setFont(fuente_estado)
         celda.setToolTip("\n".join(msgs) if msgs else "Todo correcto")
         self._resaltar_campos_incidencia(r, estado, msgs)
         self.tabla.blockSignals(False)
@@ -3108,17 +3273,19 @@ class VentanaPrincipal(QMainWindow):
             return
         n = len(avisos)
         self.lbl_alerta_titulo.setText(
-            f"⚠  ATENCIÓN: {n} cosa{'s' if n > 1 else ''} que revisar "
+            f"Atención: {n} aviso{'s' if n > 1 else ''} que revisar "
             f"antes de exportar")
         self.lbl_alerta_texto.setText(
-            "\n".join(avisos[:6])
-            + (f"\n… y {n - 6} más." if n > 6 else "")
-            + "\n\nUna factura repetida se registra dos veces; una que falta "
-              "no se registra nunca; una fecha de otro año lleva el apunte "
-              "al ejercicio equivocado.")
+            "\n".join(avisos[:2])
+            + (f"\n… y {n - 2} avisos más. Use «Ver incidencias»." if n > 2 else ""))
+        self.lbl_alerta_texto.setToolTip("\n".join(avisos))
         self.alerta.setVisible(True)
 
     def _resumen(self):
+        facturas = [fila["factura"] for fila in self.filas]
+        self.lbl_lote.setText(
+            f"Lote completo · {facturas_unicas(facturas)} facturas · "
+            f"{len(facturas)} líneas fiscales")
         estados = []
         for r in range(self.tabla.rowCount()):
             f = self.filas[r]["factura"]
@@ -3128,7 +3295,8 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_estado.setText(
             "Lote vacío. Cargue o escanee facturas para empezar." if not estados else
             f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
-            f"🟢 {estados.count(OK)}  🟡 {estados.count(REVISAR)}  🔴 {estados.count(ERROR)}")
+            f"Correctas: {estados.count(OK)} · Revisar: {estados.count(REVISAR)} · "
+            f"Errores: {estados.count(ERROR)}")
         self._pintar_resumen()
 
     def _pintar_resumen(self):
@@ -3153,13 +3321,13 @@ class VentanaPrincipal(QMainWindow):
             if not pares:
                 continue
             por_bloque = resumir_por_bloque(pares)
-            for nombre, t in por_bloque.items():
-                lineas.append((nombre, etiqueta, t, False))
+            if self.accion_detalle_bloques.isChecked():
+                for nombre, t in por_bloque.items():
+                    lineas.append((nombre, etiqueta, t, False))
             fuera_periodo = ([f for _, f in pares if not periodo.contiene(f)]
                              if periodo.es_trimestre else [])
-            if len(por_bloque) > 1 or filtro_activo or fuera_periodo:
-                lineas.append(("TOTAL LOTE", etiqueta,
-                               resumir([f for _, f in pares]), True))
+            lineas.append(("TOTAL LOTE", etiqueta,
+                           resumir([f for _, f in pares]), True))
             if fuera_periodo:
                 dentro = [f for _, f in pares if periodo.contiene(f)]
                 lineas.append((f"DENTRO {periodo.etiqueta}", etiqueta,
@@ -3183,8 +3351,7 @@ class VentanaPrincipal(QMainWindow):
         self._tipos_iva_resumen = tipos_iva
         cabeceras = _cabeceras_resumen(tipos_iva)
         self.tabla_resumen.setColumnCount(len(cabeceras))
-        self.tabla_resumen.setHorizontalHeaderLabels(
-            [cabecera.upper() for cabecera in cabeceras])
+        self.tabla_resumen.setHorizontalHeaderLabels(cabeceras)
         self.tabla_resumen.setRowCount(len(lineas))
         for r, (bloque, tipo, t, es_total) in enumerate(lineas):
             # En recargo el gasto va por el total factura: el desglose de IVA
@@ -3211,7 +3378,12 @@ class VentanaPrincipal(QMainWindow):
                     fuente = item.font()
                     fuente.setBold(True)
                     item.setFont(fuente)
+                if bloque == "FILTRO ACTUAL":
+                    item.setBackground(QColor(ACCENT_FAINT))
+                    item.setForeground(QColor(INK))
                 self.tabla_resumen.setItem(r, c, item)
+        # Con un lote vacío no se reserva una gran tabla en blanco.
+        self._ajustar_altura_resumen()
 
     def _copiar_resumen(self):
         """El resumen al portapapeles, para pegarlo al comprobar los totales."""
@@ -3232,7 +3404,7 @@ class VentanaPrincipal(QMainWindow):
         self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_pagina.clear()
         self.lbl_img.clear()
-        self.lbl_img.setMinimumSize(330, 430)
+        self.lbl_img.setMinimumSize(250, 180)
         self.lbl_img.setText(
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
 
@@ -3240,8 +3412,8 @@ class VentanaPrincipal(QMainWindow):
         if self._pixmap_documento.isNull():
             return
         viewport = self.visor_scroll.viewport().size()
-        ancho = max(330, int(viewport.width() * self._zoom_visor))
-        alto = max(430, int(viewport.height() * self._zoom_visor))
+        ancho = max(250, int(viewport.width() * self._zoom_visor))
+        alto = max(180, int(viewport.height() * self._zoom_visor))
         self.lbl_img.setMinimumSize(ancho, alto)
         self.lbl_img.setPixmap(self._pixmap_documento.scaled(
             ancho, alto, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -3268,7 +3440,9 @@ class VentanaPrincipal(QMainWindow):
             self._pixmap_documento = pix
             self._pintar_pixmap_visor()
         else:
-            self._pixmap_documento = QPixmap()
+            self._limpiar_visor()
+            self.lbl_origen.setText(origen or "Documento cargado")
+            self.lbl_img.setText("Vista previa no disponible para esta factura")
 
     def _abrir_vista_previa(self):
         """Muestra la página seleccionada grande y con barras de desplazamiento."""

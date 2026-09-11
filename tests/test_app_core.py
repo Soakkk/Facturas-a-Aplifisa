@@ -295,9 +295,8 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert v.visor_scroll.widget() is v.lbl_img
     assert v.btn_zoom_menos.toolTip() == "Alejar documento"
     assert v.minimumWidth() == 1024
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
-    assert v.layout_herramientas.getItemPosition(
-        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
+    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.tabla.isColumnHidden(C_BLOQUE)
     assert v.tabla.columnWidth(C_CUENTA) <= 70
     assert v.tabla.columnWidth(C_GXX) <= 60
@@ -314,20 +313,22 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     _app.processEvents()
     v.resize(1024, 640)
     _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
-    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+    assert v.barra_rapida.isVisible()
     assert v.layout_herramientas.getItemPosition(
-        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 1
-    assert v.layout_herramientas.getItemPosition(
-        v.layout_herramientas.indexOf(v.btn_manual))[0] == 2
+        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
+    assert v.btn_manual.isHidden()
+    assert v.accion_manual_compacta.isVisible()
     assert not v.btn_unir_hojas.icon().isNull()
     assert v.btn_unir_hojas.toolTip().startswith("Seleccione las filas")
-    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_unir_hojas, v.btn_manual,
-                  v.btn_mas_acciones):
+    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_mas_acciones):
         assert boton.width() >= boton.sizeHint().width()
     v.resize(1420, 820)
     _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
+    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
+    assert v.barra_rapida.isVisible()
+    assert v.txt_buscar.width() >= 260
 
 
 def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():

@@ -6,6 +6,26 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.21": """
+<h2>Novedades de la versión 1.13.21</h2>
+<ul>
+  <li><b>Mesa de revisión · Azul asesoría:</b> fondos claros, cabecera blanca,
+      azul suave y texto contrastado, incluso con Windows en modo oscuro.</li>
+  <li><b>Buscador a la vista:</b> búsqueda amplia por proveedor o cliente,
+      botones Todos/Gastos/Ingresos y filtro de facturas fuera del trimestre.</li>
+  <li><b>Tabla y original juntos:</b> importes y retenciones en la vista de
+      revisión; «Más acciones → Mostrar todos los campos contables» permite
+      editar también NIF, cuenta, concepto y porcentajes.</li>
+  <li><b>Totales del lote completo:</b> el resumen parte de todo lo cargado.
+      Los resultados del filtro se destacan en azul y el desglose por escaneo
+      sigue disponible en el menú Ver.</li>
+  <li><b>Adaptada a portátiles:</b> las acciones secundarias se agrupan cuando
+      falta espacio. «Siguiente incidencia» limpia los filtros que podrían
+      ocultar la factura afectada.</li>
+</ul>
+<p>Se conservan las sesiones, las comprobaciones, las correcciones y el formato
+de exportación a Aplifisa.</p>
+""",
     "1.13.20": """
 <h2>Novedades de la versión 1.13.20</h2>
 <ul>

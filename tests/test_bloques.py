@@ -127,7 +127,12 @@ def test_el_resumen_cuadra_bloque_a_bloque():
     cargar_bloque(v, r"C:\tmp\escaneo1.pdf", [factura("F-1"), factura("F-2", 50)])
     cargar_bloque(v, r"C:\tmp\escaneo2.pdf", [factura("F-3", 70)])
 
-    # Una linea por bloque + el total general (hay mas de un bloque).
+    # Por defecto se trabaja con todo el taco, sin las partes del escaneo.
+    assert v.tabla_resumen.rowCount() == 1
+    assert v.tabla_resumen.item(0, 0).text() == "TOTAL LOTE"
+    assert v.tabla_resumen.item(0, 9).text() == "266,20 €"
+    # El desglose por bloque sigue disponible expresamente.
+    v.accion_detalle_bloques.setChecked(True)
     assert v.tabla_resumen.rowCount() == 3
     assert v.tabla_resumen.item(0, 0).text() == "escaneo1"
     assert v.tabla_resumen.item(0, 2).text() == "2"          # facturas
@@ -174,11 +179,11 @@ def test_el_resumen_muestra_los_suplidos_sin_mezclarlos_con_la_base():
     cargar_bloque(v, r"C:\tmp\suplidos.pdf", [f])
 
     cabeceras = _cabeceras(v)
-    assert v.tabla_resumen.item(0, cabeceras.index("BASE")).text() == "100,00 €"
+    assert v.tabla_resumen.item(0, cabeceras.index("Base")).text() == "100,00 €"
     assert v.tabla_resumen.item(
-        0, cabeceras.index("SUPLIDOS")).text() == "109,08 €"
+        0, cabeceras.index("Suplidos")).text() == "109,08 €"
     assert v.tabla_resumen.item(
-        0, cabeceras.index("TOTAL FACTURA")).text() == "230,08 €"
+        0, cabeceras.index("Total factura")).text() == "230,08 €"
 
 
 def test_resumir_por_bloque_agrupa_y_redondea():

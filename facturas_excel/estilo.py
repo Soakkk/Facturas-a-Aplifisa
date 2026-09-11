@@ -2,21 +2,21 @@
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
-PAGE = "#F7F8FB"
+PAGE = "#F5F8FC"
 CARD = "#FFFFFF"
-SOFT = "#FAFBFD"
-HEAD = "#F8FAFC"
-BAR = "#071A3A"
-INK = "#111827"
-MUTED = "#64748B"
-DIM = "#0B2A6F"
-BORDER = "#D7DFEA"
-ACCENT = "#0B2A6F"
-ACCENT_HOVER = "#071F55"
-ACCENT_FAINT = "#EEF4FF"
-SUCCESS = "#16A35A"
-WARNING = "#D68A00"
-DANGER = "#E11D2E"
+SOFT = "#FAFCFE"
+HEAD = "#F5F8FC"
+BAR = "#FFFFFF"
+INK = "#24384D"
+MUTED = "#5D7084"
+DIM = "#5D7084"
+BORDER = "#DCE5F0"
+ACCENT = "#326FA6"
+ACCENT_HOVER = "#285E90"
+ACCENT_FAINT = "#EAF3FC"
+SUCCESS = "#19724E"
+WARNING = "#86500A"
+DANGER = "#B43737"
 
 # La referencia usa una sola familia sans-serif en toda la interfaz.
 FUENTE_UI = '"Segoe UI Variable", "Segoe UI", sans-serif'
@@ -26,65 +26,71 @@ QWidget {{ color: {INK}; font-family: {FUENTE_UI}; font-size: 12px; }}
 QMainWindow, QDialog, QMessageBox, QFileDialog {{ background: {PAGE}; }}
 
 QMenuBar {{
-    background: {BAR}; color: #F1F5F9; border: none;
-    border-bottom: 1px solid #1B3358; padding: 0 10px; min-height: 30px;
+    background: {BAR}; color: {MUTED}; border: none;
+    padding: 0 10px; min-height: 28px;
 }}
 QMenuBar::item {{ padding: 6px 10px; border-radius: 2px; font-weight: 600; }}
-QMenuBar::item:selected {{ background: rgba(255,255,255,0.14); }}
+QMenuBar::item:selected {{ background: {ACCENT_FAINT}; color: {ACCENT}; }}
 QMenu {{ background: {CARD}; border: 1px solid {BORDER}; padding: 3px; }}
 QMenu::item {{ padding: 7px 24px 7px 10px; border-radius: 3px; }}
 QMenu::item:selected {{ background: {ACCENT_FAINT}; color: {ACCENT}; }}
 
 QWidget#barraRapida, QFrame#filaBarraEstrecha {{
-    background: {BAR}; border: none; border-bottom: 1px solid #1B3358;
+    background: {BAR}; border: none; border-bottom: 1px solid {BORDER};
 }}
 QWidget#barraRapida QPushButton {{
-    min-height: 24px; max-height: 24px; padding: 1px 10px;
-    border-radius: 3px; font-size: 12px; font-weight: 600;
-    color: #F1F5F9; background: transparent; border: 1px solid #8DA0BA;
+    min-height: 24px; padding: 5px 12px;
+    border-radius: 7px; font-size: 12px; font-weight: 500;
+    color: {INK}; background: {CARD}; border: 1px solid {BORDER};
 }}
 QWidget#barraRapida QPushButton:hover {{
-    color: white; background: #132B50; border-color: #C2CDDC;
+    color: {ACCENT}; background: {ACCENT_FAINT}; border-color: {ACCENT};
 }}
 QWidget#barraRapida QPushButton#accesoPeligro {{
-    color: #FF5364; border-color: #D13243; background: transparent;
+    color: {DANGER}; border-color: {BORDER}; background: {CARD};
 }}
 QWidget#barraRapida QPushButton#accesoPeligro:hover {{
-    color: white; border-color: #EF4052; background: #6F1F2B;
+    color: {DANGER}; border-color: {DANGER}; background: #FFEDED;
 }}
 QWidget#barraRapida QPushButton#accesoExito {{
-    color: #35D978; border-color: #1EB866; background: transparent;
+    color: white; border-color: {ACCENT}; background: {ACCENT};
 }}
 QWidget#barraRapida QPushButton#accesoExito:hover {{
-    color: white; border-color: #35D978; background: #145A35;
+    color: white; border-color: {ACCENT_HOVER}; background: {ACCENT_HOVER};
 }}
 QWidget#barraRapida QPushButton:disabled {{
-    color: #788397; border-color: #354158; background: transparent;
+    color: {MUTED}; border-color: {BORDER}; background: {SOFT};
 }}
 
-QFrame#tarjeta {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 5px; }}
+QFrame#tarjeta {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; }}
 QFrame#barraCliente {{
     background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
 }}
-QLabel#tituloSeccion {{ color: {ACCENT}; font-size: 11px; font-weight: 700; }}
+QLabel#tituloSeccion {{ color: {INK}; font-size: 13px; font-weight: 600; }}
+QLabel#marca {{ color: {INK}; font-size: 16px; font-weight: 600; }}
+QLabel#marcaIcono {{ background: {ACCENT_FAINT}; color: {ACCENT}; border-radius: 8px; font-size: 18px; font-weight: 600; }}
+QLabel#tituloMesa {{ color: {INK}; font-size: 20px; font-weight: 600; }}
+QLabel#contadorLote {{ color: {MUTED}; font-size: 12px; }}
 QLabel#textoSuave {{ color: {MUTED}; font-size: 11px; }}
 QLabel#cliente {{ color: {INK}; font-size: 12px; font-weight: 500; }}
-QLabel#visor {{ background: {CARD}; color: {MUTED}; border: none; }}
-QScrollArea#visorScroll {{ background: {CARD}; border: 1px solid {BORDER}; }}
+QLabel#visor {{ background: {PAGE}; color: {MUTED}; border: none; }}
+QScrollArea#visorScroll {{ background: {PAGE}; border: none; border-radius: 6px; }}
 
-QFrame#alerta {{ background: #FFF8E8; border: 1px solid {WARNING}; border-radius: 4px; }}
-QLabel#alertaTitulo {{ color: #9A6400; font-size: 11px; font-weight: 700; }}
+QFrame#alerta {{ background: #FFF4DF; border: none; border-radius: 8px; }}
+QLabel#alertaTitulo {{ color: {WARNING}; font-size: 12px; font-weight: 600; }}
 QLabel#alertaTexto {{ color: {INK}; font-size: 12px; }}
 
 QPushButton {{
     background: {CARD}; color: {INK}; border: 1px solid {BORDER};
-    border-radius: 3px; padding: 6px 11px; font-weight: 500;
+    border-radius: 7px; padding: 7px 12px; font-weight: 500;
     font-family: {FUENTE_UI}; font-size: 12px;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
+QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; background: {ACCENT_FAINT}; }}
 QPushButton:pressed {{ background: {ACCENT_FAINT}; }}
 QPushButton:focus {{ border-color: {ACCENT}; }}
-QPushButton:disabled {{ background: {SOFT}; color: #A3AAB3; border-color: #E1E6ED; }}
+QPushButton:disabled {{ background: {SOFT}; color: {MUTED}; border-color: {BORDER}; }}
+QPushButton#filtroTipo:checked, QPushButton#paso:checked {{ background: {ACCENT_FAINT}; color: {ACCENT}; border-color: {ACCENT}; }}
+QPushButton#paso {{ border-color: transparent; background: transparent; }}
 QPushButton#primario {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}
 QPushButton#primario:hover {{ background: {ACCENT_HOVER}; color: white; }}
 QPushButton#exito {{ background: {SUCCESS}; color: white; border-color: {SUCCESS}; }}
@@ -104,11 +110,12 @@ QPushButton#botonVisor {{
 QPushButton#botonVisor:hover {{ background: {ACCENT_FAINT}; border: none; }}
 
 QLineEdit, QComboBox {{
-    background: {CARD}; border: 1px solid {BORDER}; border-radius: 3px;
+    background: {CARD}; border: 1px solid {BORDER}; border-radius: 7px;
     padding: 6px 8px; font-family: {FUENTE_UI};
     selection-background-color: {ACCENT}; selection-color: white;
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
+QLineEdit#buscadorLote {{ padding: 10px 12px; font-size: 13px; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {BORDER};
     selection-background-color: {ACCENT_FAINT}; selection-color: {ACCENT};
@@ -116,15 +123,17 @@ QComboBox QAbstractItemView {{
 
 QTableWidget {{
     background: {CARD}; alternate-background-color: {SOFT};
-    border: 1px solid {BORDER}; border-radius: 2px; gridline-color: #E1E7EF;
+    border: none; border-radius: 4px; gridline-color: {BORDER};
     selection-background-color: {ACCENT_FAINT}; selection-color: {INK};
-    font-family: {FUENTE_UI}; font-size: 11px;
+    font-family: {FUENTE_UI}; font-size: 12px;
 }}
 QHeaderView::section {{
     background: {HEAD}; color: {DIM}; border: none;
-    border-right: 1px solid {BORDER}; border-bottom: 1px solid {BORDER};
-    padding: 8px 6px; font-weight: 700; font-size: 10px;
+    border-bottom: 1px solid {BORDER};
+    padding: 9px 6px; font-weight: 500; font-size: 12px;
 }}
+QTableWidget QComboBox {{ border: none; border-radius: 3px; padding: 3px 5px; background: transparent; }}
+QSplitter::handle {{ background: {PAGE}; }}
 QProgressBar {{
     background: #E8EDF4; border: none; border-radius: 2px;
     min-height: 8px; max-height: 8px; text-align: center; color: transparent;
@@ -168,7 +177,7 @@ def aplicar_tema(app):
     familias = set(QFontDatabase.families())
     familia = ("Segoe UI Variable" if "Segoe UI Variable" in familias
                else "Segoe UI")
-    app.setFont(QFont(familia, 9))
+    app.setFont(QFont(familia, 10))
     paleta = app.palette()
     rol = QPalette.ColorRole
     paleta.setColor(rol.Window, QColor(PAGE))
