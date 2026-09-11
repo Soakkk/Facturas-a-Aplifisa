@@ -8,7 +8,7 @@ import fitz
 import pytest
 
 from facturas_excel.modelo import Factura
-from facturas_excel.registro import contrastar, leer_registro
+from facturas_excel.registro import Registro, contrastar, leer_registro
 
 # Un listado como el que imprime Aplifisa (mismo orden de columnas y totales).
 LISTADO = """LISTADO DE APUNTES DE COMPRAS DESGLOSADOS
@@ -253,3 +253,146 @@ def test_el_suplido_se_lee_como_base_sin_iva(listado_recibidas):
     assert suplido.base == 109.08
     assert suplido.cuota is None
     assert r.apuntes[0].base == 1.54 and r.apuntes[0].cuota == 0.15
+
+
+# --------------------------- listados fiscales anuales actuales de Aplifisa --
+# Estas maquetas reproducen la geometría de listados reales facilitados por el
+# usuario, pero todos los datos son ficticios y quedan protegidos por pruebas.
+def _insertar(pagina, y, *valores):
+    for x, texto in valores:
+        if texto not in (None, ""):
+            pagina.insert_text((x, y), str(texto), fontsize=5)
+
+
+@pytest.fixture
+def listado_anual_gastos(tmp_path):
+    ruta = tmp_path / "gastos-anual.pdf"
+    doc = fitz.open()
+    pagina = doc.new_page(width=842, height=595)
+    pagina.insert_text((350, 55), "Compras y gastos / Facturas recibidas",
+                       fontsize=7)
+    cabecera = (
+        (34, "Orden"), (55, "Fecha"), (90, "Nºfra.rec."),
+        (133, "Nºfra.proveedor"), (178, "Rt"), (190, "Identificación"),
+        (325, "Concepto"), (437, "Base"), (452.7, "IVA"), (476, "%"),
+        (503, "Cuota"), (521, "IVA"), (539, "Base"), (554.7, "R."),
+        (562.6, "Equiv."), (590, "%"), (608, "Cuota"),
+        (626, "R.Equiv."), (650, "Imputable"), (678.7, "a"),
+        (683.8, "IRPF"), (704, "Base"), (719.7, "retención"),
+        (754, "%"), (774, "Cuota"), (792, "retenida"),
+    )
+    _insertar(pagina, 82, *cabecera)
+    filas = (
+        ("1", "15/01/2026", "1", "FA-100", "B12345674", "PROVEEDOR UNO SL",
+         "COMPRAS", "100,00", "21,00", "21,00", "100,00", "5,20", "100,00", "15,00"),
+        ("2", "15/01/2026", "1", "FA-100", "B12345674", "PROVEEDOR UNO SL",
+         "COMPRAS", "50,00", "10,00", "5,00", "", "", "50,00", ""),
+        ("3", "20/02/2026", "2", "FA-200", "B12345675", "PROVEEDOR DOS SA",
+         "SERVICIOS", "200,00", "21,00", "42,00", "", "", "200,00", ""),
+    )
+    for y, fila in zip((94, 106, 118), filas):
+        orden, fecha, recibido, proveedor, nif, nombre, concepto, base, pct, iva, bre, req, birpf, irpf = fila
+        _insertar(pagina, y,
+                  (47, orden), (53, fecha), (114, recibido), (133, proveedor),
+                  (188, nif), (215, nombre), (325, concepto), (446, base),
+                  (468, pct), (518, iva), (548, bre), (618, req),
+                  (680, birpf), (784, irpf))
+    _insertar(pagina, 145, (272, "TOTAL"), (293, "ACUMULADO"),
+              (436, "350,00"), (508, "68,00"), (608, "5,20"),
+              (774, "15,00"))
+    doc.save(str(ruta))
+    doc.close()
+    return str(ruta)
+
+
+@pytest.fixture
+def listado_anual_ingresos(tmp_path):
+    ruta = tmp_path / "ingresos-anual.pdf"
+    doc = fitz.open()
+    pagina = doc.new_page(width=595, height=842)
+    pagina.insert_text((250, 55), "Ventas e ingresos", fontsize=7)
+    cabecera = (
+        (20, "Orden"), (44, "Fecha"), (92, "Nºfactura"),
+        (127, "Identificación"), (165, "del"), (175, "cliente"),
+        (267, "Concepto"), (370, "Base"), (386, "IVA"),
+        (410, "Cuota"), (428, "IVA"), (467, "Suma"),
+        (507, "Base"), (523, "Imp."), (545, "Reten."), (565, "IRPF"),
+    )
+    _insertar(pagina, 82, *cabecera)
+    _insertar(pagina, 94, (34, "1"), (41, "15/01/2026"), (116, "V-100"),
+              (124, "B12345674"), (151, "CLIENTE UNO SL"),
+              (265, "SERVICIOS"), (372, "100,00"), (419, "21,00"),
+              (462, "121,00"), (511, "100,00"), (563, "1,00"))
+    _insertar(pagina, 106, (34, "2"), (41, "20/02/2026"), (116, "V-200"),
+              (124, "B12345675"), (151, "CLIENTE DOS SA"),
+              (265, "SERVICIOS"), (372, "200,00"), (419, "42,00"),
+              (462, "242,00"), (511, "200,00"), (563, "2,00"))
+    # En el original los importes acumulados están en la línea anterior.
+    _insertar(pagina, 140, (369, "300,00"), (415, "63,00"),
+              (459, "363,00"), (508, "300,00"), (560, "3,00"))
+    _insertar(pagina, 143, (252, "TOTAL"), (281, "ACUMULADO:"))
+    doc.save(str(ruta))
+    doc.close()
+    return str(ruta)
+
+
+def test_lee_columnas_del_listado_anual_de_gastos(listado_anual_gastos):
+    r = leer_registro(listado_anual_gastos)
+
+    assert r.tipo == "gasto"
+    assert len(r.apuntes) == 3 and r.facturas == 2
+    assert r.apuntes[0].num_factura_proveedor == "FA-100"
+    assert r.apuntes[0].nif == "B12345674"
+    assert r.apuntes[0].nombre == "PROVEEDOR UNO SL"
+    assert (r.suma_base, r.suma_cuota, r.suma_recargo, r.suma_irpf) == (
+        350.0, 68.0, 5.2, 15.0)
+    assert r.bien_leido
+
+
+def test_una_factura_con_fecha_distinta_se_localiza(listado_anual_gastos):
+    r = leer_registro(listado_anual_gastos)
+    a = r.apuntes[0]
+    f = Factura(
+        num_factura=a.num_factura_proveedor, fecha="30/01/2026",
+        nombre=a.nombre, nif=a.nif, base_iva=a.base, pct_iva=a.pct_iva,
+        cuota_iva=a.cuota, base_requiv=a.base_recargo,
+        cuota_requiv=a.recargo, base_irpf=a.base_irpf, cuota_irpf=a.irpf,
+    )
+
+    informe = contrastar([f], Registro(apuntes=[a]))
+
+    assert len(informe.distintas) == 1
+    assert "Fecha:" in informe.distintas[0]
+
+
+def test_lee_columnas_y_retenciones_del_listado_anual_de_ingresos(
+        listado_anual_ingresos):
+    r = leer_registro(listado_anual_ingresos)
+
+    assert r.tipo == "venta"
+    assert len(r.apuntes) == r.facturas == 2
+    assert r.apuntes[0].nombre == "CLIENTE UNO SL"
+    assert (r.suma_base, r.suma_cuota, r.suma_irpf) == (300.0, 63.0, 3.0)
+    assert r.suma_neto == r.total_neto == 360.0
+    assert r.bien_leido
+
+
+def test_el_irpf_del_listado_de_ingresos_cuadra_tambien_el_total(
+        listado_anual_ingresos):
+    r = leer_registro(listado_anual_ingresos)
+    facturas = []
+    for apunte in r.apuntes:
+        f = Factura(
+            num_factura=apunte.numero, fecha=apunte.fecha,
+            nombre=apunte.nombre, nif=apunte.nif, concepto="705",
+            base_iva=apunte.base, pct_iva=21, cuota_iva=apunte.cuota,
+            base_irpf=apunte.base_irpf, pct_irpf=1, cuota_irpf=apunte.irpf,
+            total_impreso=apunte.neto,
+        )
+        facturas.append(f)
+
+    informe = contrastar(facturas, r)
+
+    assert informe.todo_cuadra
+    assert informe.descuadre_irpf == informe.descuadre_total == 0
+    assert (informe.facturas_programa, informe.lineas_programa) == (2, 2)

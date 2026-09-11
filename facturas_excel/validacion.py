@@ -34,9 +34,8 @@ class Resultado:
 def fecha_de(fecha: str) -> Optional[date]:
     """Fecha de la factura. None si no se entiende lo leido.
 
-    El programa NO trabaja por trimestres (se usa igual para un trimestre que
-    para un requerimiento de varios años), asi que la fecha solo se comprueba
-    para saber si la lectura es buena.
+    La validación básica solo comprueba que la fecha exista. El periodo fiscal
+    esperado del lote se controla aparte en la interfaz.
     """
     if not fecha:
         return None

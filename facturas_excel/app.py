@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QGridLayout, QHeaderView, QInputDialog, QLabel, QMainWindow, QMenu,
+    QGridLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSplitter, QStyle, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
@@ -54,6 +54,9 @@ from facturas_excel.conceptos import (
 )
 from facturas_excel.control_facturas import (
     clave_documento, controles_documentos, sin_cuadre_antiguo,
+)
+from facturas_excel.consulta import (
+    PeriodoLote, coincide_busqueda, detectar_periodo, periodo_manual,
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import aplicar_tema
@@ -118,7 +121,7 @@ C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, \
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
 # IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
 # la cabecera ("IVA 21%") en vez de repetirlo dentro de cada celda.
-COLS_RESUMEN_INICIO = ["Bloque", "Tipo", "Líneas", "Base"]
+COLS_RESUMEN_INICIO = ["Bloque", "Tipo", "Facturas", "Líneas", "Base"]
 COLS_RESUMEN_FIN = ["Recargo", "IRPF", "Suplidos", "Total factura"]
 TODOS_LOS_BLOQUES = "Todos los bloques"
 
@@ -356,6 +359,9 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado = []
         self._duplicados = set()
         self._ejercicio_lote = None
+        self._periodo_lote = PeriodoLote()
+        self._periodo_manual_valor = "auto"
+        self._informe_registro = None
         self._columna_orden = None
         self._orden_ascendente = True
         self._rutas_actuales = []
@@ -428,6 +434,18 @@ class VentanaPrincipal(QMainWindow):
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
         bloque_cliente.addWidget(self.btn_cliente)
+        lbl_periodo = QLabel("PERIODO")
+        lbl_periodo.setObjectName("tituloSeccion")
+        bloque_cliente.addWidget(lbl_periodo)
+        self.combo_periodo = ComboSinRueda()
+        self.combo_periodo.setMinimumWidth(150)
+        self.combo_periodo.setToolTip(
+            "Periodo fiscal esperado del lote. En automático detecta un "
+            "trimestre dominante o un ejercicio anual. Las fechas que se "
+            "salen del trimestre quedan señaladas para revisar.")
+        self.combo_periodo.addItem("Automático", "auto")
+        self.combo_periodo.currentIndexChanged.connect(self._on_periodo)
+        bloque_cliente.addWidget(self.combo_periodo)
         bloque_cliente.addStretch(1)
         # Solo aparece si el lote trae facturas con recargo de equivalencia:
         # para el resto de clientes no significa nada y estorba.
@@ -514,6 +532,22 @@ class VentanaPrincipal(QMainWindow):
             "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
+        self.txt_buscar = QLineEdit()
+        self.txt_buscar.addAction(
+            QIcon(ruta_recurso("search.svg")), QLineEdit.LeadingPosition)
+        self.txt_buscar.setPlaceholderText(
+            "Buscar proveedor/cliente, NIF, factura o 121,00")
+        self.txt_buscar.setClearButtonEnabled(True)
+        self.txt_buscar.setToolTip(
+            "Busca en todo el lote cargado. Si escribe un importe con dos "
+            "decimales, busca en base, IVA, retención y total.")
+        self.txt_buscar.textChanged.connect(self._aplicar_filtro)
+        self.combo_filtro_registro = ComboSinRueda()
+        self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
+        self.combo_filtro_registro.setToolTip(
+            "Resultado de la última comparación con el listado de Aplifisa.")
+        self.combo_filtro_registro.currentIndexChanged.connect(self._aplicar_filtro)
+        self.combo_filtro_registro.setVisible(False)
         self.btn_siguiente = QPushButton("Siguiente incidencia")
         self.btn_siguiente.setObjectName("accionTabla")
         self.btn_siguiente.setIcon(QIcon(ruta_recurso("arrow-right.svg")))
@@ -705,7 +739,8 @@ class VentanaPrincipal(QMainWindow):
             return
         elementos = (
             self.lbl_mostrar, self.combo_filtro_estado,
-            self.combo_filtro_bloque, self.btn_siguiente,
+            self.combo_filtro_bloque, self.txt_buscar,
+            self.combo_filtro_registro, self.btn_siguiente,
             self.btn_revisada, self.btn_manual, self.btn_unir_hojas,
             self.btn_mas_acciones,
         )
@@ -719,11 +754,13 @@ class VentanaPrincipal(QMainWindow):
                 (self.lbl_mostrar, 0, 0),
                 (self.combo_filtro_estado, 0, 1),
                 (self.combo_filtro_bloque, 0, 2),
+                (self.txt_buscar, 0, 3),
                 (self.btn_siguiente, 0, 4),
                 (self.btn_revisada, 0, 5),
                 (self.btn_unir_hojas, 0, 6),
                 (self.btn_manual, 0, 7),
                 (self.btn_mas_acciones, 0, 8),
+                (self.combo_filtro_registro, 1, 1, 3),
             )
             self.layout_herramientas.setColumnStretch(3, 1)
         else:
@@ -731,11 +768,13 @@ class VentanaPrincipal(QMainWindow):
                 (self.lbl_mostrar, 0, 0),
                 (self.combo_filtro_estado, 0, 1),
                 (self.combo_filtro_bloque, 0, 2, 2),
+                (self.txt_buscar, 0, 4, 5),
                 (self.btn_siguiente, 1, 0, 2),
                 (self.btn_revisada, 1, 2, 2),
                 (self.btn_unir_hojas, 2, 0, 2),
                 (self.btn_manual, 2, 2, 2),
                 (self.btn_mas_acciones, 3, 0, 4),
+                (self.combo_filtro_registro, 4, 0, 4),
             )
             self.layout_herramientas.setColumnStretch(0, 1)
             self.layout_herramientas.setColumnStretch(1, 1)
@@ -1099,6 +1138,7 @@ class VentanaPrincipal(QMainWindow):
             "cliente_nombre": getattr(self, "_cliente_nombre", ""),
             "hay_recargo": getattr(self, "_hay_recargo", False),
             "regimen_recargo": self.combo_recargo.currentData(),
+            "periodo_modo": getattr(self, "_periodo_manual_valor", "auto"),
         })
 
     def _restaurar_sesion(self) -> None:
@@ -1110,6 +1150,7 @@ class VentanaPrincipal(QMainWindow):
             self._cliente_nif = datos.get("cliente_nif", "")
             self._cliente_nombre = datos.get("cliente_nombre", "")
             self._hay_recargo = bool(datos.get("hay_recargo"))
+            self._periodo_manual_valor = datos.get("periodo_modo", "auto")
             self.fila_recargo.setVisible(self._hay_recargo)
             self.chk_hay_recargo.setChecked(self._hay_recargo)
             regimen = datos.get("regimen_recargo", DESGLOSE)
@@ -1298,11 +1339,60 @@ class VentanaPrincipal(QMainWindow):
             return
         facturas = [self._leer_fila(r) for r in range(self.tabla.rowCount())]
         informe = contrastar(facturas, registro)
-        DialogoRegistro(informe, registro, self).exec()
+        self._aplicar_informe_registro(informe)
+        dialogo = DialogoRegistro(informe, registro, self, facturas=facturas)
+        dialogo.exec()
+        fila = dialogo.fila_seleccionada()
+        if 0 <= fila < self.tabla.rowCount():
+            self.combo_filtro_registro.setCurrentIndex(0)
+            self.tabla.selectRow(fila)
+            self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
         self.lbl_estado.setText(
             f"Contraste con Aplifisa: {informe.emparejadas} cuadran, "
             f"{len(informe.sin_registrar)} sin registrar, "
-            f"{len(informe.de_mas)} de más, {len(informe.distintas)} distintas.")
+            f"{len(informe.de_mas)} de más, {len(informe.distintas)} distintas, "
+            f"{len(informe.dudosas)} dudosas.")
+
+    def _aplicar_informe_registro(self, informe) -> None:
+        self._informe_registro = informe
+        for fila, estado in informe.resultados.items():
+            if fila < len(self.filas):
+                self.filas[fila]["registro_estado"] = estado
+                self.filas[fila]["registro_detalle"] = informe.detalles.get(fila, [])
+        cuentas = Counter(informe.resultados.values())
+        diferencias = sum(cuentas.get(e, 0)
+                          for e in ("sin_registrar", "distinta", "dudosa"))
+        opciones = [
+            ("Aplifisa: todas", "todas"),
+            (f"Aplifisa: solo diferencias ({diferencias})", "diferencias"),
+            (f"No registradas ({cuentas.get('sin_registrar', 0)})", "sin_registrar"),
+            (f"Importe/dato distinto ({cuentas.get('distinta', 0)})", "distinta"),
+            (f"Coincidencia dudosa ({cuentas.get('dudosa', 0)})", "dudosa"),
+            (f"Cuadradas ({cuentas.get('cuadra', 0)})", "cuadra"),
+        ]
+        self.combo_filtro_registro.blockSignals(True)
+        self.combo_filtro_registro.clear()
+        for texto, dato in opciones:
+            self.combo_filtro_registro.addItem(texto, dato)
+        self.combo_filtro_registro.setCurrentIndex(1 if diferencias else 0)
+        self.combo_filtro_registro.setVisible(True)
+        self.combo_filtro_registro.blockSignals(False)
+        self._distribuir_herramientas(self.width())
+        self._aplicar_filtro()
+
+    def _invalidar_contraste_registro(self) -> None:
+        """Una edición hace que el resultado anterior deje de ser fiable."""
+        self._informe_registro = None
+        for registro in getattr(self, "filas", []):
+            registro.pop("registro_estado", None)
+            registro.pop("registro_detalle", None)
+        if not hasattr(self, "combo_filtro_registro"):
+            return
+        self.combo_filtro_registro.blockSignals(True)
+        self.combo_filtro_registro.clear()
+        self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
+        self.combo_filtro_registro.setVisible(False)
+        self.combo_filtro_registro.blockSignals(False)
 
     def _ver_resumen(self, visible: bool):
         """El resumen es solo un punto de control: si estorba, se quita."""
@@ -1932,6 +2022,36 @@ class VentanaPrincipal(QMainWindow):
             f"{self._cliente_nombre or 'Cliente no identificado'}"
             + (f"  ·  {self._cliente_nif}" if self._cliente_nif else ""))
 
+    def _actualizar_selector_periodo(self) -> None:
+        """Propone trimestre/anual y conserva cualquier elección manual."""
+        facturas = [self._leer_fila(r) for r in range(self.tabla.rowCount())]
+        automatico = detectar_periodo(facturas)
+        ejercicio = automatico.ejercicio
+        actual = getattr(self, "_periodo_manual_valor", "auto")
+        self.combo_periodo.blockSignals(True)
+        self.combo_periodo.clear()
+        self.combo_periodo.addItem(
+            f"Automático: {automatico.etiqueta}", "auto")
+        if ejercicio is not None:
+            for trimestre in range(1, 5):
+                self.combo_periodo.addItem(
+                    f"{trimestre}T {ejercicio}", str(trimestre))
+            self.combo_periodo.addItem(f"Anual {ejercicio}", "anual")
+        indice = self.combo_periodo.findData(actual)
+        if indice < 0:
+            actual, indice = "auto", 0
+        self.combo_periodo.setCurrentIndex(indice)
+        self.combo_periodo.blockSignals(False)
+        self._periodo_manual_valor = actual
+        self._periodo_lote = (
+            automatico if actual == "auto" or ejercicio is None
+            else periodo_manual(ejercicio, actual)
+        )
+
+    def _on_periodo(self) -> None:
+        self._periodo_manual_valor = self.combo_periodo.currentData() or "auto"
+        self._revalidar_todo()
+
     def _actualizar_combo_bloques(self):
         actual = self.combo_filtro_bloque.currentText()
         self.combo_filtro_bloque.blockSignals(True)
@@ -1990,6 +2110,10 @@ class VentanaPrincipal(QMainWindow):
         self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
+        self._periodo_manual_valor = "auto"
+        self._periodo_lote = PeriodoLote()
+        self.txt_buscar.clear()
+        self._invalidar_contraste_registro()
         self.btn_deshacer_borrado.setEnabled(False)
         self.btn_deshacer_borrado.setVisible(False)
         self.btn_cliente.setEnabled(False)
@@ -2015,6 +2139,7 @@ class VentanaPrincipal(QMainWindow):
                 and self.combo_recargo.currentData() == TOTAL)
 
     def _rellenar_tabla(self):
+        self._invalidar_contraste_registro()
         recargo = self._por_el_total()
         self.tabla.blockSignals(True)
         self.tabla.setRowCount(0)
@@ -2144,6 +2269,7 @@ class VentanaPrincipal(QMainWindow):
         Si no, habria que volver a corregir lo mismo en cada lote: el nombre
         con el que se le llama, su NIF y la cuenta que le toca.
         """
+        self._invalidar_contraste_registro()
         if item.row() < len(self.filas):
             self._invalidar_revision_documento(item.row())
         columna = item.column()
@@ -2160,6 +2286,7 @@ class VentanaPrincipal(QMainWindow):
             self.lbl_estado.setText(aviso)  # despues: _resumen pisa la barra
 
     def _on_tipo_cambiado(self, control) -> None:
+        self._invalidar_contraste_registro()
         fila = self._fila_del_control_tipo(control)
         if 0 <= fila < len(self.filas):
             self._invalidar_revision_documento(fila)
@@ -2274,6 +2401,7 @@ class VentanaPrincipal(QMainWindow):
         """Ordena la tabla sin desalinear las filas internas ni los combos."""
         if self.tabla.rowCount() < 2 or columna == C_BLOQUE:
             return
+        self._invalidar_contraste_registro()
         if self._columna_orden == columna:
             ascendente = not self._orden_ascendente
         else:
@@ -2361,6 +2489,8 @@ class VentanaPrincipal(QMainWindow):
     def _aplicar_filtro(self) -> None:
         opcion = self.combo_filtro_estado.currentIndex()
         bloque = self.combo_filtro_bloque.currentText()
+        busqueda = self.txt_buscar.text()
+        filtro_registro = self.combo_filtro_registro.currentData() or "todas"
         for fila in range(self.tabla.rowCount()):
             estado = self._estado_fila(fila)
             visible = (
@@ -2371,7 +2501,26 @@ class VentanaPrincipal(QMainWindow):
             )
             if bloque != TODOS_LOS_BLOQUES and self.filas[fila]["bloque"] != bloque:
                 visible = False
+            if visible and not coincide_busqueda(self._leer_fila(fila), busqueda):
+                visible = False
+            if visible and filtro_registro != "todas":
+                estado_registro = self.filas[fila].get("registro_estado")
+                if filtro_registro == "diferencias":
+                    visible = estado_registro in {
+                        "sin_registrar", "distinta", "dudosa"}
+                elif estado_registro != filtro_registro:
+                    visible = False
             self.tabla.setRowHidden(fila, not visible)
+        self._pintar_resumen()
+
+    def _hay_filtro_activo(self) -> bool:
+        return bool(
+            self.combo_filtro_estado.currentIndex()
+            or self.combo_filtro_bloque.currentText() != TODOS_LOS_BLOQUES
+            or self.txt_buscar.text().strip()
+            or (self.combo_filtro_registro.isVisible()
+                and self.combo_filtro_registro.currentData() != "todas")
+        )
 
     def _siguiente_incidencia(self) -> None:
         total = self.tabla.rowCount()
@@ -2563,6 +2712,7 @@ class VentanaPrincipal(QMainWindow):
                 self, "Eliminar facturas", "Seleccione una o varias filas completas.")
             return
         self._guardar_muestra_revision()
+        self._invalidar_contraste_registro()
         self._ultimo_borrado = []
         for fila in filas:
             registro = self.filas[fila]
@@ -2587,6 +2737,7 @@ class VentanaPrincipal(QMainWindow):
     def _deshacer_borrado(self) -> None:
         if not self._ultimo_borrado:
             return
+        self._invalidar_contraste_registro()
         for borrada in self._ultimo_borrado:
             registro = borrada["registro"]
             for fuente in registro.get("fuentes", [registro["factura"]]):
@@ -2669,6 +2820,11 @@ class VentanaPrincipal(QMainWindow):
                         f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
                         f"base y tipo de IVA). Bórrala o quedará registrada dos veces.")
             estado = ERROR
+        aviso_periodo = self._aviso_periodo(f)
+        if aviso_periodo:
+            msgs.append(aviso_periodo)
+            if estado == OK:
+                estado = REVISAR
         aviso_ejercicio = self._aviso_ejercicio(f)
         if aviso_ejercicio:
             msgs.append(aviso_ejercicio)
@@ -2730,6 +2886,18 @@ class VentanaPrincipal(QMainWindow):
                 f"pero el ejercicio del lote es {ejercicio}. Corrija la fecha "
                 "o compruebe si esta factura pertenece al lote.")
 
+    def _aviso_periodo(self, f: Factura) -> str:
+        periodo = getattr(self, "_periodo_lote", PeriodoLote())
+        fecha = fecha_de(f.fecha)
+        if not fecha or not periodo.es_trimestre \
+                or fecha.year != periodo.ejercicio or periodo.contiene(f):
+            return ""
+        return (
+            f"FUERA DEL TRIMESTRE: la fecha {f.fecha} no pertenece a "
+            f"{periodo.etiqueta}. Se puede registrar después de comprobarla, "
+            "pero queda fuera del total de ese periodo."
+        )
+
     def _resaltar_campos_incidencia(self, fila: int, estado: str,
                                     mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
@@ -2762,7 +2930,8 @@ class VentanaPrincipal(QMainWindow):
         for mensaje in mensajes:
             texto = str(mensaje)
             bajo = texto.lower()
-            if "año distinto" in bajo or bajo.startswith("falta la fecha") \
+            if "año distinto" in bajo or "fuera del trimestre" in bajo \
+                    or bajo.startswith("falta la fecha") \
                     or bajo.startswith("no se entiende la fecha"):
                 marcar(C_FECHA, texto)
             if "factura duplicada" in bajo or bajo.startswith(
@@ -2871,6 +3040,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _revalidar_todo(self):
         self._ejercicio_lote = self._calcular_ejercicio_lote()
+        self._actualizar_selector_periodo()
         self._errores_documento, self._duplicados = controles_documentos(
             [self._leer_fila(r) for r in range(self.tabla.rowCount())],
             [self._tipo_fila(r) for r in range(self.tabla.rowCount())])
@@ -2908,6 +3078,19 @@ class VentanaPrincipal(QMainWindow):
                 f"Línea {r + 1}: factura {f.num_factura or '?'} de "
                 f"{f.nombre or '?'} — fecha {f.fecha} (año {fecha.year}); "
                 f"el lote es de {self._ejercicio_lote}.")
+        periodos_vistos = set()
+        for r in range(len(self.filas)):
+            f = self.filas[r]["factura"]
+            if not self._aviso_periodo(f):
+                continue
+            clave = self._clave_factura_para_ejercicio(f, r)
+            if clave in periodos_vistos:
+                continue
+            periodos_vistos.add(clave)
+            avisos.append(
+                f"Línea {r + 1}: factura {f.num_factura or '?'} de "
+                f"{f.nombre or '?'} — {f.fecha}, fuera de "
+                f"{self._periodo_lote.etiqueta}.")
         # Una hoja que se quedo pegada en el alimentador no da ningun error:
         # simplemente esa factura no esta. El salto de numeracion la delata.
         avisos += huecos_de_numeracion(
@@ -2949,18 +3132,19 @@ class VentanaPrincipal(QMainWindow):
         self._pintar_resumen()
 
     def _pintar_resumen(self):
-        """Listado para cuadrar: una linea por bloque escaneado y tipo, mas el
-        total general. Suma TODO lo cargado (el programa vale igual para un
-        trimestre que para un requerimiento de varios años, no se filtra por
-        fechas). Es el punto de control contra el taco de papel."""
+        """Totales del taco, del periodo y de la búsqueda actualmente visible."""
         filas_por_tipo = {"gasto": [], "venta": []}
         for r in range(self.tabla.rowCount()):
             filas_por_tipo[self._tipo_fila(r)].append(
                 (self.filas[r]["bloque"] or "—", self.filas[r]["factura"]))
         # En recargo el gasto no tiene desglose de IVA: solo el total factura.
         recargo = self._por_el_total()
+        periodo = getattr(self, "_periodo_lote", PeriodoLote())
+        filtro_activo = self._hay_filtro_activo()
         self.lbl_resumen_titulo.setText(
-            "Comprobación de totales por bloque"
+            "Comprobación de totales"
+            + (f"  ·  {periodo.etiqueta}" if periodo.ejercicio else "")
+            + ("  ·  filtro activo" if filtro_activo else "")
             + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
 
         lineas = []   # (bloque, tipo, Totales, es_total)
@@ -2971,9 +3155,24 @@ class VentanaPrincipal(QMainWindow):
             por_bloque = resumir_por_bloque(pares)
             for nombre, t in por_bloque.items():
                 lineas.append((nombre, etiqueta, t, False))
-            if len(por_bloque) > 1:
-                lineas.append(("TODOS LOS BLOQUES", etiqueta,
+            fuera_periodo = ([f for _, f in pares if not periodo.contiene(f)]
+                             if periodo.es_trimestre else [])
+            if len(por_bloque) > 1 or filtro_activo or fuera_periodo:
+                lineas.append(("TOTAL LOTE", etiqueta,
                                resumir([f for _, f in pares]), True))
+            if fuera_periodo:
+                dentro = [f for _, f in pares if periodo.contiene(f)]
+                lineas.append((f"DENTRO {periodo.etiqueta}", etiqueta,
+                               resumir(dentro), True))
+                lineas.append((f"FUERA {periodo.etiqueta}", etiqueta,
+                               resumir(fuera_periodo), True))
+            if filtro_activo:
+                visibles = [self.filas[r]["factura"]
+                            for r in range(self.tabla.rowCount())
+                            if not self.tabla.isRowHidden(r)
+                            and self._tipo_fila(r) == tipo]
+                lineas.append(("FILTRO ACTUAL", etiqueta,
+                               resumir(visibles), True))
         self._volcar_resumen(lineas, recargo)
 
     def _volcar_resumen(self, lineas, recargo):
@@ -2996,7 +3195,7 @@ class VentanaPrincipal(QMainWindow):
             if not tipos_iva:
                 cuotas = ["" if solo_total else eur(t.iva)]
             valores = [
-                bloque, tipo, str(t.lineas),
+                bloque, tipo, str(t.facturas), str(t.lineas),
                 "" if solo_total else eur(t.base),
                 *cuotas,
                 eur(t.requiv) if t.tiene_requiv and not solo_total else "",

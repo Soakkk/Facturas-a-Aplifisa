@@ -25,6 +25,14 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
    se abre una vista previa grande. Una fila ámbar solo se exporta después de
    pulsar **Marcar revisada**.
+   El buscador encuentra proveedor o cliente sin depender de acentos,
+   puntuación o forma jurídica, y también permite localizar NIF, número de
+   factura o un importe exacto escrito con formato español.
+   El periodo fiscal se detecta como trimestre o anual; una factura fuera del
+   trimestre queda en ámbar y sus importes aparecen separados del subtotal del
+   periodo, aunque puede registrarse tras comprobarla.
+   La comprobación inferior recalcula los totales del filtro visible sin perder
+   el total completo de todo lo cargado y distingue facturas de líneas fiscales.
 4. **Exportar** `GASTOS_CLIENTE.xlsx` / `INGRESOS_CLIENTE.xlsx` al Escritorio
    → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
@@ -53,6 +61,11 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    memoria automáticamente: una discrepancia queda amarilla y, si tres o más
    facturas coinciden en el nuevo valor, el programa pide confirmación una sola
    vez. Los tickets de contado sin identificador siguen en amarillo.
+7. Después de registrar, **Comprobar registro de Aplifisa** admite los listados
+   fiscales en PDF de compras/gastos y ventas/ingresos. Contrasta factura por
+   factura y muestra una matriz de facturas, líneas, base, IVA, recargo, IRPF y
+   total. Las faltantes, distintas o dudosas pueden filtrarse en la tabla, y el
+   detalle permite saltar directamente a la factura que hay que revisar.
 
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión

@@ -438,3 +438,57 @@ def test_revisar_gemini_copia_la_orden_para_codex(monkeypatch):
 
     assert QApplication.clipboard().text() == texto
     assert mensajes and "copiado al portapapeles" in mensajes[0]
+
+
+def test_busqueda_filtra_la_tabla_y_calcula_su_propio_total():
+    from facturas_excel.app import C_NOMBRE
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    for numero, nombre, base in (
+            ("F-1", "TALLERES ÁGUILA SL", 100),
+            ("F-2", "SUMINISTROS DE PRUEBA SA", 300)):
+        v._anadir_fila(b"", Factura(
+            num_factura=numero, fecha="15/02/2026", nombre=nombre,
+            nif="B12345674", concepto="600", subclave="G01",
+            base_iva=base, pct_iva=21, cuota_iva=base * .21,
+            total_impreso=base * 1.21,
+        ), "gasto", "600", "G01", "")
+    v._revalidar_todo()
+
+    v.txt_buscar.setText("aguila sociedad limitada")
+    _app.processEvents()
+
+    assert not v.tabla.isRowHidden(0)
+    assert v.tabla.isRowHidden(1)
+    assert v.tabla.item(0, C_NOMBRE).text() == "TALLERES ÁGUILA SL"
+    filas = [[v.tabla_resumen.item(r, c).text()
+              for c in range(v.tabla_resumen.columnCount())]
+             for r in range(v.tabla_resumen.rowCount())]
+    filtro = next(fila for fila in filas if fila[0] == "FILTRO ACTUAL")
+    assert filtro[2:5] == ["1", "1", "100,00 €"]
+
+
+def test_factura_fuera_del_trimestre_se_avisa_y_se_separa_del_total():
+    from facturas_excel.app import C_ESTADO, ICONO_ESTADO
+    from facturas_excel.validacion import REVISAR
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    for numero, fecha in (("F-1", "15/01/2026"), ("F-2", "15/02/2026"),
+                          ("F-3", "15/03/2026"), ("F-4", "02/04/2026")):
+        v._anadir_fila(b"", Factura(
+            num_factura=numero, fecha=fecha, nombre="PROVEEDOR DE PRUEBA SL",
+            nif="B12345674", concepto="600", subclave="G01",
+            base_iva=100, pct_iva=21, cuota_iva=21, total_impreso=121,
+        ), "gasto", "600", "G01", "")
+    v._revalidar_todo()
+
+    assert v._periodo_lote.etiqueta == "1T 2026"
+    assert v.tabla.item(3, C_ESTADO).text() == ICONO_ESTADO[REVISAR]
+    assert "FUERA DEL TRIMESTRE" in v.tabla.item(3, C_ESTADO).toolTip()
+    filas = [[v.tabla_resumen.item(r, c).text()
+              for c in range(v.tabla_resumen.columnCount())]
+             for r in range(v.tabla_resumen.rowCount())]
+    dentro = next(fila for fila in filas if fila[0] == "DENTRO 1T 2026")
+    fuera = next(fila for fila in filas if fila[0] == "FUERA 1T 2026")
+    assert dentro[2:5] == ["3", "3", "300,00 €"]
+    assert fuera[2:5] == ["1", "1", "100,00 €"]

@@ -130,11 +130,12 @@ def test_el_resumen_cuadra_bloque_a_bloque():
     # Una linea por bloque + el total general (hay mas de un bloque).
     assert v.tabla_resumen.rowCount() == 3
     assert v.tabla_resumen.item(0, 0).text() == "escaneo1"
-    assert v.tabla_resumen.item(0, 2).text() == "2"
-    assert v.tabla_resumen.item(0, 8).text() == "181,50 €"   # 150 + 31,50
-    assert v.tabla_resumen.item(1, 8).text() == "84,70 €"    # 70 + 14,70
-    assert v.tabla_resumen.item(2, 0).text() == "TODOS LOS BLOQUES"
-    assert v.tabla_resumen.item(2, 8).text() == "266,20 €"
+    assert v.tabla_resumen.item(0, 2).text() == "2"          # facturas
+    assert v.tabla_resumen.item(0, 3).text() == "2"          # líneas fiscales
+    assert v.tabla_resumen.item(0, 9).text() == "181,50 €"   # 150 + 31,50
+    assert v.tabla_resumen.item(1, 9).text() == "84,70 €"    # 70 + 14,70
+    assert v.tabla_resumen.item(2, 0).text() == "TOTAL LOTE"
+    assert v.tabla_resumen.item(2, 9).text() == "266,20 €"
 
 
 def _cabeceras(v):

@@ -11,11 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Tuple
 
+from .consulta import facturas_unicas
 from .modelo import Factura
 
 
 @dataclass
 class Totales:
+    facturas: int = 0
     lineas: int = 0
     base: float = 0.0
     iva: float = 0.0
@@ -69,9 +71,11 @@ def _redondear(t: Totales) -> Totales:
 
 
 def resumir(facturas: Iterable[Factura]) -> Totales:
+    facturas = list(facturas)
     t = Totales()
     for f in facturas:
         _acumular(t, f)
+    t.facturas = facturas_unicas(facturas)
     return _redondear(t)
 
 
@@ -81,10 +85,10 @@ def resumir_por_bloque(filas: Iterable[Tuple[str, Factura]]) -> Dict[str, Totale
     Es lo que hace falta para cuadrar: cada PDF del escaner se comprueba contra
     el taco de papel que se metio en el alimentador, no contra el lote entero.
     """
-    grupos: Dict[str, Totales] = {}
+    grupos: Dict[str, List[Factura]] = {}
     for bloque, f in filas:
-        _acumular(grupos.setdefault(bloque, Totales()), f)
-    return {nombre: _redondear(t) for nombre, t in grupos.items()}
+        grupos.setdefault(bloque, []).append(f)
+    return {nombre: resumir(facturas) for nombre, facturas in grupos.items()}
 
 
 def eur(v: float) -> str:
@@ -130,4 +134,3 @@ def describir(t: Totales, solo_total: bool = False) -> str:
         partes.append(f"suplidos {eur(t.suplidos)}")
     partes.append(f"total factura {eur(t.total)}")
     return "  ·  ".join(partes)
-

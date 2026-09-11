@@ -1,9 +1,4 @@
-"""Fecha de la factura y cuadre del lote.
-
-El programa NO trabaja por trimestres: se usa igual para un trimestre que para
-un requerimiento de varios años, asi que la fecha solo se comprueba para saber
-si la lectura es buena, y el resumen suma TODO lo cargado.
-"""
+"""Fecha de la factura y cuadre del lote completo."""
 
 from datetime import date
 
@@ -46,6 +41,7 @@ def test_resumen_suma_base_iva_y_retencion():
                  factura("12/05/2025", 200.0, 42.0),
                  factura("30/06/2026", 100.0, 21.0, irpf=15.0)])
     assert (t.base, t.iva, t.irpf) == (353.02, 74.13, 15.0)
+    assert (t.facturas, t.lineas) == (3, 3)
     assert t.total == 412.15  # base + IVA - retencion
 
 
@@ -76,6 +72,19 @@ def test_varios_tipos_de_iva_se_desglosan_en_una_sola_celda():
 def test_un_solo_tipo_de_iva_mantiene_el_total_sencillo():
     t = resumir([factura("04/06/2026", 100.0, 21.0)])
     assert iva_desglosado(t) == "21%: 21,00 €"
+
+
+def test_resumen_distingue_factura_de_lineas_fiscales():
+    lineas = [factura("04/06/2026", 100.0, 21.0),
+              factura("04/06/2026", 50.0, 5.0)]
+    for f in lineas:
+        f.documento_id = "factura-dos-tipos"
+        f.lineas_factura = 2
+
+    t = resumir(lineas)
+
+    assert t.facturas == 1
+    assert t.lineas == 2
 
 
 def test_los_suplidos_se_suman_al_total_y_aparecen_en_el_resumen():

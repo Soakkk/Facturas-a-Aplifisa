@@ -18,8 +18,11 @@ numero no sirve para emparejar; se emparejan por fecha e importes.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
+
+from .validacion import fecha_de
 
 FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 NUMERO = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}-?$|^-?\d+,\d{2}-?$")
@@ -44,12 +47,19 @@ def _num(texto: str) -> Optional[float]:
 class Apunte:
     """Una linea del listado de Aplifisa."""
     numero: str = ""          # el numero que le pone Aplifisa, no el del proveedor
+    num_factura_proveedor: str = ""
     fecha: str = ""
     concepto: str = ""
+    nif: str = ""
     nombre: str = ""
     base: Optional[float] = None
+    pct_iva: Optional[float] = None
     cuota: Optional[float] = None
+    base_recargo: Optional[float] = None
+    pct_recargo: Optional[float] = None
     recargo: Optional[float] = None
+    base_irpf: Optional[float] = None
+    pct_irpf: Optional[float] = None
     irpf: Optional[float] = None
     neto: Optional[float] = None
 
@@ -57,8 +67,11 @@ class Apunte:
 @dataclass
 class Registro:
     apuntes: List[Apunte] = field(default_factory=list)
+    tipo: str = ""
     total_base: Optional[float] = None
     total_cuota: Optional[float] = None
+    total_recargo: Optional[float] = None
+    total_irpf: Optional[float] = None
     total_neto: Optional[float] = None
 
     @property
@@ -70,11 +83,44 @@ class Registro:
         return round(sum(a.cuota or 0 for a in self.apuntes), 2)
 
     @property
+    def suma_recargo(self) -> float:
+        return round(sum(a.recargo or 0 for a in self.apuntes), 2)
+
+    @property
+    def suma_irpf(self) -> float:
+        return round(sum(a.irpf or 0 for a in self.apuntes), 2)
+
+    @property
+    def suma_neto(self) -> float:
+        return round(sum(
+            a.neto if a.neto is not None else
+            (a.base or 0) + (a.cuota or 0) + (a.recargo or 0) - (a.irpf or 0)
+            for a in self.apuntes), 2)
+
+    @property
+    def facturas(self) -> int:
+        numeros = {a.numero for a in self.apuntes if a.numero}
+        return len(numeros) if numeros else len(self.apuntes)
+
+    @property
+    def diferencias_totales(self) -> List[str]:
+        comprobaciones = (
+            ("base", self.suma_base, self.total_base),
+            ("IVA", self.suma_cuota, self.total_cuota),
+            ("recargo", self.suma_recargo, self.total_recargo),
+            ("IRPF", self.suma_irpf, self.total_irpf),
+            ("total", self.suma_neto, self.total_neto),
+        )
+        return [
+            f"{nombre}: las líneas suman {suma:.2f} y el listado imprime {total:.2f}"
+            for nombre, suma, total in comprobaciones
+            if total is not None and abs(suma - total) > TOLERANCIA
+        ]
+
+    @property
     def bien_leido(self) -> bool:
         """El propio listado trae sus totales: si cuadran, se ha leido bien."""
-        if self.total_base is None:
-            return True          # sin totales que comparar, no se puede decir
-        return abs(self.suma_base - self.total_base) <= TOLERANCIA
+        return not self.diferencias_totales
 
 
 def leer_registro(ruta_pdf: str) -> Registro:
@@ -83,8 +129,9 @@ def leer_registro(ruta_pdf: str) -> Registro:
 
     lineas: List[str] = []
     with fitz.open(ruta_pdf) as doc:
-        if _es_facturas_recibidas(doc):
-            return _leer_facturas_recibidas(doc)
+        formato = _formato_posicional(doc)
+        if formato:
+            return _leer_posicional(doc, formato)
         for pagina in doc:
             lineas += [t.strip() for t in pagina.get_text().splitlines()
                        if t.strip()]
@@ -155,31 +202,35 @@ def _leer_totales(registro: Registro, siguientes: List[str]) -> Registro:
     return registro
 
 
-# --------------------------------------- listado "IVA - Facturas recibidas" --
-# Es el que se saca para un requerimiento: una linea por tipo de IVA, ordenada
-# por nº de apunte, y con el Nº fact.rec. que Aplifisa da a cada factura.
-# Aqui no vale leer el texto seguido: las columnas se solapan y una linea sin
-# IVA (un suplido) trae menos importes que las demas, asi que se lee por la
-# POSICION de cada palabra, que es lo unico fiable en este listado.
+# -------------------------------- listados fiscales con columnas de Aplifisa --
+# Los listados reales de compras y ventas no se pueden leer concatenando el
+# texto: una linea sin IVA trae menos numeros y cada version de Aplifisa cambia
+# ligeramente las abreviaturas. Se detectan las columnas por su posicion.
 
-CABECERAS = {
-    "BASEIVA": "base",
-    "CUOTAIVA": "cuota",
-    "BASER.EQ.": "base_req",
-    "CUOTAR.EQ.": "cuota_req",
-    "BASE+CUOTA": "total",
-}
-MARGEN_FILA = 1.5        # puntos: dos palabras de la misma linea
-HUECO_COLUMNA = 6        # puntos: separacion entre columnas de la cabecera
+MARGEN_FILA = 1.5
 NIF_SUELTO = re.compile(r"^[A-Z0-9][0-9]{7}[A-Z0-9]$")
 
 
-def _es_facturas_recibidas(doc) -> bool:
-    """El listado de facturas recibidas trae columnas propias en la cabecera."""
+def _texto_simple(texto: str) -> str:
+    texto = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto or ""))
+        if unicodedata.category(c) != "Mn"
+    )
+    return texto.upper()
+
+
+def _formato_posicional(doc) -> str:
+    """Devuelve gasto/venta si el PDF trae la tabla fiscal con columnas."""
     if not doc.page_count:
-        return False
-    texto = doc[0].get_text()
-    return "fact.rec" in texto and "fra.proveedor" in texto
+        return ""
+    texto = _texto_simple(doc[0].get_text()).lower()
+    if ("compras y gastos" in texto or "facturas recibidas" in texto
+            or "fra.rec" in texto or "fact.rec" in texto):
+        return "gasto"
+    if ("ventas e ingresos" in texto or "facturas emitidas" in texto
+            or "identificacion del cliente" in texto):
+        return "venta"
+    return ""
 
 
 def _filas(pagina) -> list:
@@ -194,106 +245,185 @@ def _filas(pagina) -> list:
     return filas
 
 
-def _columnas(fila) -> Optional[dict]:
-    """Saca de la cabecera donde cae cada columna. None si no es la cabecera."""
-    texto = " ".join(t for _, _, t in fila)
-    if "fact.rec" not in texto or "Orden" not in texto:
+def _columnas_posicional(fila, tipo: str) -> Optional[dict]:
+    """Posicion de las columnas de una cabecera real de Aplifisa."""
+    palabras = sorted(fila, key=lambda p: p[0])
+    simples = [_texto_simple(t) for _, _, t in palabras]
+    texto = " ".join(simples)
+    if "ORDEN" not in texto or "FECHA" not in texto:
         return None
 
-    col = {}
-    for x0, _, t in fila:
-        if "fact.rec" in t:
-            col["x_num"] = x0
-        elif "fra.proveedor" in t:
-            col["x_proveedor"] = x0
-        elif "dentificaci" in t and "x_nombre" not in col:
-            col["x_nombre"] = x0
+    def x_de(predicado, defecto=None):
+        return next((x0 for (x0, _, _), s in zip(palabras, simples)
+                     if predicado(s)), defecto)
 
-    # Las columnas de importes: se agrupan las palabras de la cabecera y se
-    # guarda el centro de cada una, para asignar despues cada numero a la suya.
-    grupos: list = []
-    for x0, x1, t in fila:
-        if grupos and x0 - grupos[-1][-1][1] <= HUECO_COLUMNA:
-            grupos[-1].append((x0, x1, t))
-        else:
-            grupos.append([(x0, x1, t)])
-    centros, porcentajes = {}, 0
-    for grupo in grupos:
-        etiqueta = "".join(t for _, _, t in grupo).upper()
-        if etiqueta == "%":
-            campo = "pct" if not porcentajes else "pct_req"
-            porcentajes += 1
-        else:
-            campo = CABECERAS.get(etiqueta)
-        if campo:
-            centros[campo] = (grupo[0][0] + grupo[-1][1]) / 2
-    if "base" not in centros or "x_nombre" not in col:
+    col = {
+        "tipo": tipo,
+        "x_fecha": x_de(lambda s: s == "FECHA"),
+        "x_num": x_de(lambda s: "FRA.REC" in s or "FACT.REC" in s
+                       or "FACTURA" in s),
+        "x_nombre": x_de(lambda s: "DENTIFICACI" in s),
+        "x_concepto": x_de(lambda s: s == "CONCEPTO"),
+    }
+    col["x_proveedor"] = x_de(lambda s: "FRA.PROVEEDOR" in s)
+    x_rt = x_de(lambda s: s == "RT")
+    if tipo == "gasto" and x_rt is not None:
+        col["x_nombre"] = min(col["x_nombre"] or x_rt, x_rt)
+    elif col["x_nombre"] is not None:
+        col["x_nombre"] -= 6
+    if col["x_concepto"] is not None:
+        # Los valores aparecen ligeramente a la izquierda del título centrado
+        # de la columna (en ventas, por ejemplo, 265 frente a 267).
+        col["x_concepto"] -= 6
+    if None in (col["x_fecha"], col["x_num"], col["x_nombre"]):
         return None
+
+    bases, cuotas, porcentajes = [], [], []
+    total_x = None
+    for i, ((x0, _, _), s) in enumerate(zip(palabras, simples)):
+        siguiente = simples[i + 1] if i + 1 < len(simples) else ""
+        anterior = simples[i - 1] if i else ""
+        if s == "BASE":
+            if siguiente == "+":
+                total_x = x0
+            else:
+                bases.append(x0)
+        elif s == "CUOTA" and anterior != "+":
+            cuotas.append(x0)
+        elif s == "%":
+            porcentajes.append(x0)
+
+    inicios: Dict[str, float] = {}
+    if tipo == "gasto":
+        for campo, valores, indice in (
+            ("base", bases, 0), ("base_recargo", bases, 1),
+            ("base_retencion", bases, 2), ("pct_iva", porcentajes, 0),
+            ("pct_recargo", porcentajes, 1), ("pct_irpf", porcentajes, 2),
+            ("cuota", cuotas, 0), ("recargo", cuotas, 1),
+            ("irpf", cuotas, 2),
+        ):
+            if len(valores) > indice:
+                inicios[campo] = valores[indice]
+        imputable = x_de(lambda s: s.startswith("IMPUTABLE"))
+        if imputable is not None:
+            inicios["base_irpf"] = imputable
+    else:
+        if bases:
+            inicios["base"] = bases[0]
+        if len(bases) > 1:
+            inicios["base_irpf"] = bases[1]
+        if cuotas:
+            inicios["cuota"] = cuotas[0]
+        reten = x_de(lambda s: s.startswith("RETEN"))
+        if reten is not None:
+            inicios["irpf"] = reten
+        suma = x_de(lambda s: s == "SUMA")
+        if suma is not None:
+            inicios["total"] = suma
+    if total_x is not None:
+        inicios["total"] = total_x
+    if "base" not in inicios:
+        return None
+
+    if col["x_concepto"] is None:
+        col["x_concepto"] = min(inicios.values()) - 8
+
+    orden = sorted(inicios.items(), key=lambda par: par[1])
+    centros = {}
+    ultimo_fin = max(x1 for _, x1, _ in palabras)
+    for i, (campo, inicio) in enumerate(orden):
+        siguiente = orden[i + 1][1] if i + 1 < len(orden) else ultimo_fin
+        centros[campo] = (inicio + siguiente) / 2
     col["importes"] = centros
+    col["x_importes"] = min(inicios.values()) - 8
     return col
 
 
 def _columna_de(x0: float, x1: float, centros: dict) -> str:
-    """A que columna de importes pertenece un numero: a la de centro mas cerca."""
     centro = (x0 + x1) / 2
     return min(centros, key=lambda c: abs(centros[c] - centro))
 
 
 def _apunte_de_fila(fila, col) -> Optional[Apunte]:
     centros = col["importes"]
-    tope = max(centros.values()) + 30       # a la derecha van los cobros RECC
-    fecha = next((t for x0, _, t in fila
-                  if col["x_num"] > x0 and FECHA.match(t)), "")
+    fecha = next((t for _, _, t in fila if FECHA.match(t)), "")
     if not fecha:
         return None
 
-    numero, nombre = "", []
-    valores = {}
+    orden, numero, numero_proveedor = "", "", ""
+    identidad, concepto, valores = [], [], {}
     for x0, x1, t in fila:
-        if x0 >= tope:
-            continue
-        if col["x_num"] <= x0 < col["x_proveedor"]:
-            numero = t
-        elif col["x_nombre"] <= x0 < centros["base"] - 20:
-            nombre.append(t)
-        elif x0 >= col["x_nombre"]:
+        if x0 < col["x_fecha"] and str(t).isdigit():
+            orden = t
+        elif col["x_num"] <= x0 < (col.get("x_proveedor")
+                                     or col["x_nombre"]):
+            numero += (" " if numero else "") + t
+        elif (col.get("x_proveedor") is not None
+              and col["x_proveedor"] <= x0 < col["x_nombre"]):
+            numero_proveedor += (" " if numero_proveedor else "") + t
+        elif col["x_nombre"] <= x0 < col["x_concepto"]:
+            identidad.append(t)
+        elif col["x_concepto"] <= x0 < col["x_importes"]:
+            concepto.append(t)
+        elif x0 >= col["x_importes"]:
             valor = _num(t)
             if valor is not None:
                 valores[_columna_de(x0, x1, centros)] = valor
     if "base" not in valores:
         return None
-    if nombre and NIF_SUELTO.match(nombre[0].upper()):
-        nombre = nombre[1:]                 # el NIF va delante del nombre
-    return Apunte(numero=numero, fecha=fecha, nombre=" ".join(nombre),
-                  base=valores.get("base"), cuota=valores.get("cuota"),
-                  recargo=valores.get("cuota_req"), neto=valores.get("total"))
+    nif = identidad.pop(0) if identidad and NIF_SUELTO.match(
+        _texto_simple(identidad[0])) else ""
+    neto = valores.get("total")
+    if neto is None:
+        neto = round(
+            (valores.get("base") or 0) + (valores.get("cuota") or 0)
+            + (valores.get("recargo") or 0) - (valores.get("irpf") or 0), 2)
+    return Apunte(
+        numero=numero.strip() or orden,
+        num_factura_proveedor=numero_proveedor.strip(), fecha=fecha,
+        concepto=" ".join(concepto), nif=nif, nombre=" ".join(identidad),
+        base=valores.get("base"), pct_iva=valores.get("pct_iva"),
+        cuota=valores.get("cuota"), base_recargo=valores.get("base_recargo"),
+        pct_recargo=valores.get("pct_recargo"), recargo=valores.get("recargo"),
+        base_irpf=valores.get("base_irpf") or valores.get("base_retencion"),
+        pct_irpf=valores.get("pct_irpf"), irpf=valores.get("irpf"), neto=neto,
+    )
 
 
-def _leer_facturas_recibidas(doc) -> Registro:
-    registro = Registro()
+def _leer_posicional(doc, tipo: str) -> Registro:
+    registro = Registro(tipo=tipo)
     for pagina in doc:
         col = None
         filas = _filas(pagina)
-        for i, (y, fila) in enumerate(filas):
-            cabecera = _columnas(fila)
+        for i, (_, fila) in enumerate(filas):
+            cabecera = _columnas_posicional(fila, tipo)
             if cabecera:
                 col = cabecera
                 continue
             if col is None:
                 continue
-            if any("ACUMULADO" in t.upper() for _, _, t in fila):
-                # Los importes del acumulado van en su propia linea, justo
-                # encima de la etiqueta.
-                registro = _totales_recibidas(registro, filas[max(i - 1, 0)][1],
-                                              col)
+            if any("ACUMULADO" in _texto_simple(t) for _, _, t in fila):
+                origen = fila if any(_num(t) is not None for _, _, t in fila) \
+                    else filas[max(i - 1, 0)][1]
+                registro = _totales_posicionales(registro, origen, col)
                 continue
             apunte = _apunte_de_fila(fila, col)
             if apunte:
                 registro.apuntes.append(apunte)
+    if tipo == "venta":
+        # En el listado de ventas la columna «Suma» es base + IVA; la
+        # retención aparece aparte. Para compararla con el total de la factura
+        # hay que obtener el líquido después de IRPF.
+        for apunte in registro.apuntes:
+            if apunte.neto is not None:
+                apunte.neto = round(apunte.neto - (apunte.irpf or 0), 2)
+        if registro.total_neto is not None:
+            registro.total_neto = round(
+                registro.total_neto - (registro.total_irpf or 0), 2)
     return registro
 
 
-def _totales_recibidas(registro: Registro, fila, col) -> Registro:
+def _totales_posicionales(registro: Registro, fila, col) -> Registro:
     centros = col["importes"]
     for x0, x1, t in fila:
         valor = _num(t)
@@ -304,6 +434,10 @@ def _totales_recibidas(registro: Registro, fila, col) -> Registro:
             registro.total_base = valor
         elif campo == "cuota":
             registro.total_cuota = valor
+        elif campo == "recargo":
+            registro.total_recargo = valor
+        elif campo == "irpf":
+            registro.total_irpf = valor
         elif campo == "total":
             registro.total_neto = valor
     return registro
@@ -316,18 +450,58 @@ class Informe:
     sin_registrar: List[str] = field(default_factory=list)   # estan aqui, no alli
     de_mas: List[str] = field(default_factory=list)          # estan alli, no aqui
     distintas: List[str] = field(default_factory=list)       # emparejadas pero cambia algo
+    dudosas: List[str] = field(default_factory=list)
+    apuntes_de_mas: List[Apunte] = field(default_factory=list)
+    resultados: Dict[int, str] = field(default_factory=dict)
+    detalles: Dict[int, List[str]] = field(default_factory=dict)
     base_programa: float = 0.0
     base_registro: float = 0.0
     cuota_programa: float = 0.0
     cuota_registro: float = 0.0
+    recargo_programa: float = 0.0
+    recargo_registro: float = 0.0
+    irpf_programa: float = 0.0
+    irpf_registro: float = 0.0
+    total_programa: float = 0.0
+    total_registro: float = 0.0
+    facturas_programa: int = 0
+    facturas_registro: int = 0
+    lineas_programa: int = 0
+    lineas_registro: int = 0
 
     @property
     def todo_cuadra(self) -> bool:
-        return not (self.sin_registrar or self.de_mas or self.distintas)
+        return (
+            not (self.sin_registrar or self.de_mas or self.distintas
+                 or self.dudosas)
+            and all(abs(diferencia) <= TOLERANCIA for diferencia in (
+                self.descuadre_base, self.descuadre_cuota,
+                self.descuadre_recargo, self.descuadre_irpf,
+                self.descuadre_total,
+            ))
+            and self.facturas_programa == self.facturas_registro
+            and self.lineas_programa == self.lineas_registro
+        )
 
     @property
     def descuadre_base(self) -> float:
         return round(self.base_programa - self.base_registro, 2)
+
+    @property
+    def descuadre_cuota(self) -> float:
+        return round(self.cuota_programa - self.cuota_registro, 2)
+
+    @property
+    def descuadre_recargo(self) -> float:
+        return round(self.recargo_programa - self.recargo_registro, 2)
+
+    @property
+    def descuadre_irpf(self) -> float:
+        return round(self.irpf_programa - self.irpf_registro, 2)
+
+    @property
+    def descuadre_total(self) -> float:
+        return round(self.total_programa - self.total_registro, 2)
 
 
 def _clave(fecha, base, cuota) -> tuple:
@@ -340,52 +514,167 @@ def _describir(fecha, nombre, base, cuota) -> str:
             f"base {base or 0:.2f} · IVA {cuota or 0:.2f}").replace(".", ",")
 
 
+def _normalizar_id(valor) -> str:
+    return "".join(c for c in _texto_simple(valor) if c.isalnum())
+
+
+def _cerca(a, b) -> bool:
+    return abs(float(a or 0) - float(b or 0)) <= TOLERANCIA
+
+
+def _misma_fecha(a, b) -> bool:
+    fecha_a, fecha_b = fecha_de(a), fecha_de(b)
+    if fecha_a and fecha_b:
+        return fecha_a == fecha_b
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def _total_factura(f) -> float:
+    if getattr(f, "es_suplido", False):
+        return float(f.base_iva or 0)
+    return float(
+        (f.base_iva or 0) + (f.cuota_iva or 0) + (f.cuota_requiv or 0)
+        + (f.suplidos or 0) - (f.cuota_irpf or 0)
+    )
+
+
+def _puntuacion(f, a: Apunte) -> int:
+    """Fuerza de la coincidencia sin exigir que los importes ya cuadren."""
+    puntos = 0
+    numero_f = _normalizar_id(getattr(f, "num_factura", ""))
+    numero_a = _normalizar_id(a.num_factura_proveedor)
+    if numero_f and numero_a:
+        puntos += 8 if numero_f == numero_a else -4
+    nif_f, nif_a = _normalizar_id(getattr(f, "nif", "")), _normalizar_id(a.nif)
+    if nif_f and nif_a:
+        puntos += 5 if nif_f == nif_a else -5
+    if _misma_fecha(getattr(f, "fecha", ""), a.fecha):
+        puntos += 4
+    else:
+        puntos -= 4
+    if _cerca(getattr(f, "base_iva", None), a.base):
+        puntos += 3
+    if _cerca(getattr(f, "cuota_iva", None), a.cuota):
+        puntos += 2
+    return puntos
+
+
+def _diferencias(f, a: Apunte) -> List[str]:
+    diferencias = []
+
+    def importe(etiqueta, valor_programa, valor_aplifisa):
+        if valor_aplifisa is not None and not _cerca(valor_programa, valor_aplifisa):
+            diferencias.append(
+                f"{etiqueta}: programa {float(valor_programa or 0):.2f}; "
+                f"Aplifisa {float(valor_aplifisa):.2f}".replace(".", ","))
+
+    importe("Base", getattr(f, "base_iva", None), a.base)
+    importe("IVA", getattr(f, "cuota_iva", None), a.cuota)
+    importe("Recargo", getattr(f, "cuota_requiv", None), a.recargo)
+    importe("IRPF", getattr(f, "cuota_irpf", None), a.irpf)
+    if a.neto is not None and int(getattr(f, "lineas_factura", 1) or 1) <= 1:
+        importe("Total", getattr(f, "total_impreso", None) or _total_factura(f),
+                a.neto)
+    if not _misma_fecha(getattr(f, "fecha", ""), a.fecha):
+        diferencias.append(
+            f"Fecha: programa {getattr(f, 'fecha', '')}; Aplifisa {a.fecha}")
+    numero_f = _normalizar_id(getattr(f, "num_factura", ""))
+    numero_a = _normalizar_id(a.num_factura_proveedor)
+    if numero_f and numero_a and numero_f != numero_a:
+        diferencias.append(
+            f"Nº factura: programa {getattr(f, 'num_factura', '')}; "
+            f"Aplifisa {a.num_factura_proveedor}")
+    nif_f, nif_a = _normalizar_id(getattr(f, "nif", "")), _normalizar_id(a.nif)
+    if nif_f and nif_a and nif_f != nif_a:
+        diferencias.append(f"NIF: programa {getattr(f, 'nif', '')}; Aplifisa {a.nif}")
+    return diferencias
+
+
+def _facturas_unicas(facturas) -> int:
+    claves = set()
+    for indice, f in enumerate(facturas):
+        documento = str(getattr(f, "documento_id", "") or "")
+        if documento:
+            clave = ("documento", documento)
+        elif int(getattr(f, "lineas_factura", 1) or 1) > 1:
+            clave = (
+                "compuesta", str(getattr(f, "origen_imagen", "") or ""),
+                _normalizar_id(getattr(f, "num_factura", "")),
+                _normalizar_id(getattr(f, "nif", "")),
+                str(getattr(f, "fecha", "") or ""),
+            )
+        else:
+            clave = ("linea", indice)
+        claves.add(clave)
+    return len(claves)
+
+
 def contrastar(facturas, registro: Registro) -> Informe:
     """Empareja las facturas del programa con los apuntes del listado.
 
-    Se empareja por FECHA + BASE + CUOTA, no por numero: Aplifisa renumera las
-    facturas recibidas al importarlas, asi que su numero no coincide con el del
-    proveedor. Los importes con la fecha son suficientemente unicos, y ademas
-    son justo lo que interesa que cuadre.
+    Prioriza el número del proveedor y el NIF cuando están disponibles. Como
+    Aplifisa también asigna su propia numeración, fecha e importes permiten
+    emparejar los listados que no muestran el número original.
     """
+    facturas = list(facturas)
     informe = Informe()
-    pendientes = {}
-    for a in registro.apuntes:
-        pendientes.setdefault(_clave(a.fecha, a.base, a.cuota), []).append(a)
+    pendientes = list(enumerate(registro.apuntes))
 
-    for f in facturas:
-        informe.base_programa += f.base_iva or 0
-        informe.cuota_programa += f.cuota_iva or 0
-        clave = _clave(f.fecha, f.base_iva, f.cuota_iva)
-        iguales = pendientes.get(clave)
-        if iguales:
-            iguales.pop()
-            informe.emparejadas += 1
+    for indice, f in enumerate(facturas):
+        candidatos = [(pos, original, a, _puntuacion(f, a))
+                      for pos, (original, a) in enumerate(pendientes)]
+        candidatos = [c for c in candidatos if c[3] >= 7 or (
+            _misma_fecha(c[2].fecha, getattr(f, "fecha", ""))
+            and _cerca(c[2].base, getattr(f, "base_iva", None)))]
+        if not candidatos:
+            texto = _describir(f.fecha, f.nombre, f.base_iva, f.cuota_iva)
+            informe.sin_registrar.append(texto)
+            informe.resultados[indice] = "sin_registrar"
+            informe.detalles[indice] = ["No aparece una línea equivalente en Aplifisa."]
             continue
-        # Misma fecha e importe pero con la cuota cambiada: se busca aparte
-        # para poder decir QUE cambia, en vez de darla por no registrada.
-        parecida = next(
-            (a for lista in pendientes.values() for a in lista
-             if a.fecha == f.fecha
-             and abs((a.base or 0) - (f.base_iva or 0)) <= TOLERANCIA), None)
-        if parecida:
-            pendientes[_clave(parecida.fecha, parecida.base,
-                              parecida.cuota)].remove(parecida)
-            informe.distintas.append(
-                f"{_describir(f.fecha, f.nombre, f.base_iva, f.cuota_iva)}  →  "
-                f"en Aplifisa: IVA {parecida.cuota or 0:.2f}".replace(".", ","))
+        candidatos.sort(key=lambda c: c[3], reverse=True)
+        mejor = candidatos[0]
+        empatados = [c for c in candidatos if c[3] == mejor[3]]
+        _, _, apunte, _ = mejor
+        pendientes.pop(mejor[0])
+        diferencias = _diferencias(f, apunte)
+        if len(empatados) > 1 and diferencias:
+            texto = _describir(f.fecha, f.nombre, f.base_iva, f.cuota_iva)
+            informe.dudosas.append(texto)
+            informe.resultados[indice] = "dudosa"
+            informe.detalles[indice] = [
+                "Hay varias líneas posibles en Aplifisa; revise el emparejamiento.",
+                *diferencias,
+            ]
+        elif diferencias:
+            texto = (_describir(f.fecha, f.nombre, f.base_iva, f.cuota_iva)
+                     + " → " + "; ".join(diferencias))
+            informe.distintas.append(texto)
+            informe.resultados[indice] = "distinta"
+            informe.detalles[indice] = diferencias
         else:
-            informe.sin_registrar.append(
-                _describir(f.fecha, f.nombre, f.base_iva, f.cuota_iva))
+            informe.emparejadas += 1
+            informe.resultados[indice] = "cuadra"
+            informe.detalles[indice] = ["Coincide con Aplifisa."]
 
-    for lista in pendientes.values():
-        for a in lista:
-            informe.de_mas.append(_describir(a.fecha, a.nombre, a.base, a.cuota))
+    for _, a in pendientes:
+        informe.de_mas.append(_describir(a.fecha, a.nombre, a.base, a.cuota))
+        informe.apuntes_de_mas.append(a)
 
-    informe.base_programa = round(informe.base_programa, 2)
-    informe.cuota_programa = round(informe.cuota_programa, 2)
+    informe.base_programa = round(sum(f.base_iva or 0 for f in facturas), 2)
+    informe.cuota_programa = round(sum(f.cuota_iva or 0 for f in facturas), 2)
+    informe.recargo_programa = round(sum(f.cuota_requiv or 0 for f in facturas), 2)
+    informe.irpf_programa = round(sum(f.cuota_irpf or 0 for f in facturas), 2)
+    informe.total_programa = round(sum(_total_factura(f) for f in facturas), 2)
     informe.base_registro = registro.suma_base
     informe.cuota_registro = registro.suma_cuota
+    informe.recargo_registro = registro.suma_recargo
+    informe.irpf_registro = registro.suma_irpf
+    informe.total_registro = registro.suma_neto
+    informe.facturas_programa = _facturas_unicas(facturas)
+    informe.facturas_registro = registro.facturas
+    informe.lineas_programa = len(facturas)
+    informe.lineas_registro = len(registro.apuntes)
     return informe
 
 

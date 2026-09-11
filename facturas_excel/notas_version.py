@@ -6,6 +6,24 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.20": """
+<h2>Novedades de la versión 1.13.20</h2>
+<ul>
+  <li><b>Buscador fiscal del lote:</b> localiza proveedor o cliente aunque
+      cambien mayúsculas, acentos o la forma jurídica; también admite NIF,
+      número de factura e importes exactos.</li>
+  <li><b>El filtro tiene sus propios totales:</b> la comprobación muestra por
+      separado el lote completo y el resultado visible, contando facturas y
+      líneas fiscales.</li>
+  <li><b>Control de trimestre:</b> detecta el periodo del lote, señala una fecha
+      que se sale del trimestre y separa los importes de dentro y fuera sin
+      impedir registrarla después de revisarla.</li>
+  <li><b>Cuadre completo con Aplifisa:</b> lee los listados fiscales actuales de
+      gastos e ingresos y compara base, IVA, recargo, IRPF, total, facturas y
+      líneas. Las diferencias quedan filtrables y se puede volver directamente
+      a la factura afectada.</li>
+</ul>
+""",
     "1.13.19": """
 <h2>Novedades de la versión 1.13.19</h2>
 <ul>
