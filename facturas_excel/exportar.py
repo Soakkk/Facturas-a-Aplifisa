@@ -98,6 +98,10 @@ def exportar_excel(
     - Cada campo va a la columna (letra) que diga config.columnas.
     """
     wb = Workbook()
+    # Aplifisa interpreta la mera presencia de <workbookProtection /> como si
+    # el libro estuviera protegido, aunque openpyxl lo escriba vacio y Excel
+    # no muestre ninguna contraseña. No serializar esa etiqueta en absoluto.
+    wb.security = None
     ws = wb.active
     ws.title = "Facturas"
 
@@ -123,7 +127,12 @@ def exportar_excel(
                     celda.number_format = "@"
         fila += 1
 
-    wb.save(ruta_salida)
+    try:
+        wb.save(ruta_salida)
+    finally:
+        # Entregar el archivo sin ningun descriptor abierto. Algunos programas
+        # contables necesitan acceso exclusivo para importarlo o modificarlo.
+        wb.close()
     return ruta_salida
 
 
@@ -146,30 +155,35 @@ def verificar_excel(
     from openpyxl import load_workbook
 
     problemas: List[str] = []
+    libro = None
     try:
-        hoja = load_workbook(ruta, data_only=True).active
+        libro = load_workbook(ruta, data_only=True)
+        hoja = libro.active
     except Exception as e:  # archivo abierto en Excel, disco lleno...
         return [f"No se pudo volver a abrir el archivo para comprobarlo: {e}"]
 
-    escritas = hoja.max_row - config.primera_fila + 1
-    if escritas != len(facturas):
-        problemas.append(
-            f"El archivo tiene {max(escritas, 0)} línea(s) y deberían ser "
-            f"{len(facturas)}.")
+    try:
+        escritas = hoja.max_row - config.primera_fila + 1
+        if escritas != len(facturas):
+            problemas.append(
+                f"El archivo tiene {max(escritas, 0)} línea(s) y deberían ser "
+                f"{len(facturas)}.")
 
-    for i, factura in enumerate(facturas):
-        fila = config.primera_fila + i
-        datos = factura.campos_dict()
-        for campo, letra in config.columnas.items():
-            esperado = _valor_celda(campo, datos.get(campo), modo_numeros)
-            escrito = hoja[f"{letra}{fila}"].value
-            if esperado is None and (escrito is None or escrito == ""):
-                continue
-            if str(escrito) != str(esperado):
-                problemas.append(
-                    f"Línea {i + 1} ({factura.num_factura or 'sin nº'}), "
-                    f"{ETIQUETA_CABECERA.get(campo, campo)}: el archivo pone "
-                    f"«{escrito}» y debería poner «{esperado}».")
+        for i, factura in enumerate(facturas):
+            fila = config.primera_fila + i
+            datos = factura.campos_dict()
+            for campo, letra in config.columnas.items():
+                esperado = _valor_celda(campo, datos.get(campo), modo_numeros)
+                escrito = hoja[f"{letra}{fila}"].value
+                if esperado is None and (escrito is None or escrito == ""):
+                    continue
+                if str(escrito) != str(esperado):
+                    problemas.append(
+                        f"Línea {i + 1} ({factura.num_factura or 'sin nº'}), "
+                        f"{ETIQUETA_CABECERA.get(campo, campo)}: el archivo pone "
+                        f"«{escrito}» y debería poner «{esperado}».")
+    finally:
+        libro.close()
     return problemas
 
 
@@ -183,28 +197,35 @@ def totales_del_excel(config: ConfigColumnas, ruta: str) -> dict:
 
     suma = {"lineas": 0, "base_iva": 0.0, "cuota_iva": 0.0,
             "cuota_requiv": 0.0, "cuota_irpf": 0.0}
+    libro = None
     try:
-        hoja = load_workbook(ruta, data_only=True).active
+        libro = load_workbook(ruta, data_only=True)
+        hoja = libro.active
     except Exception:
         return suma
-    fila = config.primera_fila
-    while fila <= hoja.max_row:
-        vacia = True
-        for campo in list(suma)[1:]:
-            letra = config.columnas.get(campo)
-            if not letra:
-                continue
-            valor = hoja[f"{letra}{fila}"].value
-            if valor in (None, ""):
-                continue
-            vacia = False
-            try:
-                suma[campo] += float(str(valor).replace(".", "").replace(",", "."))
-            except ValueError:
-                pass
-        if not vacia or hoja[f"{config.columnas.get('fecha', 'B')}{fila}"].value:
-            suma["lineas"] += 1
-        fila += 1
+    try:
+        fila = config.primera_fila
+        while fila <= hoja.max_row:
+            vacia = True
+            for campo in list(suma)[1:]:
+                letra = config.columnas.get(campo)
+                if not letra:
+                    continue
+                valor = hoja[f"{letra}{fila}"].value
+                if valor in (None, ""):
+                    continue
+                vacia = False
+                try:
+                    suma[campo] += float(
+                        str(valor).replace(".", "").replace(",", "."))
+                except ValueError:
+                    pass
+            if (not vacia
+                    or hoja[f"{config.columnas.get('fecha', 'B')}{fila}"].value):
+                suma["lineas"] += 1
+            fila += 1
+    finally:
+        libro.close()
     for campo in list(suma)[1:]:
         suma[campo] = round(suma[campo], 2)
     return suma

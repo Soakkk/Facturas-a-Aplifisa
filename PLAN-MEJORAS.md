@@ -1,5 +1,45 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
+## Próxima actualización después de v1.13.21 — petición del 11/09/2026
+
+Estado: **pendiente de implementar**. El usuario ha pedido guardar estas
+mejoras para la siguiente actualización, no publicar una versión ahora.
+La descarga e instalación de v1.13.21 han sido confirmadas como correctas.
+
+### Campos siempre visibles y orden estable
+
+- El usuario no quiere tener que abrir «Mostrar todos los campos contables».
+  La vista habitual debe mostrar directamente todos los campos de su captura.
+- Orden de izquierda a derecha indicado por esa captura:
+  **Estado → Nombre → Nº Factura → Fecha → Base → Cuota → Retención → Total →
+  Tipo → NIF → % IVA → Cuenta → GXX → Base IRPF → % IRPF**.
+- Mantener ese orden y esa visibilidad al arrancar, restaurar una sesión,
+  cargar nuevos lotes, filtrar y cambiar el tamaño de la ventana. No aplicar
+  una vista simplificada que vuelva a ocultarlos ni otra reordenación estética.
+- Los campos adicionales de recargo de equivalencia y otros conceptos
+  especiales deben aparecer automáticamente cuando haya datos aplicables en
+  el lote, y no ocupar espacio cuando no los haya. Los campos habituales
+  anteriores, incluido IRPF, permanecen visibles.
+- Conservar el acabado claro Azul asesoría y todos los controles de revisión.
+
+### Listado de comprobación de totales
+
+- Añadir una salida en forma de listado imprimible de la comprobación de
+  totales, para poder puntearlo y contrastarlo con el registro de Aplifisa.
+  Actualmente «Copiar resumen» no cubre por sí solo esta petición.
+- Respetar el alcance acordado: todo el lote cargado y, si se está filtrando,
+  su resultado identificado por separado, sin confundir las dos sumas.
+- Reflejar el periodo y la separación dentro/fuera de trimestre cuando
+  proceda; incluir los importes y recuentos que se muestran en el resumen.
+- Propuesta técnica a concretar al implementar: vista previa e impresión con
+  opción de guardar en PDF. No se ha solicitado una exportación Excel adicional.
+
+Referencia: captura aportada por el usuario en esta conversación. Se conserva
+solo la especificación de las columnas; no incorporar la captura ni sus datos
+fiscales al repositorio público.
+
+---
+
 > Documento de trabajo para la próxima sesión. Objetivo: implementar las mejoras
 > acordadas para maximizar la precisión ("que ningún error pase sin ser
 > detectado") y dejar preparados los extras.

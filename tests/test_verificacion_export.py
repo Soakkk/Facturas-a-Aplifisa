@@ -6,6 +6,7 @@ con lo que hay en pantalla, linea por linea.
 """
 
 from pathlib import Path
+from zipfile import ZipFile
 
 from openpyxl import load_workbook
 
@@ -35,6 +36,32 @@ def test_un_archivo_recien_escrito_no_tiene_ninguna_diferencia(tmp_path):
     exportar_excel(facturas, config(), ruta)
 
     assert verificar_excel(facturas, config(), ruta) == []
+
+
+def test_el_archivo_no_lleva_ninguna_marca_de_proteccion(tmp_path):
+    ruta = str(tmp_path / "gastos.xlsx")
+    exportar_excel([factura()], config(), ruta)
+
+    with ZipFile(ruta) as archivo:
+        libro = archivo.read("xl/workbook.xml").decode("utf-8")
+
+    assert "<workbookProtection" not in libro
+    assert "<fileSharing" not in libro
+    assert "readOnlyRecommended" not in libro
+
+
+def test_las_comprobaciones_liberan_el_archivo_para_aplifisa(tmp_path):
+    ruta = tmp_path / "gastos.xlsx"
+    facturas = [factura()]
+    exportar_excel(facturas, config(), str(ruta))
+
+    assert verificar_excel(facturas, config(), str(ruta)) == []
+    assert totales_del_excel(config(), str(ruta))["lineas"] == 1
+
+    # En Windows, renombrar falla si openpyxl aun conserva el libro abierto.
+    movida = tmp_path / "aplifisa_puede_abrirlo.xlsx"
+    ruta.replace(movida)
+    assert movida.exists()
 
 
 def test_contrato_dorado_de_una_factura_rutinaria_para_aplifisa(tmp_path):

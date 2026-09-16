@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.22": """
+<h2>Novedades de la versión 1.13.22</h2>
+<ul>
+  <li><b>Excel sin protección:</b> se elimina por completo una marca vacía de
+      protección que algunos importadores podían interpretar como un libro
+      bloqueado, aunque no tuviera contraseña.</li>
+  <li><b>Listo para Aplifisa:</b> el archivo se cierra y libera inmediatamente
+      después de generarlo y comprobar sus importes, para que Aplifisa pueda
+      abrirlo directamente con acceso de edición.</li>
+</ul>
+<p>Las comprobaciones fiscales se mantienen, pero no dejan el Excel abierto ni
+añaden medidas de protección al archivo.</p>
+""",
     "1.13.21": """
 <h2>Novedades de la versión 1.13.21</h2>
 <ul>
