@@ -123,6 +123,29 @@ def test_boton_cuadrar_comparte_la_habilitacion_del_menu():
     assert not v.btn_cuadrar.isEnabled()
 
 
+def test_listado_pdf_incluye_totales_y_facturas_visibles(tmp_path, monkeypatch):
+    from facturas_excel.app import QFileDialog
+
+    v = ventana()
+    v.txt_buscar.setText("SUMINISTROS")
+    contenido = v._html_listado_totales()
+    assert "Comprobación de totales" in contenido
+    assert "TOTAL LOTE" in contenido
+    assert "FILTRO ACTUAL" in contenido
+    assert "SUMINISTROS PRUEBA" in contenido
+    assert "OTRO PROVEEDOR PRUEBA" not in contenido.split(
+        "Facturas mostradas", 1)[1]
+
+    ruta = tmp_path / "comprobacion.pdf"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(ruta), "Documento PDF (*.pdf)"))
+    v._guardar_listado_totales()
+
+    assert ruta.read_bytes().startswith(b"%PDF")
+    assert ruta.stat().st_size > 1_000
+
+
 def test_filtro_sin_coincidencias_no_muestra_documento_anterior():
     v = ventana()
     v.txt_buscar.setText("no existe")

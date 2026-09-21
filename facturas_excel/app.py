@@ -8,6 +8,7 @@ plano -> autodetecta el cliente -> tabla de revision con miniatura y semaforo
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import sys
@@ -17,7 +18,10 @@ from dataclasses import replace
 from datetime import date
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QColor, QCursor, QIcon, QKeySequence, QPageLayout, QPageSize, QPdfWriter,
+    QPixmap, QShortcut, QTextDocument,
+)
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
@@ -773,6 +777,12 @@ class VentanaPrincipal(QMainWindow):
             "Copia el resumen al portapapeles para pegarlo donde haga falta.")
         btn_copiar.clicked.connect(self._copiar_resumen)
         fila_titulo.addWidget(btn_copiar)
+        self.btn_listado_totales = QPushButton("Listado PDF")
+        self.btn_listado_totales.setToolTip(
+            "Guarda un listado imprimible con los totales y las facturas "
+            "mostradas en la tabla.")
+        self.btn_listado_totales.clicked.connect(self._guardar_listado_totales)
+        fila_titulo.addWidget(self.btn_listado_totales)
         lr.addLayout(fila_titulo)
         self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
                                           + len(COLS_RESUMEN_FIN))
@@ -3453,6 +3463,107 @@ class VentanaPrincipal(QMainWindow):
                 for c in range(self.tabla_resumen.columnCount())))
         QApplication.clipboard().setText("\n".join(filas))
         self.lbl_estado.setText("Resumen copiado al portapapeles.")
+
+    def _html_listado_totales(self) -> str:
+        """Listado fiscal legible e imprimible del lote y del filtro actual."""
+        escapar = lambda valor: html.escape(str(valor or ""))
+        cabeceras_resumen = _cabeceras_resumen(
+            getattr(self, "_tipos_iva_resumen", []))
+        filas_resumen = []
+        for r in range(self.tabla_resumen.rowCount()):
+            celdas = [
+                self.tabla_resumen.item(r, c).text()
+                if self.tabla_resumen.item(r, c) else ""
+                for c in range(self.tabla_resumen.columnCount())
+            ]
+            filas_resumen.append("<tr>" + "".join(
+                f"<td>{escapar(valor)}</td>" for valor in celdas) + "</tr>")
+
+        columnas_detalle = [
+            ("Factura", C_NUM), ("Fecha", C_FECHA), ("Nombre", C_NOMBRE),
+            ("NIF", C_NIF), ("Tipo", C_TIPO), ("Cuenta", C_CUENTA),
+            ("GXX", C_GXX), ("Base", C_BASE), ("% IVA", C_PCT),
+            ("Cuota", C_CUOTA),
+        ]
+        if not self.tabla.isColumnHidden(C_BASE_RE):
+            columnas_detalle.extend([
+                ("Base RE", C_BASE_RE), ("% RE", C_PCT_RE),
+                ("Cuota RE", C_CUOTA_RE),
+            ])
+        columnas_detalle.extend([
+            ("Base IRPF", C_BASE_IRPF), ("% IRPF", C_PCT_IRPF),
+            ("Retención", C_CUOTA_IRPF), ("Total", C_TOTAL),
+        ])
+        filas_visibles = [r for r in range(self.tabla.rowCount())
+                          if not self.tabla.isRowHidden(r)]
+        detalle = []
+        for r in filas_visibles:
+            valores = []
+            for _titulo, columna in columnas_detalle:
+                if columna == C_TIPO:
+                    valor = "Ingreso" if self._tipo_fila(r) == "venta" else "Gasto"
+                else:
+                    item = self.tabla.item(r, columna)
+                    valor = item.text() if item else ""
+                valores.append(valor)
+            detalle.append("<tr>" + "".join(
+                f"<td>{escapar(valor)}</td>" for valor in valores) + "</tr>")
+
+        cliente = escapar(getattr(self, "_cliente_nombre", "") or
+                           self.lbl_cliente.text())
+        nif = escapar(getattr(self, "_cliente_nif", ""))
+        periodo = escapar(getattr(self, "_periodo_lote", PeriodoLote()).etiqueta)
+        estilo = """
+        <style>
+          body { font-family: 'Segoe UI', Arial, sans-serif; color: #24384D; }
+          h1 { color: #326FA6; font-size: 18pt; margin-bottom: 4px; }
+          h2 { font-size: 11pt; margin: 16px 0 6px; }
+          p.meta { color: #5D7084; margin: 2px 0; }
+          table { border-collapse: collapse; width: 100%; font-size: 7.5pt; }
+          th { background: #EAF3FC; color: #24384D; font-weight: 600; }
+          th, td { border: 1px solid #DCE5F0; padding: 4px; }
+          td:not(:nth-child(1)):not(:nth-child(2)):not(:nth-child(3)) {
+            text-align: right;
+          }
+        </style>
+        """
+        return f"""<!doctype html><html><head>{estilo}</head><body>
+        <h1>Comprobación de totales</h1>
+        <p class="meta"><b>Cliente:</b> {cliente} {(' · ' + nif) if nif else ''}</p>
+        <p class="meta"><b>Periodo:</b> {periodo or 'Sin periodo detectado'} ·
+        <b>Fecha:</b> {date.today().strftime('%d/%m/%Y')}</p>
+        <h2>Resumen del lote y del filtro</h2>
+        <table><thead><tr>{''.join(f'<th>{escapar(c)}</th>' for c in cabeceras_resumen)}</tr></thead>
+        <tbody>{''.join(filas_resumen)}</tbody></table>
+        <h2>Facturas mostradas ({len(filas_visibles)})</h2>
+        <table><thead><tr>{''.join(f'<th>{escapar(t)}</th>' for t, _ in columnas_detalle)}</tr></thead>
+        <tbody>{''.join(detalle)}</tbody></table>
+        </body></html>"""
+
+    def _guardar_listado_totales(self) -> None:
+        if not self.tabla.rowCount():
+            QMessageBox.information(
+                self, "Listado de totales", "No hay facturas para incluir.")
+            return
+        cliente = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", (
+            getattr(self, "_cliente_nombre", "") or "CLIENTE")).strip()
+        sugerido = os.path.join(
+            ESCRITORIO, f"COMPROBACION TOTALES {cliente or 'CLIENTE'}.pdf")
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, "Guardar listado de comprobación", sugerido,
+            "Documento PDF (*.pdf)")
+        if not ruta:
+            return
+        if not ruta.lower().endswith(".pdf"):
+            ruta += ".pdf"
+        documento = QTextDocument(self)
+        documento.setHtml(self._html_listado_totales())
+        escritor = QPdfWriter(ruta)
+        escritor.setResolution(150)
+        escritor.setPageSize(QPageSize(QPageSize.A4))
+        escritor.setPageOrientation(QPageLayout.Landscape)
+        documento.print_(escritor)
+        self.lbl_estado.setText(f"Listado de comprobación guardado: {ruta}")
 
     # ---------- miniatura ----------
     def _limpiar_visor(self) -> None:

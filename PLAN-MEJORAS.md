@@ -2,9 +2,9 @@
 
 ## Próxima actualización después de v1.13.21 — petición del 11/09/2026
 
-Estado: **parcialmente implementado**. El rediseño de la tabla, la visibilidad
-de campos y el orden contable se incorporan en v1.13.23. Permanece pendiente
-el listado imprimible de comprobación de totales descrito más abajo.
+Estado: **implementado**. El rediseño de la tabla, la visibilidad de campos y
+el orden contable se incorporaron en v1.13.23. El listado PDF imprimible de
+comprobación de totales se incorporó en v1.13.24.
 
 ### Campos siempre visibles y orden estable
 
@@ -26,7 +26,7 @@ Implementado en v1.13.23.
 
 ### Listado de comprobación de totales
 
-Pendiente para una actualización posterior.
+Implementado en v1.13.24.
 
 - Añadir una salida en forma de listado imprimible de la comprobación de
   totales, para poder puntearlo y contrastarlo con el registro de Aplifisa.

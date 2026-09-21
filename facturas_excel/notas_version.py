@@ -6,6 +6,18 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.24": """
+<h2>Novedades de la versión 1.13.24</h2>
+<ul>
+  <li><b>Listado PDF de comprobación:</b> el bloque de totales incorpora un
+      botón visible para guardar un documento imprimible.</li>
+  <li><b>Preparado para puntear:</b> el PDF incluye cliente, NIF, periodo,
+      resumen del lote, resultado del filtro y el detalle de las facturas que
+      se están mostrando.</li>
+  <li><b>Respeta los campos fiscales:</b> cuenta, GXX, IVA, IRPF, total y, cuando
+      exista, recargo de equivalencia aparecen en el listado.</li>
+</ul>
+""",
     "1.13.23": """
 <h2>Novedades de la versión 1.13.23</h2>
 <ul>
