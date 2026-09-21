@@ -102,6 +102,10 @@ QPushButton#compacto:disabled {{
     background: {CARD}; color: {INK}; border-color: {BORDER};
 }}
 QPushButton#accionTabla, QPushButton#menuAcciones {{ padding: 6px 10px; }}
+QPushButton#accionPeligrosa {{ padding: 6px 10px; color: {DANGER}; }}
+QPushButton#accionPeligrosa:hover {{
+    color: {DANGER}; border-color: {DANGER}; background: #FFEDED;
+}}
 QPushButton#botonIcono {{ min-width: 28px; max-width: 28px; padding: 4px 0; }}
 QPushButton#botonVisor {{
     min-width: 28px; max-width: 28px; min-height: 26px; max-height: 26px;
@@ -133,7 +137,10 @@ QHeaderView::section {{
     padding: 9px 6px; font-weight: 500; font-size: 12px;
 }}
 QTableWidget QComboBox {{ border: none; border-radius: 3px; padding: 3px 5px; background: transparent; }}
-QSplitter::handle {{ background: {PAGE}; }}
+QSplitter::handle {{ background: {BORDER}; }}
+QSplitter#splitRevision::handle {{ margin: 4px 2px; border-radius: 2px; }}
+QSplitter#splitContenido::handle {{ margin: 2px 4px; border-radius: 2px; }}
+QSplitter::handle:hover {{ background: {ACCENT}; }}
 QProgressBar {{
     background: #E8EDF4; border: none; border-radius: 2px;
     min-height: 8px; max-height: 8px; text-align: center; color: transparent;

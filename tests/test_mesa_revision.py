@@ -5,8 +5,8 @@ from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel.app import (
-    C_BASE, C_CUENTA, C_CUOTA_IRPF, C_ESTADO, C_NIF, C_NOMBRE, C_TOTAL,
-    VentanaPrincipal,
+    C_BASE, C_BASE_RE, C_CUENTA, C_CUOTA_IRPF, C_CUOTA_RE, C_ESTADO, C_GXX,
+    C_NIF, C_NOMBRE, C_PCT_RE, C_TOTAL, VentanaPrincipal,
 )
 from facturas_excel.estilo import ACCENT_FAINT, CARD, INK, aplicar_tema
 from facturas_excel.modelo import Factura
@@ -88,12 +88,28 @@ def test_filtro_trimestral_y_siguiente_incidencia_no_dejan_filas_ocultas():
 
 def test_todos_los_campos_siguen_editables_sin_cambiar_indices():
     v = ventana()
-    assert v.tabla.isColumnHidden(C_NIF)
-    for c in (C_BASE, C_CUOTA_IRPF, C_TOTAL):
+    for c in (C_CUENTA, C_GXX, C_NIF, C_BASE, C_CUOTA_IRPF, C_TOTAL):
         assert not v.tabla.isColumnHidden(c)
-    assert v.tabla.horizontalHeader().visualIndex(C_NOMBRE) == 1
-    v.accion_campos_completos.setChecked(True)
-    for c in (C_CUENTA, C_NIF):
+        assert v.tabla.item(0, c).flags() & Qt.ItemIsEditable
+    assert v.tabla.horizontalHeader().visualIndex(C_CUENTA) == 2
+    assert v.tabla.horizontalHeader().visualIndex(C_GXX) == 3
+    assert v.tabla.horizontalHeader().visualIndex(C_NOMBRE) == 6
+    for c in (C_BASE_RE, C_PCT_RE, C_CUOTA_RE):
+        assert v.tabla.isColumnHidden(c)
+
+
+def test_el_recargo_aparece_solo_si_el_lote_lo_contiene():
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    f = Factura(
+        num_factura="RE-1", nombre="PROVEEDOR RE", nif="B12345674",
+        fecha="12/01/2026", concepto="600", subclave="G01",
+        base_iva=100, pct_iva=21, cuota_iva=21,
+        base_requiv=100, pct_requiv=5.2, cuota_requiv=5.2,
+        total_impreso=126.2,
+    )
+    v._anadir_fila(b"", f, "gasto", "600", "G01", "", "Parte 1")
+
+    for c in (C_BASE_RE, C_PCT_RE, C_CUOTA_RE):
         assert not v.tabla.isColumnHidden(c)
         assert v.tabla.item(0, c).flags() & Qt.ItemIsEditable
 

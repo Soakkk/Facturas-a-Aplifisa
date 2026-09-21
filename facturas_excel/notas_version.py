@@ -6,6 +6,24 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.13.23": """
+<h2>Novedades de la versión 1.13.23</h2>
+<ul>
+  <li><b>Mesa contable directa:</b> desaparece el titular decorativo y la tabla
+      aprovecha ese espacio para la revisión de facturas.</li>
+  <li><b>Acciones visibles y compactas:</b> Siguiente incidencia, Marcar
+      revisada, Unir hojas, Limpiar filtros, Quitar bloque y Eliminar quedan a
+      la vista, ajustadas a su texto y sin el menú «Más acciones».</li>
+  <li><b>Orden contable recuperado:</b> Tipo, Cuenta y GXX vuelven al principio;
+      NIF, IVA e IRPF permanecen visibles. El recargo de equivalencia aparece
+      automáticamente solo cuando el lote lo contiene.</li>
+  <li><b>Paneles ajustables:</b> se puede arrastrar la separación entre tabla y
+      documento, y también entre la revisión y la comprobación de totales. El
+      programa recuerda las posiciones elegidas.</li>
+  <li><b>Gestión manual fuera del trabajo diario:</b> sigue disponible en el
+      menú Comprobar para los casos excepcionales, sin ocupar la barra habitual.</li>
+</ul>
+""",
     "1.13.22": """
 <h2>Novedades de la versión 1.13.22</h2>
 <ul>

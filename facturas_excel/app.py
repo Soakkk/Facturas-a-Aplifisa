@@ -20,10 +20,10 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QGridLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
+    QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar,
-    QPushButton, QProgressDialog, QScrollArea, QSplitter, QStyle, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QPushButton, QProgressDialog, QScrollArea, QSizePolicy, QSplitter, QStyle,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -114,11 +114,12 @@ EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 # Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
 # con su base y sin % ni cuota de IVA (es como lo registra Aplifisa).
 COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Base IRPF", "% IRPF",
-        "Retención", "Total", "Bloque"]
+        "NIF", "Base", "% IVA", "Cuota", "Base RE", "% RE", "Cuota RE",
+        "Base IRPF", "% IRPF", "Retención", "Total", "Bloque"]
 C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, \
-    C_BLOQUE = range(len(COLS))
+C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE, C_BASE_IRPF, \
+    C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, C_BLOQUE = range(len(COLS))
+COLUMNAS_RECARGO = (C_BASE_RE, C_PCT_RE, C_CUOTA_RE)
 
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
 # IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
@@ -397,6 +398,10 @@ class VentanaPrincipal(QMainWindow):
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
 
     def _crear_interfaz(self):
+        self._timer_divisores = QTimer(self)
+        self._timer_divisores.setSingleShot(True)
+        self._timer_divisores.setInterval(350)
+        self._timer_divisores.timeout.connect(self._guardar_divisores)
         central = QWidget()
         raiz = QVBoxLayout(central)
         raiz.setContentsMargins(0, 0, 0, 0)
@@ -411,8 +416,8 @@ class VentanaPrincipal(QMainWindow):
         # Mesa de revisión: cabecera clara, buscador global, tabla + original
         # y comprobación debajo. Ningún filtro cambia el alcance del exportador.
         cuerpo = QVBoxLayout()
-        cuerpo.setContentsMargins(16, 12, 16, 10)
-        cuerpo.setSpacing(10)
+        cuerpo.setContentsMargins(12, 8, 12, 8)
+        cuerpo.setSpacing(8)
 
         # El lote ocupa una sola fila. Las acciones frecuentes viven junto al
         # menú para no robar altura ni encoger la tabla en portátiles.
@@ -484,18 +489,10 @@ class VentanaPrincipal(QMainWindow):
         raiz.addWidget(cliente_bar)
         cuerpo.addWidget(self.fila_recargo)
 
-        self.encabezado_mesa = QWidget()
-        encabezado = QHBoxLayout(self.encabezado_mesa)
-        encabezado.setContentsMargins(0, 0, 0, 0)
-        titulo_mesa = QLabel("Todo tu lote, a la vista")
-        titulo_mesa.setObjectName("tituloMesa")
-        encabezado.addWidget(titulo_mesa)
-        self.lbl_lote = QLabel("Lote completo · sin facturas cargadas")
-        self.lbl_lote.setObjectName("contadorLote")
-        self.lbl_lote.setWordWrap(True)
-        encabezado.addWidget(self.lbl_lote, 1)
-        self.lbl_lote.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        cuerpo.addWidget(self.encabezado_mesa)
+        # Se conserva el contador para la lógica interna, pero no se duplica en
+        # pantalla: el encabezado de Datos extraídos ya informa del lote visible.
+        self.lbl_lote = QLabel("Lote completo · sin facturas cargadas", self)
+        self.lbl_lote.hide()
 
         self.btn_revisar_lote = QPushButton("1 · Revisar facturas", self)
         self.btn_revisar_lote.setObjectName("paso")
@@ -539,8 +536,9 @@ class VentanaPrincipal(QMainWindow):
 
         split = QSplitter(Qt.Horizontal)
         self.split_revision = split
+        split.setObjectName("splitRevision")
         split.setChildrenCollapsible(False)
-        split.setHandleWidth(12)
+        split.setHandleWidth(8)
         tabla_card = QFrame()
         tabla_card.setObjectName("tarjeta")
         lt = QVBoxLayout(tabla_card)
@@ -556,9 +554,17 @@ class VentanaPrincipal(QMainWindow):
 
         # En ventana ancha coincide con el prototipo: filtros y acciones en
         # una fila. En portátiles se reparten sin comprimir ni cortar textos.
-        self.layout_herramientas = QGridLayout()
-        self.layout_herramientas.setHorizontalSpacing(8)
-        self.layout_herramientas.setVerticalSpacing(6)
+        self.layout_herramientas = QVBoxLayout()
+        self.layout_herramientas.setSpacing(6)
+        self.layout_herramientas.setContentsMargins(0, 0, 0, 0)
+        self.filas_herramientas = []
+        for _ in range(4):
+            fila_herramientas = QHBoxLayout()
+            fila_herramientas.setSpacing(8)
+            fila_herramientas.setContentsMargins(0, 0, 0, 0)
+            fila_herramientas.addStretch(1)
+            self.layout_herramientas.addLayout(fila_herramientas)
+            self.filas_herramientas.append(fila_herramientas)
         self.lbl_mostrar = QPushButton()
         self.lbl_mostrar.setObjectName("botonIcono")
         self.lbl_mostrar.setIcon(QIcon(ruta_recurso("filter.svg")))
@@ -623,12 +629,6 @@ class VentanaPrincipal(QMainWindow):
         self.btn_revisada.setToolTip(
             "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
         self.btn_revisada.clicked.connect(self._marcar_revisada)
-        self.btn_manual = QPushButton("Gestión manual")
-        self.btn_manual.setObjectName("accionTabla")
-        self.btn_manual.setIcon(QIcon(ruta_recurso("edit.svg")))
-        self.btn_manual.setToolTip(
-            "Aparta o vuelve a incluir una factura esporádica en la exportación automática.")
-        self.btn_manual.clicked.connect(self._alternar_gestion_manual)
         self.btn_unir_hojas = QPushButton("Unir hojas")
         self.btn_unir_hojas.setObjectName("accionTabla")
         self.btn_unir_hojas.setIcon(QIcon(ruta_recurso("link.svg")))
@@ -636,32 +636,31 @@ class VentanaPrincipal(QMainWindow):
             "Seleccione las filas que pertenecen a la misma factura. La primera "
             "aporta la cabecera y la última, el resumen fiscal.")
         self.btn_unir_hojas.clicked.connect(self._unir_hojas_seleccionadas)
-
-        self.menu_acciones = QMenu(self)
-        self.menu_acciones.addAction(self.accion_campos_completos)
-        self.menu_acciones.addAction("Limpiar filtros", self._limpiar_filtros)
-        self.accion_unir_compacta = self.menu_acciones.addAction(
-            "Unir hojas", self.btn_unir_hojas.click)
-        self.accion_manual_compacta = self.menu_acciones.addAction(
-            "Gestión manual", self.btn_manual.click)
-        self.menu_acciones.addSeparator()
-        self.btn_quitar_bloque = self.menu_acciones.addAction("Quitar bloque")
+        self.btn_limpiar_filtros = QPushButton("Limpiar filtros")
+        self.btn_limpiar_filtros.setObjectName("accionTabla")
+        self.btn_limpiar_filtros.clicked.connect(self._limpiar_filtros)
+        self.btn_quitar_bloque = QPushButton("Quitar bloque")
+        self.btn_quitar_bloque.setObjectName("accionPeligrosa")
         self.btn_quitar_bloque.setIcon(QIcon(ruta_recurso("trash.svg")))
         self.btn_quitar_bloque.setToolTip(
             "Quita del lote el bloque elegido en el desplegable (p.ej. si se ha "
             "cargado un PDF que no tocaba).")
-        self.btn_quitar_bloque.triggered.connect(self._quitar_bloque)
-        self.btn_eliminar = self.menu_acciones.addAction("Eliminar selección")
+        self.btn_quitar_bloque.clicked.connect(self._quitar_bloque)
+        self.btn_eliminar = QPushButton("Eliminar")
+        self.btn_eliminar.setObjectName("accionPeligrosa")
         self.btn_eliminar.setIcon(QIcon(ruta_recurso("trash.svg")))
-        self.btn_eliminar.triggered.connect(self._eliminar_seleccion)
-        self.menu_acciones.addSeparator()
-        self.btn_deshacer_borrado = self.menu_acciones.addAction("Deshacer eliminación")
+        self.btn_eliminar.setToolTip("Elimina del lote las filas seleccionadas.")
+        self.btn_eliminar.clicked.connect(self._eliminar_seleccion)
+        self.btn_deshacer_borrado = QPushButton("Deshacer")
+        self.btn_deshacer_borrado.setObjectName("accionTabla")
         self.btn_deshacer_borrado.setEnabled(False)
         self.btn_deshacer_borrado.setVisible(False)
-        self.btn_deshacer_borrado.triggered.connect(self._deshacer_borrado)
-        self.btn_mas_acciones = QPushButton("Más acciones")
-        self.btn_mas_acciones.setObjectName("menuAcciones")
-        self.btn_mas_acciones.setMenu(self.menu_acciones)
+        self.btn_deshacer_borrado.clicked.connect(self._deshacer_borrado)
+        for boton in (
+                self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
+                self.btn_limpiar_filtros, self.btn_quitar_bloque,
+                self.btn_eliminar, self.btn_deshacer_borrado):
+            boton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         lt.addLayout(self.layout_herramientas)
         self.tabla = QTableWidget(0, len(COLS))
         self.tabla.setAlternatingRowColors(True)
@@ -671,24 +670,23 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.verticalHeader().setDefaultSectionSize(38)
         cabecera_tabla = self.tabla.horizontalHeader()
         cabecera_tabla.setSectionResizeMode(QHeaderView.Interactive)
-        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Interactive)
+        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
         cabecera_tabla.setSectionsClickable(True)
         cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
         for columna, ancho in {
                 C_ESTADO: 58, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
                 C_FECHA: 92, C_NUM: 100, C_NOMBRE: 172, C_NIF: 104,
-                C_BASE: 82, C_PCT: 55, C_CUOTA: 74, C_BASE_IRPF: 82,
-                C_PCT_IRPF: 62, C_CUOTA_IRPF: 78, C_TOTAL: 86}.items():
+                C_BASE: 82, C_PCT: 55, C_CUOTA: 74,
+                C_BASE_RE: 82, C_PCT_RE: 55, C_CUOTA_RE: 76,
+                C_BASE_IRPF: 82, C_PCT_IRPF: 62, C_CUOTA_IRPF: 78,
+                C_TOTAL: 86}.items():
             self.tabla.setColumnWidth(columna, ancho)
-        # El bloque sigue disponible en el filtro y en el resumen inferior;
-        # repetirlo en cada fila solo quitaba espacio a los datos contables.
-        # Reordenación visual: los índices de edición/exportación no cambian.
-        orden_visual = [C_ESTADO, C_NOMBRE, C_NUM, C_FECHA, C_BASE, C_CUOTA,
-                        C_CUOTA_IRPF, C_TOTAL, C_TIPO, C_NIF, C_PCT,
-                        C_CUENTA, C_GXX, C_BASE_IRPF, C_PCT_IRPF, C_BLOQUE]
-        for destino, columna in enumerate(orden_visual):
-            cabecera_tabla.moveSection(cabecera_tabla.visualIndex(columna), destino)
-        self._ver_campos_completos(self.accion_campos_completos.isChecked())
+        # Orden contable estable: clasificación y cuenta primero, identificación
+        # después e importes fiscales al final. Solo se ocultan Bloque (ya está
+        # en el filtro) y las columnas de recargo cuando el lote no lo contiene.
+        self.tabla.setColumnHidden(C_BLOQUE, True)
+        for columna in COLUMNAS_RECARGO:
+            self.tabla.setColumnHidden(columna, True)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla.itemChanged.connect(self._on_celda)
@@ -749,13 +747,11 @@ class VentanaPrincipal(QMainWindow):
         lv.addWidget(titulo_visor)
         lv.addLayout(barra_documento)
         lv.addWidget(self.visor_scroll, 1)
-        lv.addWidget(self.btn_revisada)
         split.addWidget(visor_card)
         split.setStretchFactor(0, 7)
         split.setStretchFactor(1, 3)
-        split.setSizes([980, 420])
-        split.splitterMoved.connect(lambda *_: self._distribuir_herramientas(self.width()))
-        cuerpo.addWidget(split, 1)
+        split.setSizes(self._tamanos_divisor("split_revision", [980, 420]))
+        split.splitterMoved.connect(self._divisor_revision_movido)
 
         resumen_card = QFrame()
         resumen_card.setObjectName("tarjeta")
@@ -790,13 +786,25 @@ class VentanaPrincipal(QMainWindow):
         # Sin ajuste de linea: un nombre de PDF largo no debe estirar la fila.
         self.tabla_resumen.setWordWrap(False)
         self.tabla_resumen.verticalHeader().setDefaultSectionSize(28)
-        self.tabla_resumen.setMinimumHeight(75)
-        self.tabla_resumen.setMaximumHeight(195)
+        self.tabla_resumen.setMinimumHeight(60)
         self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        lr.addWidget(self.tabla_resumen)
+        lr.addWidget(self.tabla_resumen, 1)
         self.resumen_card = resumen_card
-        cuerpo.addWidget(resumen_card)
         resumen_card.setVisible(bool(ajustes.leer("ver_resumen", True)))
+
+        self.split_contenido = QSplitter(Qt.Vertical)
+        self.split_contenido.setObjectName("splitContenido")
+        self.split_contenido.setChildrenCollapsible(False)
+        self.split_contenido.setHandleWidth(8)
+        self.split_contenido.addWidget(split)
+        self.split_contenido.addWidget(resumen_card)
+        self.split_contenido.setStretchFactor(0, 1)
+        self.split_contenido.setStretchFactor(1, 0)
+        self.split_contenido.setSizes(
+            self._tamanos_divisor("split_contenido", [610, 150]))
+        self.split_contenido.splitterMoved.connect(
+            lambda *_: self._timer_divisores.start())
+        cuerpo.addWidget(self.split_contenido, 1)
 
         pie = QHBoxLayout()
         self.lbl_estado = QLabel("Cargue o escanee un lote de facturas para empezar.")
@@ -818,48 +826,53 @@ class VentanaPrincipal(QMainWindow):
         self.setCentralWidget(central)
         self._actualizar_barra_responsiva(self.width())
         self._distribuir_herramientas(self.width())
+        # Tras el primer layout Qt ya conoce el ancho real del panel izquierdo.
+        QTimer.singleShot(
+            0, lambda: self._distribuir_herramientas(self.width()))
 
     def _distribuir_herramientas(self, ancho: int):
-        """Las acciones se ajustan al panel real, también al mover el divisor."""
+        """Muestra todas las acciones habituales sin estirarlas ni ocultarlas."""
         if not hasattr(self, "tabla"):
             return
         elementos = (
             self.lbl_mostrar, self.combo_filtro_bloque, self.combo_filtro_registro,
-            self.btn_siguiente, self.btn_manual, self.btn_unir_hojas,
-            self.btn_mas_acciones,
+            self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
+            self.btn_limpiar_filtros, self.btn_quitar_bloque,
+            self.btn_eliminar, self.btn_deshacer_borrado,
         )
-        for elemento in elementos:
-            self.layout_herramientas.removeWidget(elemento)
-        for columna in range(9):
-            self.layout_herramientas.setColumnStretch(columna, 0)
-        ancho_tabla = min(ancho, self.tabla.parentWidget().width())
-        amplia = ancho_tabla >= 790
-        self.btn_unir_hojas.setVisible(amplia)
-        self.btn_manual.setVisible(amplia)
-        self.accion_unir_compacta.setVisible(not amplia)
-        self.accion_manual_compacta.setVisible(not amplia)
-        if amplia:
-            posiciones = (
-                (self.lbl_mostrar, 0, 0), (self.combo_filtro_bloque, 0, 1),
-                (self.btn_siguiente, 0, 2), (self.btn_unir_hojas, 0, 3),
-                (self.btn_manual, 0, 4), (self.btn_mas_acciones, 0, 5),
-                (self.combo_filtro_registro, 1, 0, 6),
-            )
-            self.layout_herramientas.setColumnStretch(1, 1)
-        else:
-            posiciones = (
-                (self.lbl_mostrar, 0, 0), (self.combo_filtro_bloque, 0, 1),
-                (self.btn_siguiente, 0, 2),
-                (self.btn_mas_acciones, 0, 3),
-                (self.combo_filtro_registro, 1, 0, 4),
-            )
-            self.layout_herramientas.setColumnStretch(1, 1)
+        for fila in self.filas_herramientas:
+            for elemento in elementos:
+                fila.removeWidget(elemento)
         self.combo_filtro_bloque.setMinimumWidth(135)
-        self.combo_filtro_bloque.setMaximumWidth(260)
-        for posicion in posiciones:
-            widget, fila, columna = posicion[:3]
-            expansion = posicion[3] if len(posicion) == 4 else 1
-            self.layout_herramientas.addWidget(widget, fila, columna, 1, expansion)
+        self.combo_filtro_bloque.setMaximumWidth(220)
+        ancho_tabla = min(ancho, self.tabla.parentWidget().width())
+        disponible = max(320, ancho_tabla - 24)
+        fila_actual = 0
+        usado = 0
+        habituales = (
+            self.lbl_mostrar, self.combo_filtro_bloque, self.btn_siguiente,
+            self.btn_revisada, self.btn_unir_hojas,
+            self.btn_limpiar_filtros, self.btn_quitar_bloque,
+            self.btn_eliminar, self.btn_deshacer_borrado,
+        )
+        for widget in habituales:
+            if widget is self.btn_deshacer_borrado and not widget.isEnabled():
+                continue
+            maximo = widget.maximumWidth()
+            preferido = max(widget.minimumWidth(), widget.sizeHint().width())
+            if maximo < 16_777_215:
+                preferido = min(preferido, maximo)
+            necesario = preferido + (8 if usado else 0)
+            if usado and usado + necesario > disponible and fila_actual < 2:
+                fila_actual += 1
+                usado = 0
+                necesario = preferido
+            fila = self.filas_herramientas[fila_actual]
+            fila.insertWidget(fila.count() - 1, widget)
+            usado += necesario
+        fila_registro = min(fila_actual + 1, 3)
+        fila = self.filas_herramientas[fila_registro]
+        fila.insertWidget(fila.count() - 1, self.combo_filtro_registro)
 
     def _actualizar_barra_responsiva(self, ancho: int):
         """En poca altura los accesos, sin marca duplicada, comparten el menú."""
@@ -882,30 +895,35 @@ class VentanaPrincipal(QMainWindow):
             self._barra_en_menu = compacta
         self.barra_rapida.show()
         self.fila_barra_estrecha.setVisible(not compacta)
-        if hasattr(self, "encabezado_mesa"):
-            self.encabezado_mesa.setVisible(self.height() >= 800)
         if hasattr(self, "tabla_resumen"):
             self._ajustar_altura_resumen()
 
     def _ajustar_altura_resumen(self):
-        limite = 96 if self.height() < 760 else 175
-        altura = (self.tabla_resumen.horizontalHeader().height()
-                  + 28 * max(1, self.tabla_resumen.rowCount()) + 4)
-        self.tabla_resumen.setFixedHeight(min(limite, max(65, altura)))
+        # La altura la decide ahora el usuario arrastrando el divisor vertical.
+        # Solo se recalcula la geometría interna cuando cambia el número de filas.
+        self.tabla_resumen.updateGeometry()
 
     def _volver_a_revision(self):
         self.btn_revisar_lote.setChecked(True)
         self.tabla.setFocus()
 
-    def _ver_campos_completos(self, visible: bool):
-        if not hasattr(self, "tabla"):
-            return
-        # Los campos siguen siendo editables en la vista completa. El tipo
-        # siempre se muestra para no confundir un filtro con reclasificación.
-        secundarios = (C_CUENTA, C_GXX, C_NIF, C_PCT, C_BASE_IRPF, C_PCT_IRPF)
-        for columna in secundarios:
-            self.tabla.setColumnHidden(columna, not visible)
-        self.tabla.setColumnHidden(C_BLOQUE, True)
+    @staticmethod
+    def _tamanos_divisor(clave: str, por_defecto: list[int]) -> list[int]:
+        valor = ajustes.leer(clave, por_defecto)
+        if (isinstance(valor, list) and len(valor) == 2
+                and all(isinstance(n, int) and n > 0 for n in valor)):
+            return valor
+        return por_defecto
+
+    def _divisor_revision_movido(self, *_):
+        self._distribuir_herramientas(self.width())
+        self._timer_divisores.start()
+
+    def _guardar_divisores(self):
+        if hasattr(self, "split_revision"):
+            ajustes.guardar("split_revision", self.split_revision.sizes())
+        if hasattr(self, "split_contenido"):
+            ajustes.guardar("split_contenido", self.split_contenido.sizes())
 
     def showEvent(self, evento):
         super().showEvent(evento)
@@ -969,6 +987,12 @@ class VentanaPrincipal(QMainWindow):
             "Comprobar registro de Aplifisa…\tCtrl+R",
             lambda: self._contrastar_registro())
         self.btn_registro.setEnabled(False)
+        self.accion_gestion_manual = comprobar.addAction(
+            "Apartar selección para gestión manual…",
+            self._alternar_gestion_manual)
+        self.accion_gestion_manual.setToolTip(
+            "Uso excepcional: aparta o recupera facturas que no deben entrar "
+            "en la exportación automática.")
 
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales del lote")
@@ -978,11 +1002,6 @@ class VentanaPrincipal(QMainWindow):
         self.accion_detalle_bloques = ver.addAction("Desglosar totales por escaneo")
         self.accion_detalle_bloques.setCheckable(True)
         self.accion_detalle_bloques.toggled.connect(self._pintar_resumen)
-        self.accion_campos_completos = ver.addAction("Mostrar todos los campos contables")
-        self.accion_campos_completos.setCheckable(True)
-        self.accion_campos_completos.setChecked(False)
-        self.accion_campos_completos.toggled.connect(self._ver_campos_completos)
-
         config = self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
@@ -1358,6 +1377,7 @@ class VentanaPrincipal(QMainWindow):
         # No destruir QThreads vivos (abortaria el proceso)
         self.esperar_hilos()
         try:
+            self._guardar_divisores()
             self._guardar_sesion()
         except Exception:
             pass
@@ -1519,6 +1539,11 @@ class VentanaPrincipal(QMainWindow):
         ajustes.guardar("ver_resumen", bool(visible))
         if hasattr(self, "resumen_card"):
             self.resumen_card.setVisible(bool(visible))
+            if visible and hasattr(self, "split_contenido"):
+                tamanos = self.split_contenido.sizes()
+                if len(tamanos) == 2 and tamanos[1] < 80:
+                    total = max(sum(tamanos), 600)
+                    self.split_contenido.setSizes([max(300, total - 150), 150])
         if hasattr(self, "accion_resumen") and self.accion_resumen.isChecked() != visible:
             self.accion_resumen.setChecked(bool(visible))
 
@@ -2348,6 +2373,8 @@ class VentanaPrincipal(QMainWindow):
             C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
             C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
             C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva),
+            C_BASE_RE: fmt(f.base_requiv), C_PCT_RE: fmt(f.pct_requiv),
+            C_CUOTA_RE: fmt(f.cuota_requiv),
             C_BASE_IRPF: fmt(f.base_irpf), C_PCT_IRPF: fmt(f.pct_irpf),
             C_CUOTA_IRPF: fmt(f.cuota_irpf),
             C_TOTAL: fmt(f.total_impreso),
@@ -2355,7 +2382,8 @@ class VentanaPrincipal(QMainWindow):
         }
         for col, val in valores.items():
             item = QTableWidgetItem("" if val is None else str(val))
-            if col in (C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF,
+            if col in (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE,
+                       C_CUOTA_RE, C_BASE_IRPF, C_PCT_IRPF,
                        C_CUOTA_IRPF, C_TOTAL):
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if col == C_GXX:
@@ -2373,6 +2401,10 @@ class VentanaPrincipal(QMainWindow):
                 item.setToolTip("Escaneo o PDF del que salió esta factura.")
             self.tabla.setItem(r, col, item)
         self.tabla.setRowHeight(r, 34)
+        if any(getattr(f, campo) is not None
+               for campo in ("base_requiv", "pct_requiv", "cuota_requiv")):
+            for columna in COLUMNAS_RECARGO:
+                self.tabla.setColumnHidden(columna, False)
         self.tabla.blockSignals(senales_bloqueadas)
 
     # ---------- edicion / validacion ----------
@@ -2514,6 +2546,9 @@ class VentanaPrincipal(QMainWindow):
         f.base_iva = parse_numero(self.tabla.item(r, C_BASE).text())
         f.pct_iva = parse_numero(self.tabla.item(r, C_PCT).text())
         f.cuota_iva = parse_numero(self.tabla.item(r, C_CUOTA).text())
+        f.base_requiv = parse_numero(self.tabla.item(r, C_BASE_RE).text())
+        f.pct_requiv = parse_numero(self.tabla.item(r, C_PCT_RE).text())
+        f.cuota_requiv = parse_numero(self.tabla.item(r, C_CUOTA_RE).text())
         f.base_irpf = parse_numero(self.tabla.item(r, C_BASE_IRPF).text())
         f.pct_irpf = parse_numero(self.tabla.item(r, C_PCT_IRPF).text())
         f.cuota_irpf = parse_numero(self.tabla.item(r, C_CUOTA_IRPF).text())
@@ -2564,6 +2599,8 @@ class VentanaPrincipal(QMainWindow):
             atributos = {
                 C_NUM: "num_factura", C_NOMBRE: "nombre", C_NIF: "nif",
                 C_BASE: "base_iva", C_PCT: "pct_iva", C_CUOTA: "cuota_iva",
+                C_BASE_RE: "base_requiv", C_PCT_RE: "pct_requiv",
+                C_CUOTA_RE: "cuota_requiv",
                 C_BASE_IRPF: "base_irpf", C_PCT_IRPF: "pct_irpf",
                 C_CUOTA_IRPF: "cuota_irpf",
                 C_TOTAL: "total_impreso",
@@ -2891,6 +2928,7 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado.reverse()
         self.btn_deshacer_borrado.setEnabled(True)
         self.btn_deshacer_borrado.setVisible(True)
+        self._distribuir_herramientas(self.width())
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(
@@ -2912,6 +2950,7 @@ class VentanaPrincipal(QMainWindow):
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
         self.btn_deshacer_borrado.setVisible(False)
+        self._distribuir_herramientas(self.width())
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
@@ -3067,8 +3106,9 @@ class VentanaPrincipal(QMainWindow):
                                     mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
         columnas = (C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF,
-                    C_BASE, C_PCT, C_CUOTA, C_BASE_IRPF, C_PCT_IRPF,
-                    C_CUOTA_IRPF, C_TOTAL)
+                    C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE,
+                    C_CUOTA_RE, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF,
+                    C_TOTAL)
         for columna in columnas:
             item = self.tabla.item(fila, columna)
             if not item:
@@ -3118,6 +3158,12 @@ class VentanaPrincipal(QMainWindow):
             if bajo.startswith("falta la cuota de iva") or bajo.startswith(
                     "cuota iva descuadra"):
                 marcar(C_CUOTA, texto)
+            if "recargo" in bajo and "incompleto" in bajo:
+                marcar(C_BASE_RE, texto)
+                marcar(C_PCT_RE, texto)
+                marcar(C_CUOTA_RE, texto)
+            if "cuota" in bajo and "recargo" in bajo:
+                marcar(C_CUOTA_RE, texto)
             if bajo.startswith("irpf incompleto"):
                 marcar(C_BASE_IRPF, texto)
                 marcar(C_PCT_IRPF, texto)
@@ -3203,6 +3249,16 @@ class VentanaPrincipal(QMainWindow):
                     "del 1%; compruébelo.")
         return ""
 
+    def _actualizar_columnas_recargo(self) -> None:
+        """El recargo ocupa sitio solo cuando existe en el lote visible."""
+        visible = any(
+            any(getattr(registro["factura"], campo) is not None
+                for campo in ("base_requiv", "pct_requiv", "cuota_requiv"))
+            for registro in self.filas
+        )
+        for columna in COLUMNAS_RECARGO:
+            self.tabla.setColumnHidden(columna, not visible)
+
     def _revalidar_todo(self):
         self._ejercicio_lote = self._calcular_ejercicio_lote()
         self._actualizar_selector_periodo()
@@ -3211,6 +3267,7 @@ class VentanaPrincipal(QMainWindow):
             [self._tipo_fila(r) for r in range(self.tabla.rowCount())])
         for r in range(self.tabla.rowCount()):
             self._revalidar_fila(r)
+        self._actualizar_columnas_recargo()
         # El resumen se rehace SIEMPRE, tambien con la tabla vacia: si no, al
         # vaciar el lote se quedaban abajo los totales del lote anterior y
         # parecia que no se habia borrado nada.

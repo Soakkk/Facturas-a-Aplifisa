@@ -284,6 +284,7 @@ def test_repara_sesion_si_un_abono_emitido_se_guardo_como_gasto():
 
 def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel
     from facturas_excel.app import C_BLOQUE, C_CUENTA, C_GXX
     from facturas_excel.estilo import FUENTE_UI, QSS
 
@@ -304,10 +305,16 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
             v.btn_revisar_gemini.text(), v.btn_gastos.text()] == [
         "Abrir PDF", "Escanear", "Vaciar todo", "Revisar Gemini",
         "Exportar a Aplifisa"]
-    acciones = [accion.text() for accion in v.menu_acciones.actions()]
-    assert "Vaciar todo" not in acciones
-    assert "Quitar bloque" in acciones
-    assert "Eliminar selección" in acciones
+    assert not hasattr(v, "menu_acciones")
+    assert not hasattr(v, "btn_mas_acciones")
+    assert v.accion_gestion_manual.text().startswith("Apartar selección")
+    assert v.split_contenido.orientation() == Qt.Vertical
+    assert v.split_contenido.count() == 2
+    etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
+    botones = {boton.text() for boton in v.findChildren(type(v.btn_siguiente))}
+    assert "Todo tu lote, a la vista" not in etiquetas
+    assert {"Marcar revisada", "Unir hojas", "Limpiar filtros",
+            "Quitar bloque", "Eliminar"} <= botones
 
     v.show()
     _app.processEvents()
@@ -315,14 +322,16 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
     assert v.barra_rapida.isVisible()
-    assert v.layout_herramientas.getItemPosition(
-        v.layout_herramientas.indexOf(v.btn_siguiente))[0] == 0
-    assert v.btn_manual.isHidden()
-    assert v.accion_manual_compacta.isVisible()
+    assert any(fila.indexOf(v.btn_siguiente) >= 0
+               for fila in v.filas_herramientas)
     assert not v.btn_unir_hojas.icon().isNull()
     assert v.btn_unir_hojas.toolTip().startswith("Seleccione las filas")
-    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_mas_acciones):
+    for boton in (v.btn_siguiente, v.btn_revisada, v.btn_unir_hojas,
+                  v.btn_limpiar_filtros, v.btn_quitar_bloque, v.btn_eliminar):
+        assert not boton.isHidden()
         assert boton.width() >= boton.sizeHint().width()
+        assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
+    assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
     v.resize(1420, 820)
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
