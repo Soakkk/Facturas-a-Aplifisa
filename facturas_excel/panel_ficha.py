@@ -13,7 +13,8 @@ import html
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QScrollArea, QVBoxLayout,
+    QWidget,
 )
 
 from .estilo import ACCENT, BORDER, DANGER, INK, MUTED, SUCCESS, WARNING
@@ -46,32 +47,26 @@ class PanelFicha(QScrollArea):
         self.setObjectName("panelFicha")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
-        self._contenido = QWidget()
-        self._contenido.setObjectName("panelFichaContenido")
-        self._capa = QVBoxLayout(self._contenido)
-        self._capa.setContentsMargins(2, 4, 6, 4)
-        self._capa.setSpacing(6)
-        self.setWidget(self._contenido)
         self.botones_discrepancia: list[QPushButton] = []
         self.vacio()
 
     # ------------------------------------------------------------ utilidades
     def _limpiar(self) -> None:
-        self.botones_discrepancia = []
-        while self._capa.count():
-            item = self._capa.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-            elif item.layout():
-                self._vaciar_layout(item.layout())
+        """Contenido nuevo cada vez: el anterior lo destruye el QScrollArea.
 
-    def _vaciar_layout(self, layout) -> None:
-        while layout.count():
-            item = layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-            elif item.layout():
-                self._vaciar_layout(item.layout())
+        Vaciar el layout pieza a pieza dejaba los widgets viejos pintados
+        encima hasta que Qt procesaba su borrado diferido.
+        """
+        self.botones_discrepancia = []
+        self._contenido = QWidget()
+        self._contenido.setObjectName("panelFichaContenido")
+        self._capa = QVBoxLayout(self._contenido)
+        self._capa.setContentsMargins(2, 4, 6, 4)
+        self._capa.setSpacing(6)
+        # Que cada línea ocupe lo que necesita y, si no cabe, aparezca la
+        # barra de desplazamiento (en vez de aplastar el texto).
+        self._capa.setSizeConstraint(QLayout.SetMinimumSize)
+        self.setWidget(self._contenido)
 
     def _etiqueta(self, texto: str, estilo: str = "", rico: bool = False) -> QLabel:
         lbl = QLabel(texto)
@@ -131,6 +126,53 @@ class PanelFicha(QScrollArea):
         self._capa.addWidget(cabecera)
         marcas = d["marcas"]
 
+        # Primero lo que hay que decidir; después, los datos.
+        if d["discrepancias"]:
+            self._seccion("Las dos lecturas no coinciden")
+        for indice, disc in enumerate(d["discrepancias"]):
+            caja = QFrame()
+            caja.setObjectName("fichaDiscrepancia")
+            caja.setStyleSheet(
+                f"QFrame#fichaDiscrepancia {{ background: #FBEFDC; border: 1px "
+                f"solid {AMBAR}; border-radius: 4px; }} QLabel {{ border: none; "
+                f"background: transparent; }}")
+            capa = QVBoxLayout(caja)
+            capa.setContentsMargins(8, 6, 8, 6)
+            capa.setSpacing(4)
+            capa.addWidget(self._etiqueta(
+                f"<b>{html.escape(disc['etiqueta'])}</b> no coincide", rico=True))
+            for lectura, clave in ((1, "valor_1"), (2, "valor_2")):
+                modelo = disc.get(f"modelo_{lectura}") or f"Lectura {lectura}"
+                linea = QHBoxLayout()
+                linea.addWidget(self._etiqueta(
+                    f"<span style='color:{MUTED}'>{html.escape(modelo)}:</span> "
+                    f"<b>{html.escape(disc['textos'][lectura - 1])}</b>", rico=True), 1)
+                boton = QPushButton("Usar este" if lectura == 2 else "Es correcto")
+                boton.setObjectName("fichaBoton")
+                boton.setStyleSheet(
+                    f"QPushButton#fichaBoton {{ color: {ACCENT}; background: white;"
+                    f" border: 1px solid {ACCENT}; border-radius: 3px;"
+                    f" padding: 2px 8px; font-weight: 600; }}")
+                boton.setEnabled(lectura == 1 or disc.get("aplicable", True))
+                if lectura == 2 and not disc.get("aplicable", True):
+                    boton.setToolTip("Este dato no se puede copiar solo: "
+                                     "corríjalo en la tabla.")
+                boton.clicked.connect(
+                    lambda _c=False, f=fila, i=indice, l=lectura:
+                    self.discrepancia_resuelta.emit(f, i, l))
+                self.botones_discrepancia.append(boton)
+                linea.addWidget(boton)
+                capa.addLayout(linea)
+            self._capa.addWidget(caja)
+
+        otros = d["otros_motivos"]
+        if otros:
+            self._seccion("Por revisar")
+            for gravedad, texto in otros:
+                color = ROJO if gravedad == "error" else AMBAR
+                self._capa.addWidget(self._etiqueta(
+                    f"• {texto}", f"color: {color}; font-size: 11px;"))
+
         self._seccion("Identificación")
         self._dato(d["rol"], d["nombre"], marcas.get("nombre", []))
         self._dato("NIF", d["nif"], marcas.get("nif", []))
@@ -171,47 +213,5 @@ class PanelFicha(QScrollArea):
         self._seccion("Lectura de la IA")
         self._capa.addWidget(self._etiqueta(
             d["lectura"], f"color: {INK if d['doble'] else MUTED};"))
-        for indice, disc in enumerate(d["discrepancias"]):
-            caja = QFrame()
-            caja.setObjectName("fichaDiscrepancia")
-            caja.setStyleSheet(
-                f"QFrame#fichaDiscrepancia {{ background: #FBEFDC; border: 1px "
-                f"solid {AMBAR}; border-radius: 4px; }} QLabel {{ border: none; "
-                f"background: transparent; }}")
-            capa = QVBoxLayout(caja)
-            capa.setContentsMargins(8, 6, 8, 6)
-            capa.setSpacing(4)
-            capa.addWidget(self._etiqueta(
-                f"<b>{html.escape(disc['etiqueta'])}</b> no coincide", rico=True))
-            for lectura, clave in ((1, "valor_1"), (2, "valor_2")):
-                modelo = disc.get(f"modelo_{lectura}") or f"Lectura {lectura}"
-                linea = QHBoxLayout()
-                linea.addWidget(self._etiqueta(
-                    f"<span style='color:{MUTED}'>{html.escape(modelo)}:</span> "
-                    f"<b>{html.escape(disc['textos'][lectura - 1])}</b>", rico=True), 1)
-                boton = QPushButton("Usar este" if lectura == 2 else "Es correcto")
-                boton.setObjectName("fichaBoton")
-                boton.setStyleSheet(
-                    f"QPushButton#fichaBoton {{ color: {ACCENT}; background: white;"
-                    f" border: 1px solid {ACCENT}; border-radius: 3px;"
-                    f" padding: 2px 8px; font-weight: 600; }}")
-                boton.setEnabled(lectura == 1 or disc.get("aplicable", True))
-                if lectura == 2 and not disc.get("aplicable", True):
-                    boton.setToolTip("Este dato no se puede copiar solo: "
-                                     "corríjalo en la tabla.")
-                boton.clicked.connect(
-                    lambda _c=False, f=fila, i=indice, l=lectura:
-                    self.discrepancia_resuelta.emit(f, i, l))
-                self.botones_discrepancia.append(boton)
-                linea.addWidget(boton)
-                capa.addLayout(linea)
-            self._capa.addWidget(caja)
 
-        otros = d["otros_motivos"]
-        if otros:
-            self._seccion("Otros avisos")
-            for gravedad, texto in otros:
-                color = ROJO if gravedad == "error" else AMBAR
-                self._capa.addWidget(self._etiqueta(
-                    f"• {texto}", f"color: {color}; font-size: 11px;"))
         self._capa.addStretch(1)

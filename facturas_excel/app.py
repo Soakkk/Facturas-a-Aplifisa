@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import replace
 from datetime import date
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QColor, QCursor, QIcon, QKeySequence, QPageLayout, QPageSize, QPdfWriter,
     QPixmap, QShortcut, QTextDocument,
@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
     QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar,
     QPushButton, QProgressDialog, QScrollArea, QSizePolicy, QSplitter, QStyle,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -66,7 +67,8 @@ from facturas_excel.consulta import (
 )
 from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import (
-    ACCENT, ACCENT_FAINT, BORDER, INK, MUTED, SUCCESS, WARNING, DANGER, aplicar_tema,
+    ACCENT, ACCENT_FAINT, BORDER, CHROME, CHROME_INK, INK, MUTED, SUCCESS,
+    WARNING, DANGER, aplicar_tema,
 )
 from facturas_excel.panel_ficha import PanelFicha
 from facturas_excel.ficha_incidencias import (
@@ -552,14 +554,6 @@ class VentanaPrincipal(QMainWindow):
         self.btn_revisar_lote.setChecked(True)
         self.btn_revisar_lote.clicked.connect(self._volver_a_revision)
         self.btn_revisar_lote.hide()
-        self.btn_cuadrar = QPushButton("Cuadrar con Aplifisa")
-        self.btn_cuadrar.setObjectName("accesoRapido")
-        self.btn_cuadrar.clicked.connect(self.btn_registro.trigger)
-        self.btn_registro.changed.connect(
-            lambda: self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled()))
-        self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled())
-        barra_acciones = self.barra_rapida.layout()
-        barra_acciones.insertWidget(barra_acciones.count() - 1, self.btn_cuadrar)
 
         self.progreso = QProgressBar()
         self.progreso.setVisible(False)
@@ -633,6 +627,8 @@ class VentanaPrincipal(QMainWindow):
             "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
+        self.combo_filtro_bloque.currentIndexChanged.connect(
+            lambda *_: self._pintar_lista_bloques())
         self.txt_buscar = QLineEdit()
         self.txt_buscar.setObjectName("buscadorLote")
         self.txt_buscar.setMinimumWidth(260)
@@ -728,7 +724,7 @@ class VentanaPrincipal(QMainWindow):
         cabecera_tabla.setSectionsClickable(True)
         cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
         for columna, ancho in {
-                C_ESTADO: 58, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
+                C_ESTADO: 112, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
                 C_FECHA: 92, C_NUM: 100, C_NOMBRE: 172, C_NIF: 104,
                 C_BASE: 82, C_PCT: 55, C_CUOTA: 74,
                 C_BASE_RE: 82, C_PCT_RE: 55, C_CUOTA_RE: 76,
@@ -747,6 +743,24 @@ class VentanaPrincipal(QMainWindow):
         self.tabla.cellClicked.connect(self._abrir_ficha)
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
         lt.addWidget(self.tabla, 1)
+
+        # Lista lateral de bloques: cada PDF o escaneo con lo que le queda
+        # por revisar. Pulsar uno filtra la tabla; «Todo el lote» lo quita.
+        lista_card = QFrame()
+        lista_card.setObjectName("tarjeta")
+        lista_card.setMinimumWidth(150)
+        ll = QVBoxLayout(lista_card)
+        ll.setContentsMargins(8, 10, 8, 10)
+        ll.setSpacing(6)
+        titulo_lista = QLabel("Bloques del lote")
+        titulo_lista.setObjectName("tituloSeccion")
+        ll.addWidget(titulo_lista)
+        self.lista_bloques = QListWidget()
+        self.lista_bloques.setObjectName("listaBloques")
+        self.lista_bloques.setWordWrap(True)
+        self.lista_bloques.currentRowChanged.connect(self._on_lista_bloques)
+        ll.addWidget(self.lista_bloques, 1)
+        split.addWidget(lista_card)
         split.addWidget(tabla_card)
 
         visor_card = QFrame()
@@ -818,14 +832,15 @@ class VentanaPrincipal(QMainWindow):
         self.ficha.discrepancia_resuelta.connect(self._resolver_discrepancia)
         lf.addWidget(self.ficha, 1)
         self.split_visor.addWidget(ficha_card)
-        self.split_visor.setSizes(self._tamanos_divisor("split_visor", [300, 330]))
+        self.split_visor.setSizes(self._tamanos_divisor("split_visor", [280, 380]))
         self.split_visor.splitterMoved.connect(
             lambda *_: self._timer_divisores.start())
         lv.addWidget(self.split_visor, 1)
         split.addWidget(visor_card)
-        split.setStretchFactor(0, 7)
-        split.setStretchFactor(1, 3)
-        split.setSizes(self._tamanos_divisor("split_revision", [980, 420]))
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 7)
+        split.setStretchFactor(2, 3)
+        split.setSizes(self._tamanos_divisor("split_revision_v2", [180, 860, 400]))
         split.splitterMoved.connect(self._divisor_revision_movido)
 
         resumen_card = QFrame()
@@ -887,10 +902,22 @@ class VentanaPrincipal(QMainWindow):
             lambda *_: self._timer_divisores.start())
         cuerpo.addWidget(self.split_contenido, 1)
 
-        pie = QHBoxLayout()
+        barra_estado = QFrame()
+        barra_estado.setObjectName("barraEstado")
+        pie = QHBoxLayout(barra_estado)
+        pie.setContentsMargins(12, 4, 12, 4)
+        pie.setSpacing(14)
         self.lbl_estado = QLabel("Cargue o escanee un lote de facturas para empezar.")
         self.lbl_estado.setObjectName("textoSuave")
         pie.addWidget(self.lbl_estado, 1)
+        self.lbl_contadores = QLabel("")
+        self.lbl_contadores.setObjectName("contadores")
+        self.lbl_contadores.setToolTip(
+            "Verificada: las dos lecturas coinciden y todo cuadra.\n"
+            "Sin verificar: todo cuadra, pero solo la leyó un modelo.\n"
+            "Revisar: hay algo que mirar antes de exportar.\n"
+            "Error: no se puede exportar hasta corregirlo.")
+        pie.addWidget(self.lbl_contadores)
         self.lbl_gasto = QLabel()
         self.lbl_gasto.setObjectName("textoSuave")
         self.lbl_gasto.setToolTip(
@@ -899,11 +926,10 @@ class VentanaPrincipal(QMainWindow):
             "saldo de la cuenta desde el programa: esto es la cuenta que lleva "
             "el propio programa.")
         pie.addWidget(self.lbl_gasto)
-        pie.addWidget(self.btn_gastos)
-        cuerpo.addLayout(pie)
         cont = QWidget()
         cont.setLayout(cuerpo)
         raiz.addWidget(cont, 1)
+        raiz.addWidget(barra_estado)
         self.setCentralWidget(central)
         self._actualizar_barra_responsiva(self.width())
         self._distribuir_herramientas(self.width())
@@ -962,9 +988,17 @@ class VentanaPrincipal(QMainWindow):
         compacta = self.height() < 760
         for marca in self._marcas_barra:
             marca.setVisible(not compacta)
+        # Compacta: botones con el texto al lado y sin rótulos de grupo, para
+        # caber en la barra de menús.
+        for boton in self._botones_grandes:
+            boton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if compacta
+                                     else Qt.ToolButtonTextUnderIcon)
+            boton.setIconSize(QSize(16, 16) if compacta else QSize(26, 26))
+        for widget in self._pilas_cinta + self._etiquetas_grupo:
+            widget.setVisible(not compacta)
         self.barra_rapida.layout().setContentsMargins(
-            6 if compacta else 16, 0 if compacta else 8,
-            8 if compacta else 16, 0 if compacta else 10)
+            6 if compacta else 16, 0 if compacta else 6,
+            8 if compacta else 16, 0)
         if compacta != getattr(self, "_barra_en_menu", False):
             if compacta:
                 self.layout_barra_estrecha.removeWidget(self.barra_rapida)
@@ -991,7 +1025,7 @@ class VentanaPrincipal(QMainWindow):
     @staticmethod
     def _tamanos_divisor(clave: str, por_defecto: list[int]) -> list[int]:
         valor = ajustes.leer(clave, por_defecto)
-        if (isinstance(valor, list) and len(valor) == 2
+        if (isinstance(valor, list) and len(valor) == len(por_defecto)
                 and all(isinstance(n, int) and n > 0 for n in valor)):
             return valor
         return por_defecto
@@ -1002,7 +1036,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _guardar_divisores(self):
         if hasattr(self, "split_revision"):
-            ajustes.guardar("split_revision", self.split_revision.sizes())
+            ajustes.guardar("split_revision_v2", self.split_revision.sizes())
         if hasattr(self, "split_contenido"):
             ajustes.guardar("split_contenido", self.split_contenido.sizes())
         if hasattr(self, "split_visor"):
@@ -1023,7 +1057,9 @@ class VentanaPrincipal(QMainWindow):
                 if resultado == 0:
                     break
             # DWM recibe COLORREF (0x00BBGGRR).
-            for atributo, tono in ((35, "#FFFFFF"), (36, INK), (34, BORDER)):
+            # Barra de título oscura de la suite (#1F3550), la misma que usa
+            # Generador de avisos con su titleBarOverlay.
+            for atributo, tono in ((35, CHROME), (36, CHROME_INK), (34, CHROME)):
                 qcolor = QColor(tono)
                 valor_color = ctypes.c_uint(
                     qcolor.red() | (qcolor.green() << 8) | (qcolor.blue() << 16))
@@ -1114,17 +1150,23 @@ class VentanaPrincipal(QMainWindow):
         menu.addAction("Preparar ZIP de ejemplos para revisión…", self._exportar_muestras)
         menu.addAction("Acerca de", self._acerca_de)
 
-        # Las funciones secundarias siguen disponibles sin ocupar la mesa.
+        # Cinta de herramientas por grupos, como en el resto de la suite
+        # (Generador de avisos 1.6): lo de cada día a la vista, en grande, y lo
+        # ocasional en pequeño al lado. En pantallas bajas la cinta se compacta
+        # y se sube a la barra de menús.
         self.barra_rapida = QWidget()
         self.barra_rapida.setObjectName("barraRapida")
         accesos = QHBoxLayout(self.barra_rapida)
-        accesos.setContentsMargins(16, 8, 16, 10)
-        accesos.setSpacing(10)
+        accesos.setContentsMargins(16, 6, 16, 0)
+        accesos.setSpacing(0)
         marca_icono = QLabel("fa")
         marca_icono.setObjectName("marcaIcono")
         marca_icono.setAlignment(Qt.AlignCenter)
         marca_icono.setFixedSize(36, 36)
-        accesos.addWidget(marca_icono)
+        marca_caja = QHBoxLayout()
+        marca_caja.setContentsMargins(0, 0, 14, 6)
+        marca_caja.setSpacing(10)
+        marca_caja.addWidget(marca_icono)
         marca = QVBoxLayout()
         marca.setSpacing(0)
         titulo = QLabel("Facturas a Aplifisa")
@@ -1133,46 +1175,121 @@ class VentanaPrincipal(QMainWindow):
         subtitulo.setObjectName("textoSuave")
         marca.addWidget(titulo)
         marca.addWidget(subtitulo)
+        marca_caja.addLayout(marca)
         self._marcas_barra = [marca_icono, titulo, subtitulo]
-        accesos.addLayout(marca)
-        accesos.addStretch(1)
+        accesos.addLayout(marca_caja)
 
-        self.btn_cargar = QPushButton("Abrir PDF")
-        self.btn_cargar.setObjectName("accesoRapido")
-        self.btn_cargar.setIcon(QIcon(ruta_recurso("open.svg")))
-        self.btn_cargar.setToolTip("Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
-        self.btn_cargar.clicked.connect(self._cargar)
-        accesos.addWidget(self.btn_cargar)
+        self._botones_grandes = []
+        self._pilas_cinta = []
+        self._etiquetas_grupo = []
 
-        self.btn_escanear = QPushButton("Escanear")
-        self.btn_escanear.setObjectName("accesoRapido")
-        self.btn_escanear.setIcon(QIcon(ruta_recurso("scan.svg")))
-        self.btn_escanear.setToolTip(
+        def grande(texto, icono, accion, ayuda, nombre="cintaGrande"):
+            boton = QToolButton()
+            boton.setObjectName(nombre)
+            boton.setText(texto)
+            boton.setIcon(QIcon(ruta_recurso(icono)))
+            boton.setIconSize(QSize(26, 26))
+            boton.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            boton.setToolTip(ayuda)
+            boton.setAutoRaise(True)
+            boton.clicked.connect(accion)
+            self._botones_grandes.append(boton)
+            return boton
+
+        def pequeno(texto, icono, accion, ayuda=""):
+            boton = QToolButton()
+            boton.setObjectName("cintaPeque")
+            boton.setText(texto)
+            if icono:
+                boton.setIcon(QIcon(ruta_recurso(icono)))
+            boton.setIconSize(QSize(16, 16))
+            boton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            boton.setToolTip(ayuda or texto)
+            boton.setAutoRaise(True)
+            boton.clicked.connect(accion)
+            return boton
+
+        def grupo(etiqueta, grandes, pequenos=()):
+            caja = QFrame()
+            caja.setObjectName("grupoCinta")
+            capa = QVBoxLayout(caja)
+            capa.setContentsMargins(8, 0, 8, 0)
+            capa.setSpacing(0)
+            fila = QHBoxLayout()
+            fila.setSpacing(2)
+            for boton in grandes:
+                fila.addWidget(boton)
+            if pequenos:
+                pila = QWidget()
+                capa_pila = QVBoxLayout(pila)
+                capa_pila.setContentsMargins(2, 0, 0, 0)
+                capa_pila.setSpacing(0)
+                for boton in pequenos:
+                    capa_pila.addWidget(boton)
+                capa_pila.addStretch(1)
+                fila.addWidget(pila)
+                self._pilas_cinta.append(pila)
+            capa.addLayout(fila)
+            lbl = QLabel(etiqueta)
+            lbl.setObjectName("etiquetaGrupo")
+            lbl.setAlignment(Qt.AlignCenter)
+            capa.addWidget(lbl)
+            self._etiquetas_grupo.append(lbl)
+            accesos.addWidget(caja)
+            return caja
+
+        self.btn_cargar = grande(
+            "Abrir PDF", "open-large.svg", self._cargar,
+            "Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
+        self.btn_escanear = grande(
+            "Escanear", "scan-large.svg", self._escanear,
             "Escanea el taco y lo añade al lote completo.  (Ctrl+E)")
-        self.btn_escanear.clicked.connect(self._escanear)
-        accesos.addWidget(self.btn_escanear)
-
         self.btn_revisar_gemini = QPushButton("Revisar Gemini", self)
         self.btn_revisar_gemini.clicked.connect(self._preparar_revision_gemini)
         self.btn_revisar_gemini.hide()
         self.btn_vaciar = QPushButton("Vaciar todo", self)
         self.btn_vaciar.clicked.connect(self._vaciar_todo)
         self.btn_vaciar.hide()
-        utilidades = QMenu(self)
-        utilidades.addAction("Revisar Gemini", self.btn_revisar_gemini.click)
-        utilidades.addSeparator()
-        utilidades.addAction(
-            QIcon(ruta_recurso("trash.svg")), "Vaciar todo", self.btn_vaciar.click)
-        self.btn_utilidades = QPushButton("Más")
-        self.btn_utilidades.setMenu(utilidades)
-        accesos.addWidget(self.btn_utilidades)
+        grupo("Documentos", [self.btn_cargar, self.btn_escanear], [
+            pequeno("Escaneos guardados", "folder.svg", self._ver_escaneos,
+                    "Los PDF ya escaneados y archivados.  (Ctrl+L)"),
+            pequeno("Vaciar todo", "trash.svg", self.btn_vaciar.click,
+                    "Empieza un lote nuevo (se puede deshacer)."),
+        ])
 
-        self.btn_gastos = QPushButton("Exportar a Aplifisa")
-        self.btn_gastos.setObjectName("primario")
+        self.btn_cuadrar = grande(
+            "Cuadrar con Aplifisa", "balance.svg",
+            lambda: self.btn_registro.trigger(),
+            "Contrasta el lote con el listado de Aplifisa en PDF.  (Ctrl+R)")
+        self.btn_registro.changed.connect(
+            lambda: self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled()))
+        self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled())
+        self.btn_cambiar_cliente_cinta = pequeno(
+            "Cambiar cliente…", "user.svg", lambda: self._cambiar_cliente(),
+            "Si el cliente del lote se detectó mal, se rehace sin volver a "
+            "pagar la lectura.")
+        grupo("Comprobar", [self.btn_cuadrar], [
+            self.btn_cambiar_cliente_cinta,
+            pequeno("Listado PDF de totales", "printer.svg",
+                    lambda: self._guardar_listado_totales(),
+                    "Listado imprimible para puntear con Aplifisa."),
+        ])
+        grupo("Configurar", [], [
+            pequeno("Modelos de lectura…", "settings.svg",
+                    self._configurar_modelos,
+                    "Modelo principal, respaldo y doble lectura."),
+            pequeno("API key de Gemini…", "key.svg", self._configurar_key),
+            pequeno("Revisar Gemini", "", self.btn_revisar_gemini.click,
+                    "Prepara una orden para revisar si conviene otro modelo."),
+        ])
+        accesos.addStretch(1)
+
+        self.btn_gastos = grande(
+            "Exportar a Aplifisa", "export-large.svg", self._exportar_todo,
+            "Exporta el lote completo, no solo el resultado de la búsqueda. "
+            "(Ctrl+G)", nombre="cintaPrimaria")
         self.btn_gastos.setEnabled(False)
-        self.btn_gastos.setToolTip(
-            "Exporta el lote completo, no solo el resultado de la búsqueda. (Ctrl+G)")
-        self.btn_gastos.clicked.connect(self._exportar_todo)
+        grupo("Aplifisa", [self.btn_gastos])
         self.btn_ventas = self.btn_gastos
 
 
@@ -3546,12 +3663,34 @@ class VentanaPrincipal(QMainWindow):
             e = self.filas[r].get("estado", validar(f).estado)
             estados.append(e)
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
+        self._pintar_contadores()
         self.lbl_estado.setText(
             "Lote vacío. Cargue o escanee facturas para empezar." if not estados else
             f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
             f"Correctas: {estados.count(OK)} · Revisar: {estados.count(REVISAR)} · "
             f"Errores: {estados.count(ERROR)}")
         self._pintar_resumen()
+
+    def _pintar_contadores(self) -> None:
+        """Recuento de estados en la barra inferior, con los colores de la tabla."""
+        if not hasattr(self, "lbl_contadores"):
+            return
+        c = Counter()
+        for r, registro in enumerate(self.filas):
+            item = self.tabla.item(r, C_ESTADO)
+            if item is not None:
+                c[item.text()] += 1
+        partes = []
+        for texto, color in ((ICONO_ESTADO[OK], SUCCESS),
+                             (ICONO_SIN_VERIFICAR, "#3F5F7F"),
+                             (ICONO_REVISADO, ACCENT),
+                             (ICONO_ESTADO[REVISAR], WARNING),
+                             (ICONO_ESTADO[ERROR], DANGER),
+                             (ICONO_MANUAL, MUTED)):
+            if c[texto]:
+                partes.append(f"<span style='color:{color}; font-weight:600'>"
+                              f"{html.escape(texto)}: {c[texto]}</span>")
+        self.lbl_contadores.setText(" &nbsp;·&nbsp; ".join(partes))
 
     def _pintar_resumen(self):
         """Totales del taco, del periodo y de la búsqueda actualmente visible."""
@@ -3869,6 +4008,8 @@ class VentanaPrincipal(QMainWindow):
                   "impreso": impreso,
                   "ok": impreso is not None and abs(round(calculado, 2) - impreso) <= 0.02
                   } if partes else None
+        # Las diferencias de la doble lectura tienen su propio recuadro.
+        otros = [x for x in otros if not x[1].startswith("Doble lectura")]
         if impreso is not None and cuadre and not cuadre["ok"]:
             otros = [x for x in otros if "total no cuadra" not in x[1].lower()]
         discrepancias = []
@@ -3911,8 +4052,65 @@ class VentanaPrincipal(QMainWindow):
         }
 
     def _pintar_lista_bloques(self) -> None:
-        """Lista lateral de bloques (se completa con la estética nueva)."""
-        return
+        """Cada bloque con sus facturas y lo que queda por revisar."""
+        if not hasattr(self, "lista_bloques"):
+            return
+        cuentas = {}
+        for registro in self.filas:
+            c = cuentas.setdefault(registro.get("bloque", ""), Counter())
+            f = registro["factura"]
+            estado = registro.get("estado", OK)
+            c["lineas"] += 1
+            if f.tratamiento_manual:
+                c["manual"] += 1
+            elif estado == ERROR:
+                c["error"] += 1
+            elif estado == REVISAR and not f.revision_confirmada:
+                c["revisar"] += 1
+
+        def texto(nombre, c):
+            partes = [f"{c['lineas']} líneas"]
+            if c["error"]:
+                partes.append(f"✕ {c['error']}")
+            if c["revisar"]:
+                partes.append(f"! {c['revisar']}")
+            if not c["error"] and not c["revisar"] and c["lineas"]:
+                partes.append("✓ listo")
+            return f"{nombre}\n" + " · ".join(partes)
+
+        total = Counter()
+        for c in cuentas.values():
+            total.update(c)
+        actual = self.combo_filtro_bloque.currentText()
+        self.lista_bloques.blockSignals(True)
+        self.lista_bloques.clear()
+        entradas = [(TODOS_LOS_BLOQUES, "Todo el lote", total)]
+        for i in range(1, self.combo_filtro_bloque.count()):
+            nombre = self.combo_filtro_bloque.itemText(i)
+            entradas.append((nombre, nombre, cuentas.get(nombre, Counter())))
+        seleccion = 0
+        for fila, (clave, nombre, c) in enumerate(entradas):
+            item = QListWidgetItem(texto(nombre, c))
+            item.setData(Qt.UserRole, clave)
+            color = (DANGER if c["error"] else WARNING if c["revisar"]
+                     else SUCCESS if c["lineas"] else MUTED)
+            item.setForeground(QColor(color))
+            item.setToolTip(f"{nombre}: {c['lineas']} líneas, "
+                            f"{c['error']} con error, {c['revisar']} por revisar")
+            self.lista_bloques.addItem(item)
+            if clave == actual:
+                seleccion = fila
+        self.lista_bloques.setCurrentRow(seleccion)
+        self.lista_bloques.blockSignals(False)
+
+    def _on_lista_bloques(self, fila: int) -> None:
+        item = self.lista_bloques.item(fila) if fila >= 0 else None
+        if not item:
+            return
+        clave = item.data(Qt.UserRole)
+        indice = self.combo_filtro_bloque.findText(clave)
+        if indice >= 0 and indice != self.combo_filtro_bloque.currentIndex():
+            self.combo_filtro_bloque.setCurrentIndex(indice)
 
     def _refrescar_ficha(self) -> None:
         if not hasattr(self, "ficha"):
