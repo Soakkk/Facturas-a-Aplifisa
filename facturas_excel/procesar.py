@@ -418,9 +418,12 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     # Resultado de la doble lectura, en todas las lineas del documento.
     verificacion = str(datos.get("_verificacion") or "")
     discrepancias = discrepancias_de(datos, tipo)
+    paginas_manual = tuple(
+        (str(o), int(p)) for o, p in datos.get("_paginas_union_manual") or [])
     for f in facturas:
         f.verificacion = verificacion
         f.discrepancias = discrepancias
+        f.paginas_documento = paginas_manual
 
     # Solo se avisa si lo escrito a mano toca a los IMPORTES. El asesor anota
     # el CIF y numera las facturas para los requerimientos de Hacienda: si se

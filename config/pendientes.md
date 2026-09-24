@@ -1,9 +1,17 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 24 de septiembre de 2026 (versión 1.15.0). Apunta abajo lo que
+Actualizado el 24 de septiembre de 2026 (versión 1.16.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.16 (pruébalo)
+
+**Una factura, un PDF.** Al exportar, el taco escaneado se parte y cada
+factura queda en su propio PDF dentro de Gastos o Ingresos, con la fecha y el
+proveedor en el nombre («2026-02-12 GASOLINERA EJEMPLO SL G-118.pdf»). Cada
+una va al año de su fecha. El taco original se guarda en «Tacos escaneados».
+Lo que ya tenías archivado no se ha tocado.
 
 ### Lo nuevo de la 1.15 (pruébalo)
 
