@@ -9,6 +9,9 @@ import pytest
 def perfil_aislado(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'perfil'))
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    # Tampoco el Escritorio real: ahí van los Excel y el archivo documental.
+    monkeypatch.setenv('HOME', str(tmp_path / 'casa'))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path / 'casa'))
     from facturas_excel import __version__, notas_version
     notas_version.marcar_vistas(__version__)
     yield

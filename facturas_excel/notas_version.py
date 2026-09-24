@@ -6,6 +6,28 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.15.0": """
+<h2>Novedades de la versión 1.15.0</h2>
+<ul>
+  <li><b>Recoger facturas sueltas</b> (cinta → Archivo → «Recoger sueltos…»):
+      busca en el Escritorio y en Descargas los PDF de facturas y los Excel
+      de Aplifisa, averigua de qué cliente, ejercicio y tipo es cada uno por
+      el NIF de su texto (gratis) y los lleva a su carpeta
+      <i>Nombre — NIF / Ejercicio / Gastos | Ingresos</i>. Antes de mover
+      nada enseña la propuesta; lo dudoso sale en ámbar y sin marcar. Las
+      copias repetidas van a _Duplicados y todo se puede deshacer.</li>
+  <li>Los escaneados sin texto se pueden identificar con Gemini leyendo solo
+      su primera página, con el coste a la vista.</li>
+  <li><b>Expediente por cliente y ejercicio</b> (cinta → Archivo →
+      «Expedientes…»): un PDF con todos los gastos y otro con todos los
+      ingresos, con índice y marcadores; los Excel exportados; y un resumen
+      en PDF con base, IVA, recargo, retención y total de lo exportado. Al
+      lado, un ZIP con todo para adjuntar en Aplifisa.</li>
+  <li><b>Se mantiene solo:</b> cada exportación guarda una copia fechada del
+      Excel en la carpeta del cliente (<i>Excel Aplifisa</i>) y actualiza su
+      expediente. Al recoger sueltos, también.</li>
+</ul>
+""",
     "1.14.0": """
 <h2>Novedades de la versión 1.14.0</h2>
 <p>Esta versión está pensada para que ningún dato mal leído llegue a Aplifisa

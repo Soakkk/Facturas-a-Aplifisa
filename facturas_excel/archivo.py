@@ -243,8 +243,10 @@ def listar(carpeta_base: Optional[str] = None) -> List[Escaneo]:
               for nif, f in identidad_archivo.leer(base).items()}
     encontrados: List[Escaneo] = []
     for raiz, carpetas, archivos in os.walk(base):
+        # El expediente es un resumen generado, no un escaneo más.
         carpetas[:] = [c for c in carpetas if c not in (
-            PAPELERA, identidad_archivo.DUPLICADOS, identidad_archivo.HISTORIAL)]
+            PAPELERA, identidad_archivo.DUPLICADOS, identidad_archivo.HISTORIAL)
+            and not c.startswith(("Expediente ", "."))]
         for archivo in archivos:
             if not archivo.lower().endswith(".pdf"):
                 continue

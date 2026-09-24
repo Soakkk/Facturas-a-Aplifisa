@@ -1,5 +1,22 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
+## v1.15.0 — archivo unificado (24/09/2026)
+
+Estado: **implementado**. Petición del usuario: que las carpetas se creen,
+se recojan los archivos que ya hay y se cree algo unificado; eligió
+«expediente completo», origen Escritorio y Descargas, identificación por
+texto (Gemini solo en escaneados, con coste a la vista). El diseño lo dejó
+a criterio nuestro «ideal para lo que hay y para el futuro»:
+
+- `recoger.py` + `dialogo_recogida.py`: búsqueda, identificación por NIF de
+  clientes conocidos (archivo, confirmados y suite), propuesta revisable,
+  movimiento con comprobación de huella, `_Duplicados`, deshacer.
+- `expediente.py` + `dialogo_expedientes.py`: PDF unificados con índice y
+  marcadores, Excel, `Resumen AAAA.pdf` desde el historial de exportadas
+  (ahora guarda base/IVA/recargo/retención por factura) y ZIP.
+- Al exportar: copia fechada del Excel en `Excel Aplifisa` y expediente
+  actualizado.
+
 ## v1.14.0 — revisión de fiabilidad del 24/09/2026
 
 Estado: **implementado**. Análisis de 16 puntos aceptado por el usuario

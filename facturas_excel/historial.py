@@ -101,19 +101,35 @@ def registrar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],
     del_cliente = datos["clientes"].setdefault(_cliente(cliente_nif, cliente_nombre), {})
     momento = (cuando or datetime.now()).strftime("%d/%m/%Y %H:%M")
     nuevas = 0
+    # Una factura con varios tipos de IVA son varias líneas: se suman para
+    # que el resumen del expediente tenga la base y el IVA de la factura.
+    agrupadas: Dict[str, dict] = {}
     for tipo, facturas in facturas_por_tipo.items():
         for f in facturas:
             k = clave(f, tipo)
             if not k:
                 continue
-            if k not in del_cliente:
-                nuevas += 1
-            del_cliente[k] = {
-                "exportada": momento,
-                "archivo": os.path.basename(archivos.get(tipo, "")),
-                "num_factura": f.num_factura, "nombre": f.nombre,
-                "total": f.total_impreso,
-            }
+            if k not in agrupadas:
+                agrupadas[k] = {
+                    "exportada": momento,
+                    "archivo": os.path.basename(archivos.get(tipo, "")),
+                    "tipo": "venta" if tipo in ("venta", "ingreso") else "gasto",
+                    "num_factura": f.num_factura, "nombre": f.nombre,
+                    "nif": f.nif, "fecha": f.fecha,
+                    "total": f.total_impreso,
+                    "base": 0.0, "cuota_iva": 0.0, "cuota_requiv": 0.0,
+                    "cuota_irpf": 0.0,
+                }
+            fila = agrupadas[k]
+            fila["base"] = round(fila["base"] + (f.base_iva or 0), 2)
+            fila["cuota_iva"] = round(fila["cuota_iva"] + (f.cuota_iva or 0), 2)
+            fila["cuota_requiv"] = round(fila["cuota_requiv"] + (f.cuota_requiv or 0), 2)
+            if f.cuota_irpf:
+                fila["cuota_irpf"] = f.cuota_irpf
+    for k, fila in agrupadas.items():
+        if k not in del_cliente:
+            nuevas += 1
+        del_cliente[k] = fila
     try:
         _guardar(datos)
     except OSError:
@@ -138,6 +154,20 @@ def olvidar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],
         except OSError:
             return 0
     return quitadas
+
+
+def del_ejercicio(cliente_nif: str, ejercicio: int, cliente_nombre: str = "") -> list:
+    """Facturas exportadas de ese cliente y año, ordenadas por tipo y fecha."""
+    filas = []
+    for k, info in _leer()["clientes"].get(_cliente(cliente_nif, cliente_nombre), {}).items():
+        partes = k.split("|")
+        if len(partes) == 4 and partes[3][:4] == str(int(ejercicio)):
+            fila = dict(info)
+            fila.setdefault("tipo", partes[0])
+            fila["_fecha_iso"] = partes[3]
+            filas.append(fila)
+    return sorted(filas, key=lambda f: (f.get("tipo", ""), f["_fecha_iso"],
+                                        str(f.get("num_factura") or "")))
 
 
 def texto_aviso(info: dict) -> str:

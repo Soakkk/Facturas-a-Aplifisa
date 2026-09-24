@@ -79,6 +79,28 @@ La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión
 visibles sin perder la imagen original.
 
+## Archivo documental y expedientes
+
+```
+Documentación Facturas/
+  Nombre — NIF/
+    2026/
+      Gastos/            PDF originales
+      Ingresos/
+      Excel Aplifisa/    copia fechada de cada Excel exportado
+      Expediente 2026/   Gastos 2026.pdf, Ingresos 2026.pdf (con índice y
+                         marcadores), Resumen 2026.pdf y los Excel
+    Expediente 2026.zip
+```
+
+- **Recoger sueltos** busca en el Escritorio y Descargas PDF de facturas y
+  Excel `GASTOS_…`/`INGRESOS_…`, los identifica por el NIF del texto (o con
+  Gemini, solo la 1ª página de los escaneados) y los lleva a su carpeta tras
+  revisar la propuesta. Duplicados idénticos a `_Duplicados`; se puede
+  deshacer (registro en `_Organizacion`).
+- **Expedientes** se generan desde las carpetas (los originales no se tocan)
+  y se actualizan solos al exportar y al recoger.
+
 ## Lectura con IA
 
 - Modelos fijos, configurables en *Configuración → Modelos de lectura*:

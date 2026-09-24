@@ -1,9 +1,23 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 24 de septiembre de 2026 (versión 1.14.0). Apunta abajo lo que
+Actualizado el 24 de septiembre de 2026 (versión 1.15.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.15 (pruébalo)
+
+**Recoger lo suelto.** En la cinta, grupo Archivo → «Recoger sueltos…». Mira
+el Escritorio y Descargas, reconoce de qué cliente es cada factura por su NIF
+y te enseña la propuesta antes de mover nada. Lo dudoso sale en ámbar y sin
+marcar. Si algo no te cuadra, «Deshacer la última recogida» (menú Escaneos).
+
+**Expedientes.** Grupo Archivo → «Expedientes…»: por cliente y ejercicio, un
+PDF con todos los gastos, otro con los ingresos, los Excel y un resumen con
+los totales, y un ZIP con todo. Se actualiza solo cada vez que exportas.
+
+Dime si te encaja el formato del resumen o si quieres ver algo más en él
+(por ejemplo, las facturas del ejercicio que NO se exportaron desde aquí).
 
 ### Lo nuevo de la 1.14 (pruébalo)
 
