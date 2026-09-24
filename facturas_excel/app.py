@@ -1102,6 +1102,12 @@ class VentanaPrincipal(QMainWindow):
                            self._ver_escaneos)
         escaneos.addAction("Abrir la carpeta de escaneos",
                            lambda: archivo.abrir(archivo.carpeta_escaneos()))
+        escaneos.addSeparator()
+        escaneos.addAction("Recoger facturas sueltas del Escritorio y Descargas…",
+                           self._recoger_sueltos)
+        escaneos.addAction("Deshacer la última recogida", self._deshacer_recogida)
+        escaneos.addAction("Expedientes por cliente y ejercicio…",
+                           self._ver_expedientes)
 
         comprobar = self.menuBar().addMenu("Comprobar")
         self.btn_registro = comprobar.addAction(
@@ -1253,10 +1259,18 @@ class VentanaPrincipal(QMainWindow):
         self.btn_vaciar.clicked.connect(self._vaciar_todo)
         self.btn_vaciar.hide()
         grupo("Documentos", [self.btn_cargar, self.btn_escanear], [
+            pequeno("Vaciar todo", "trash.svg", self.btn_vaciar.click,
+                    "Empieza un lote nuevo."),
+        ])
+        grupo("Archivo", [], [
             pequeno("Escaneos guardados", "folder.svg", self._ver_escaneos,
                     "Los PDF ya escaneados y archivados.  (Ctrl+L)"),
-            pequeno("Vaciar todo", "trash.svg", self.btn_vaciar.click,
-                    "Empieza un lote nuevo (se puede deshacer)."),
+            pequeno("Recoger sueltos…", "open.svg", self._recoger_sueltos,
+                    "Lleva a su carpeta los PDF de facturas y los Excel de "
+                    "Aplifisa que haya sueltos en el Escritorio y Descargas."),
+            pequeno("Expedientes…", "printer.svg", self._ver_expedientes,
+                    "Un PDF de gastos, otro de ingresos, los Excel y un "
+                    "resumen por cliente y ejercicio."),
         ])
 
         self.btn_cuadrar = grande(
@@ -1835,6 +1849,82 @@ class VentanaPrincipal(QMainWindow):
         self._hilo_escaneo.terminado.connect(self._on_escaneo_hecho)
         self._hilo_escaneo.fallo.connect(self._on_escaneo_fallo)
         self._hilo_escaneo.start()
+
+    # ---------- archivo: recoger sueltos y expedientes ----------
+    def _rutas_del_lote(self) -> list:
+        """Archivos que usa el lote abierto: no se mueven al recoger."""
+        rutas = []
+        for bloque in self._bloques:
+            if bloque.get("original"):
+                rutas.append(bloque["original"])
+            rutas.extend(origen for _img, origen, _p, _d in bloque.get("crudos", []))
+        return [r for r in rutas if r]
+
+    def _recoger_sueltos(self) -> None:
+        from facturas_excel import recoger
+        from facturas_excel.dialogo_recogida import (
+            DialogoRecogida, ejecutar_con_progreso)
+        base = archivo.carpeta_escaneos()
+        origenes = recoger.carpetas_origen()
+        if not origenes:
+            self._avisar("No se encuentran las carpetas Escritorio ni Descargas.", AVISO)
+            return
+        try:
+            candidatos = ejecutar_con_progreso(
+                self, "Buscando facturas en el Escritorio y Descargas…",
+                lambda progreso: recoger.buscar(
+                    origenes, base, self._rutas_del_lote(), progreso))
+        except RuntimeError as error:
+            QMessageBox.warning(self, "Recoger facturas", str(error))
+            return
+        if not candidatos:
+            self._avisar("No hay facturas sueltas en el Escritorio ni en "
+                         "Descargas: todo está en su sitio.", EXITO)
+            return
+        dialogo = DialogoRecogida(candidatos, base, leer_api_key() or "", self)
+        if dialogo.exec() != QDialog.Accepted or not dialogo.resultado:
+            return
+        r = dialogo.resultado
+        actualizados = self._actualizar_expedientes(r.get("afectados", []))
+        texto = (f"Recogidos {r['movidos']} archivo(s)"
+                 + (f" y {r['duplicados']} copia(s) repetidas apartadas en "
+                    "_Duplicados" if r["duplicados"] else "")
+                 + (f". Expedientes actualizados: {actualizados}" if actualizados else "")
+                 + ".")
+        if r["errores"]:
+            texto += f" No se pudieron mover {len(r['errores'])}: " + "; ".join(r["errores"][:3])
+        self._avisar(texto, AVISO if r["errores"] else EXITO,
+                     deshacer=self._deshacer_recogida, segundos=0)
+
+    def _deshacer_recogida(self) -> None:
+        from facturas_excel import recoger
+        try:
+            vueltos = recoger.deshacer_ultima(archivo.carpeta_escaneos())
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Deshacer recogida", str(error))
+            return
+        self._avisar(f"{vueltos} archivo(s) devueltos a su sitio." if vueltos
+                     else "No hay ninguna recogida que deshacer.", INFO)
+
+    def _actualizar_expedientes(self, afectados) -> int:
+        """Rehace en silencio los expedientes de esos (nombre, nif, ejercicio)."""
+        from facturas_excel import expediente
+        base = archivo.carpeta_escaneos()
+        hechos = 0
+        for nombre, nif, ejercicio in afectados:
+            e = expediente.buscar(base, nif, nombre, ejercicio)
+            if not e:
+                continue
+            try:
+                expediente.crear(base, e)
+                hechos += 1
+            except (OSError, ValueError, RuntimeError):
+                pass
+        return hechos
+
+    def _ver_expedientes(self) -> None:
+        from facturas_excel.dialogo_expedientes import DialogoExpedientes
+        DialogoExpedientes(archivo.carpeta_escaneos(), self).exec()
 
     def _ver_escaneos(self):
         """Los PDF que va generando el escaneo: abrirlos, recolocarlos o
@@ -4255,6 +4345,32 @@ class VentanaPrincipal(QMainWindow):
                 por_tipo[self._tipo_fila(fila)].append(f)
         return por_tipo, excluidas, errores, pendientes_revision
 
+    def _archivar_exportacion(self, exportadas, rutas_por_tipo) -> str:
+        """Copia el Excel al archivo del cliente y pone al día su expediente.
+
+        Así el expediente de cada cliente y ejercicio se mantiene solo, sin
+        tener que acordarse. Si algo falla, la exportación sigue siendo buena:
+        solo se avisa.
+        """
+        from facturas_excel import expediente
+        nif = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        if not nombre:
+            return ""
+        base = archivo.carpeta_escaneos()
+        afectados = set()
+        try:
+            for tipo, facturas in exportadas.items():
+                ejercicio = self._ejercicio_exportacion(facturas)
+                expediente.guardar_excel_exportado(
+                    base, rutas_por_tipo[tipo], nombre, nif, ejercicio, tipo)
+                afectados.add((nombre, nif, ejercicio))
+        except (OSError, ValueError) as error:
+            return f"\nNo se pudo guardar la copia del Excel en el archivo: {error}"
+        hechos = self._actualizar_expedientes(sorted(afectados))
+        return (f"\nExpediente del cliente actualizado ({hechos})."
+                if hechos else "")
+
     def _decidir_ya_exportadas(self, por_tipo) -> bool:
         """Pregunta qué hacer con las facturas que ya salieron en otro lote.
 
@@ -4401,6 +4517,7 @@ class VentanaPrincipal(QMainWindow):
         exportadas = {t: por_tipo[t] for t in tipos_exportados}
         historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
                             rutas_por_tipo, getattr(self, "_cliente_nombre", ""))
+        texto_expediente = self._archivar_exportacion(exportadas, rutas_por_tipo)
         aprender_nifs_exportados(
             [f for t in tipos_exportados for f in por_tipo[t]])
         self._revalidar_todo()
@@ -4423,7 +4540,8 @@ class VentanaPrincipal(QMainWindow):
             + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
                if temporales_eliminados else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
-              "en pantalla, línea por línea. No se han creado Excel parciales.",
+              "en pantalla, línea por línea. No se han creado Excel parciales."
+            + texto_expediente,
             EXITO, segundos=0)
 
 
