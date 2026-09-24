@@ -6,6 +6,23 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.16.0": """
+<h2>Novedades de la versión 1.16.0</h2>
+<ul>
+  <li><b>Una factura, un PDF.</b> Al exportar a Aplifisa, el taco escaneado se
+      parte: cada factura queda en su propio PDF, con la fecha y el proveedor
+      (o cliente) en el nombre, por ejemplo
+      <i>2026-02-12 GASOLINERA EJEMPLO SL G-118.pdf</i>. Así la carpeta se
+      ordena sola por fecha y se encuentra cualquier factura de un vistazo.</li>
+  <li>Cada factura va al ejercicio de <b>su</b> fecha y a Gastos o Ingresos
+      según <b>su</b> tipo, aunque el taco mezclara años o tipos.</li>
+  <li>El PDF original del escaneo no se borra: se aparta intacto en
+      <i>Tacos escaneados</i>, dentro del mismo ejercicio.</li>
+  <li>Las facturas apartadas para gestión manual (bienes de inversión,
+      suplidos) también tienen su PDF; los duplicados y las sustituidas no.</li>
+  <li>Lo archivado antes de esta versión se queda como estaba.</li>
+</ul>
+""",
     "1.15.0": """
 <h2>Novedades de la versión 1.15.0</h2>
 <ul>

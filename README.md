@@ -85,8 +85,9 @@ visibles sin perder la imagen original.
 Documentación Facturas/
   Nombre — NIF/
     2026/
-      Gastos/            PDF originales
-      Ingresos/
+      Gastos/            un PDF por factura: «2026-02-12 PROVEEDOR Nº.pdf»
+      Ingresos/          (se parten al exportar, ya revisadas)
+      Tacos escaneados/  el PDF original de cada escaneo, intacto
       Excel Aplifisa/    copia fechada de cada Excel exportado
       Expediente 2026/   Gastos 2026.pdf, Ingresos 2026.pdf (con índice y
                          marcadores), Resumen 2026.pdf y los Excel

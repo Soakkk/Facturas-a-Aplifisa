@@ -1,5 +1,13 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
+## v1.16.0 — una factura, un PDF (24/09/2026)
+
+Estado: **implementado**. El usuario pidió guardar por proveedor/cliente y
+eligió: todo junto con el nombre del proveedor (sin subcarpetas), conservar
+el taco en «Tacos escaneados» y aplicarlo solo a lo nuevo. `separar.py` parte
+al exportar (datos ya revisados), cada factura a su ejercicio y tipo; las
+uniones a mano guardan sus hojas en `Factura.paginas_documento`.
+
 ## v1.15.0 — archivo unificado (24/09/2026)
 
 Estado: **implementado**. Petición del usuario: que las carpetas se creen,

@@ -67,6 +67,9 @@ class Factura:
     # uno. Las discrepancias son las diferencias sin resolver entre ambos.
     verificacion: str = ""
     discrepancias: tuple = ()
+    # Hojas exactas de la factura cuando se unieron a mano (pueden ser de
+    # archivos distintos o no seguidas): ((origen, página), ...).
+    paginas_documento: tuple = ()
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -77,7 +80,8 @@ class Factura:
                      "subclave", "descripcion_concepto", "es_suplido",
                      "confianza_ia", "revision_confirmada",
                      "tratamiento_manual", "iva_incluido_en_base", "eliminada",
-                     "tipo_revision", "verificacion", "discrepancias"}
+                     "tipo_revision", "verificacion", "discrepancias",
+                     "paginas_documento"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 

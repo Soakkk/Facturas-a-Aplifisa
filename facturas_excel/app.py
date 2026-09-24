@@ -4345,7 +4345,8 @@ class VentanaPrincipal(QMainWindow):
                 por_tipo[self._tipo_fila(fila)].append(f)
         return por_tipo, excluidas, errores, pendientes_revision
 
-    def _archivar_exportacion(self, exportadas, rutas_por_tipo) -> str:
+    def _archivar_exportacion(self, exportadas, rutas_por_tipo,
+                              apartadas=None) -> str:
         """Copia el Excel al archivo del cliente y pone al día su expediente.
 
         Así el expediente de cada cliente y ejercicio se mantiene solo, sin
@@ -4357,8 +4358,31 @@ class VentanaPrincipal(QMainWindow):
         nombre = getattr(self, "_cliente_nombre", "")
         if not nombre:
             return ""
+        from facturas_excel import separar
         base = archivo.carpeta_escaneos()
         afectados = set()
+        avisos = []
+        # Una factura, un PDF: el taco escaneado se parte ahora que cada
+        # factura está revisada, y el original se aparta intacto.
+        try:
+            documentos = {t: list(exportadas.get(t, [])) + list((apartadas or {}).get(t, []))
+                          for t in set(exportadas) | set(apartadas or {})}
+            partido = separar.separar(documentos, base, nombre, nif)
+        except Exception as error:  # nunca debe estropear la exportación
+            partido = None
+            avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
+        if partido:
+            for viejo, nuevo in partido["tacos"].items():
+                self._cambiar_origen(viejo, nuevo)
+            afectados.update((nombre, nif, e) for e in partido["afectados"])
+            if partido["creados"]:
+                avisos.append(f"{len(partido['creados'])} factura(s) guardadas "
+                              "en su propio PDF en el archivo del cliente.")
+            if partido["sin_paginas"]:
+                avisos.append(
+                    f"{len(partido['sin_paginas'])} factura(s) sin PDF propio "
+                    "(no se encontró su documento original): siguen dentro "
+                    "del taco.")
         try:
             for tipo, facturas in exportadas.items():
                 ejercicio = self._ejercicio_exportacion(facturas)
@@ -4366,10 +4390,39 @@ class VentanaPrincipal(QMainWindow):
                     base, rutas_por_tipo[tipo], nombre, nif, ejercicio, tipo)
                 afectados.add((nombre, nif, ejercicio))
         except (OSError, ValueError) as error:
-            return f"\nNo se pudo guardar la copia del Excel en el archivo: {error}"
+            avisos.append(f"No se pudo guardar la copia del Excel en el archivo: {error}")
         hechos = self._actualizar_expedientes(sorted(afectados))
-        return (f"\nExpediente del cliente actualizado ({hechos})."
-                if hechos else "")
+        if hechos:
+            avisos.append(f"Expediente del cliente actualizado ({hechos}).")
+        return "".join(f"\n{a}" for a in avisos)
+
+    def _cambiar_origen(self, viejo: str, nuevo: str) -> None:
+        """El taco se ha apartado en «Tacos escaneados»: que todo lo sepa."""
+        def mismo(ruta):
+            return ruta and os.path.normcase(os.path.abspath(ruta)) == \
+                os.path.normcase(os.path.abspath(viejo))
+
+        def cambiar(f):
+            if mismo(f.origen_imagen):
+                f.origen_imagen = nuevo
+            if getattr(f, "paginas_documento", ()):
+                f.paginas_documento = tuple(
+                    (nuevo if mismo(o) else o, p) for o, p in f.paginas_documento)
+
+        for bloque in self._bloques:
+            if mismo(bloque.get("original")):
+                bloque["original"] = nuevo
+            bloque["crudos"] = [(img, nuevo if mismo(o) else o, p, d)
+                                for img, o, p, d in bloque.get("crudos", [])]
+            for _img, pr in bloque.get("procesadas", []):
+                if mismo(pr.origen):
+                    pr.origen = nuevo
+                for f in pr.facturas:
+                    cambiar(f)
+        for registro in self.filas:
+            cambiar(registro["factura"])
+            for f in registro.get("fuentes", []):
+                cambiar(f)
 
     def _decidir_ya_exportadas(self, por_tipo) -> bool:
         """Pregunta qué hacer con las facturas que ya salieron en otro lote.
@@ -4517,7 +4570,16 @@ class VentanaPrincipal(QMainWindow):
         exportadas = {t: por_tipo[t] for t in tipos_exportados}
         historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
                             rutas_por_tipo, getattr(self, "_cliente_nombre", ""))
-        texto_expediente = self._archivar_exportacion(exportadas, rutas_por_tipo)
+        # Las apartadas para gestión manual (bien de inversión, suplidos…)
+        # no van al Excel, pero son documentación del cliente: también tienen
+        # su PDF. Los duplicados y las sustituidas, no.
+        apartadas = {"gasto": [], "venta": []}
+        for fila, motivo in excluidas:
+            if motivo == "duplicada" or str(motivo).startswith("Sustituida"):
+                continue
+            apartadas[self._tipo_fila(fila)].append(self.filas[fila]["factura"])
+        texto_expediente = self._archivar_exportacion(
+            exportadas, rutas_por_tipo, apartadas)
         aprender_nifs_exportados(
             [f for t in tipos_exportados for f in por_tipo[t]])
         self._revalidar_todo()

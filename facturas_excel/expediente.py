@@ -54,7 +54,9 @@ def _pdfs(carpeta: str) -> List[str]:
         return []
     return sorted((os.path.join(carpeta, n) for n in os.listdir(carpeta)
                    if n.lower().endswith(".pdf")),
-                  key=lambda r: (os.path.getmtime(r), os.path.basename(r).lower()))
+                  # Las facturas separadas empiezan por su fecha
+                  # (2026-02-12 …): por nombre quedan en orden cronológico.
+                  key=lambda r: os.path.basename(r).lower())
 
 
 def listar(base: str) -> List[Ejercicio]:
