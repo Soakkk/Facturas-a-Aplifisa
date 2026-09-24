@@ -549,6 +549,24 @@ def aprender_nifs(procesadas: List[FacturaProcesada]) -> int:
     return n
 
 
+def aprender_nifs_exportados(facturas) -> int:
+    """Memoriza los NIF de las facturas que se acaban de exportar.
+
+    Es el momento seguro: el cliente del lote esta confirmado y cada fila ha
+    pasado la revision. Antes se aprendia nada mas leer, y un reparto al reves
+    (el cliente tomado por proveedor) quedaba guardado para los proximos lotes.
+    """
+    n, vistos = 0, set()
+    for f in facturas:
+        clave = (clave_proveedor(f.nombre), normaliza_nif(f.nif))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        if recordar_nif(f.nombre, f.nif):
+            n += 1
+    return n
+
+
 def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
     """Rellena los NIF que faltan o no valen con los ya sabidos de otras veces.
 
@@ -702,9 +720,11 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote
     completar_desde_memoria(solo)    # 2º lo sabido de otras veces
-    aprender_nifs(solo)              # 3º memorizar lo leido bien
-    unificar_nombres(solo)           # 4º el mismo proveedor, escrito igual
-    aplicar_recordado(solo)          # 5º lo que ya corrigio el usuario a mano
+    # Lo leido NO se memoriza aqui: todavia no se sabe si el cliente esta bien
+    # elegido ni si esos NIF son buenos. Se aprende al exportar, con los datos
+    # ya revisados (ver aprender_nifs_exportados).
+    unificar_nombres(solo)           # 3º el mismo proveedor, escrito igual
+    aplicar_recordado(solo)          # 4º lo que ya corrigio el usuario a mano
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
 
