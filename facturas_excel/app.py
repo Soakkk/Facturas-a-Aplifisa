@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
-    revision_gemini, sesion, updater, muestras_revision,
+    __version__, ajustes, archivo, costes, escaner, historial, notas_version,
+    pendientes, revision_gemini, sesion, updater, muestras_revision,
 )
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
@@ -90,18 +90,27 @@ from facturas_excel.resumen import (
 from facturas_excel.rutas import dir_datos, ruta_config
 from facturas_excel.union_bloques import unir_ultimo_bloque
 from facturas_excel.validacion import (
-    ERROR, OK, REVISAR, encontrar_duplicados, huecos_de_numeracion,
+    ERROR, OK, REVISAR, Incidencia, encontrar_duplicados, huecos_de_numeracion,
     fecha_de, validar, validar_nif,
 )
 
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
 COLOR_ESTADO = {OK: QColor(SUCCESS), REVISAR: QColor(WARNING), ERROR: QColor(DANGER)}
-ICONO_ESTADO = {OK: "OK", REVISAR: "!", ERROR: "X"}
+# Estados que se ven en la tabla. «Verificada» exige que las dos lecturas de
+# la IA coincidan y que todos los controles pasen; con una sola lectura, aunque
+# todo cuadre, la fila es «Sin verificar» (se puede exportar, pero se sabe que
+# nadie la ha contrastado).
+ICONO_ESTADO = {OK: "✓ Verificada", REVISAR: "! Revisar", ERROR: "✕ Error"}
+ICONO_SIN_VERIFICAR = "○ Sin verificar"
 COLOR_REVISADO = QColor(ACCENT)
 COLOR_MANUAL = QColor(MUTED)
-ICONO_REVISADO = "✓"
-ICONO_MANUAL = "M"
+COLOR_SIN_VERIFICAR = QColor("#3F5F7F")
+ICONO_REVISADO = "✓ Revisada"
+ICONO_MANUAL = "M Manual"
+FONDO_ESTADO = {OK: "#E4F1EA", REVISAR: "#FBEFDC", ERROR: "#F8E1E1",
+                "sin_verificar": "#EEF2F7", "revisada": "#E6EFF8",
+                "manual": "#EEF1F4"}
 
 _AVISO_EJERCICIOS_ANTIGUO = re.compile(
     r"\s*El PDF mezcla varios ejercicios; se ha archivado en el \d{4}, "
@@ -132,6 +141,15 @@ C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
 C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE, C_BASE_IRPF, \
     C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, C_BLOQUE = range(len(COLS))
 COLUMNAS_RECARGO = (C_BASE_RE, C_PCT_RE, C_CUOTA_RE)
+# Qué columna muestra cada dato de la Factura (para señalar la celda culpable).
+COLUMNA_DE_CAMPO = {
+    "fecha": C_FECHA, "num_factura": C_NUM, "nombre": C_NOMBRE, "nif": C_NIF,
+    "concepto": C_CUENTA, "subclave": C_GXX, "base_iva": C_BASE,
+    "pct_iva": C_PCT, "cuota_iva": C_CUOTA, "base_requiv": C_BASE_RE,
+    "pct_requiv": C_PCT_RE, "cuota_requiv": C_CUOTA_RE,
+    "base_irpf": C_BASE_IRPF, "pct_irpf": C_PCT_IRPF,
+    "cuota_irpf": C_CUOTA_IRPF, "total_impreso": C_TOTAL,
+}
 
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
 # IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
@@ -3015,79 +3033,134 @@ class VentanaPrincipal(QMainWindow):
     def _revalidar_fila(self, r):
         if r < 0 or r >= len(self.filas):
             return
-        f = self._leer_fila(r)
+        pasada = getattr(self, "_pasada", None) or self._preparar_pasada()
+        f = pasada["facturas"][r]
+        registro = self.filas[r]
         res = validar(f)
         estado = res.estado
         msgs = list(res.mensajes)
+
+        def anadir(texto, *campos, gravedad=REVISAR):
+            nonlocal estado
+            msgs.append(Incidencia(texto, campos, gravedad))
+            if gravedad == ERROR:
+                estado = ERROR
+            elif estado == OK:
+                estado = REVISAR
+
         # Las sesiones de versiones anteriores guardaron un aviso de ejercicio
         # en TODAS las filas. Se limpia al abrirlas; ahora se señala únicamente
         # la factura cuya fecha no pertenece al ejercicio predominante.
         aviso_guardado = sin_cuadre_antiguo(_sin_aviso_ejercicios_antiguo(
-            self.filas[r]["aviso"]))
-        self.filas[r]["aviso"] = aviso_guardado
+            registro["aviso"]))
+        registro["aviso"] = aviso_guardado
         if aviso_guardado:
             msgs.append(aviso_guardado)
             if estado == OK:
                 estado = REVISAR
         aviso_tipo = self._aviso_tipo(r)
         if aviso_tipo:
-            msgs.append(aviso_tipo)
-            if estado == OK:
-                estado = REVISAR
+            anadir(aviso_tipo)
         aviso_irpf = self._aviso_irpf_transportista(r, f)
         if aviso_irpf:
-            msgs.append(aviso_irpf)
-            if estado == OK:
-                estado = REVISAR
-        errores_documento = getattr(self, "_errores_documento", {}).get(r, [])
-        if errores_documento:
-            msgs.extend(errores_documento)
-            estado = ERROR
-        lado = "gasto" if self._tipo_fila(r) == "gasto" else "ingreso"
-        if f.concepto and not any(c == str(f.concepto).strip()
-                                 and (not f.subclave or g == f.subclave)
-                                 for c, g, _ in catalogo(lado)):
-            msgs.append(f"La cuenta {f.concepto} ({f.subclave or 'sin subclave'}) "
-                        f"no corresponde a {lado}. Compruebe cuenta y contraparte.")
-            estado = ERROR
+            anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
+        for texto in pasada["errores_documento"].get(r, []):
+            anadir(texto, gravedad=ERROR)
+        lado = "gasto" if pasada["tipos"][r] == "gasto" else "ingreso"
+        if f.concepto and not any(
+                c == str(f.concepto).strip() and (not f.subclave or g == f.subclave)
+                for c, g in pasada["catalogo"][lado]):
+            anadir(f"La cuenta {f.concepto} ({f.subclave or 'sin subclave'}) "
+                   f"no corresponde a {lado}. Compruebe cuenta y contraparte.",
+                   "concepto", "subclave", gravedad=ERROR)
         if r in self._duplicados:
             # Rojo, no ambar: importar dos veces la misma factura la paga dos
             # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
-            msgs.append(f"FACTURA DUPLICADA: es la misma que la línea "
-                        f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
-                        f"base y tipo de IVA). Bórrala o quedará registrada dos veces.")
-            estado = ERROR
+            anadir(f"FACTURA DUPLICADA: es la misma que la línea "
+                   f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
+                   f"base y tipo de IVA). Bórrala o quedará registrada dos veces.",
+                   "num_factura", gravedad=ERROR)
         aviso_periodo = self._aviso_periodo(f)
         if aviso_periodo:
-            msgs.append(aviso_periodo)
-            if estado == OK:
-                estado = REVISAR
+            anadir(aviso_periodo, "fecha")
         aviso_ejercicio = self._aviso_ejercicio(f)
         if aviso_ejercicio:
-            msgs.append(aviso_ejercicio)
             # Igual que un duplicado: no se puede confirmar para ocultarlo,
             # porque exportarlo llevaría el apunte al ejercicio equivocado.
-            estado = ERROR
+            anadir(aviso_ejercicio, "fecha", gravedad=ERROR)
+        # Se guarda el estado SIN el aviso de «ya exportada»: la exportación
+        # trata esas filas aparte y pregunta qué hacer con ellas.
+        registro["estado_base"] = estado
+        ya = pasada["exportadas"].get(r)
+        registro["ya_exportada"] = ya
+        if ya:
+            anadir(historial.texto_aviso(ya), "num_factura")
         confirmada = (estado == REVISAR and f.revision_confirmada
                       and not f.tratamiento_manual)
         if confirmada:
             msgs.append("Revisada y confirmada manualmente")
-        self.filas[r]["estado"] = estado
-        self.filas[r]["mensajes"] = msgs
+        registro["estado"] = estado
+        registro["mensajes"] = msgs
         celda = self.tabla.item(r, C_ESTADO)
         self.tabla.blockSignals(True)
-        celda.setText(ICONO_MANUAL if f.tratamiento_manual else
-                      ICONO_REVISADO if confirmada else ICONO_ESTADO[estado])
-        celda.setData(Qt.BackgroundRole, None)
-        celda.setForeground(COLOR_MANUAL if f.tratamiento_manual else
-                            COLOR_REVISADO if confirmada else COLOR_ESTADO[estado])
+        texto, color, fondo = self._presentacion_estado(estado, f, confirmada)
+        celda.setText(texto)
+        celda.setForeground(color)
+        celda.setBackground(QColor(fondo))
         fuente_estado = celda.font()
         fuente_estado.setBold(True)
         celda.setFont(fuente_estado)
-        celda.setToolTip("\n".join(msgs) if msgs else "Todo correcto")
+        celda.setToolTip(_ayuda_estado(estado, msgs) if msgs else
+                         ("Verificada: las dos lecturas coinciden y todo cuadra"
+                          if texto == ICONO_ESTADO[OK] else
+                          "Todo cuadra, pero solo la ha leído un modelo"))
         self._resaltar_campos_incidencia(r, estado, msgs)
         self.tabla.blockSignals(False)
-        self._resumen()
+        if not getattr(self, "_pasada", None):
+            self._resumen()
+
+    @staticmethod
+    def _presentacion_estado(estado, f: Factura, confirmada: bool):
+        """(texto, color, fondo) de la casilla de estado."""
+        if f.tratamiento_manual:
+            return ICONO_MANUAL, COLOR_MANUAL, FONDO_ESTADO["manual"]
+        if confirmada:
+            return ICONO_REVISADO, COLOR_REVISADO, FONDO_ESTADO["revisada"]
+        if estado == OK and getattr(f, "verificacion", "") != "doble":
+            return (ICONO_SIN_VERIFICAR, COLOR_SIN_VERIFICAR,
+                    FONDO_ESTADO["sin_verificar"])
+        return ICONO_ESTADO[estado], COLOR_ESTADO[estado], FONDO_ESTADO[estado]
+
+    def _preparar_pasada(self) -> dict:
+        """Lo que comparten todas las filas en una revalidación.
+
+        Antes cada fila volvía a recorrer el lote entero (su bloque, los
+        datos leídos, el catálogo) y rehacía el resumen: con 300 líneas cada
+        corrección tardaba 6 segundos. Ahora se calcula una sola vez.
+        """
+        n = self.tabla.rowCount()
+        facturas = [self._leer_fila(r) for r in range(n)]
+        tipos = [self._tipo_fila(r) for r in range(n)]
+        por_bloque = {}
+        for r in range(n):
+            bloque = self.filas[r]["bloque"]
+            por_bloque.setdefault(bloque, Counter())[tipos[r]] += 1
+        cliente_nif = getattr(self, "_cliente_nif", "")
+        cliente_nombre = getattr(self, "_cliente_nombre", "")
+        exportadas = {}
+        for r in range(n):
+            info = historial.buscar(cliente_nif, facturas[r], tipos[r],
+                                    cliente_nombre)
+            if info:
+                exportadas[r] = info
+        return {
+            "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
+            "transportista": self._cliente_es_transportista(),
+            "catalogo": {lado: {(c, g) for c, g, _ in catalogo(lado)}
+                         for lado in ("gasto", "ingreso")},
+            "errores_documento": getattr(self, "_errores_documento", {}),
+            "exportadas": exportadas,
+        }
 
     @staticmethod
     def _clave_factura_para_ejercicio(f: Factura, fila: int) -> tuple:
@@ -3164,66 +3237,45 @@ class VentanaPrincipal(QMainWindow):
                 item.setToolTip("")
 
         por_columna = {}
+        graves = set()
 
-        def marcar(columna, mensaje):
+        def marcar(columna, mensaje, gravedad=None):
             por_columna.setdefault(columna, []).append(mensaje)
+            if (gravedad or estado) == ERROR:
+                graves.add(columna)
 
         for mensaje in mensajes:
+            campos = getattr(mensaje, "campos", None)
+            if campos is not None:
+                # Aviso con su dato: se colorea exactamente esa celda.
+                for campo in campos:
+                    columna = COLUMNA_DE_CAMPO.get(campo)
+                    if columna is not None:
+                        marcar(columna, str(mensaje), mensaje.gravedad)
+                continue
+            # Avisos guardados como texto (lecturas y sesiones anteriores).
             texto = str(mensaje)
             bajo = texto.lower()
-            if "año distinto" in bajo or "fuera del trimestre" in bajo \
-                    or bajo.startswith("falta la fecha") \
-                    or bajo.startswith("no se entiende la fecha"):
+            if "año distinto" in bajo or "fuera del trimestre" in bajo:
                 marcar(C_FECHA, texto)
-            if "factura duplicada" in bajo or bajo.startswith(
-                    "falta el nº de factura"):
+            if "factura duplicada" in bajo:
                 marcar(C_NUM, texto)
-            if bajo.startswith("falta el nombre"):
-                marcar(C_NOMBRE, texto)
-            if "nif/cif" in bajo or bajo.startswith("falta el nif"):
-                marcar(C_NIF, texto)
-            if "concepto" in bajo or "subclave" in bajo or bajo.startswith(
-                    "la cuenta "):
-                marcar(C_CUENTA, texto)
-                if "subclave" in bajo:
-                    marcar(C_GXX, texto)
-            if bajo.startswith("falta la base imponible"):
-                marcar(C_BASE, texto)
-            if bajo.startswith("falta el tipo de iva"):
-                marcar(C_PCT, texto)
-            if bajo.startswith("falta la cuota de iva") or bajo.startswith(
-                    "cuota iva descuadra"):
-                marcar(C_CUOTA, texto)
-            if "recargo" in bajo and "incompleto" in bajo:
-                marcar(C_BASE_RE, texto)
-                marcar(C_PCT_RE, texto)
-                marcar(C_CUOTA_RE, texto)
-            if "cuota" in bajo and "recargo" in bajo:
-                marcar(C_CUOTA_RE, texto)
-            if bajo.startswith("irpf incompleto"):
-                marcar(C_BASE_IRPF, texto)
-                marcar(C_PCT_IRPF, texto)
-                marcar(C_CUOTA_IRPF, texto)
-            if bajo.startswith("cuota irpf descuadra"):
-                marcar(C_CUOTA_IRPF, texto)
-            if "transportista sin irpf" in bajo:
-                marcar(C_BASE_IRPF, texto)
-                marcar(C_PCT_IRPF, texto)
-                marcar(C_CUOTA_IRPF, texto)
-            if bajo.startswith("irpf de transportista"):
-                marcar(C_PCT_IRPF, texto)
-            if bajo.startswith("falta el total") or bajo.startswith(
-                    "el total no cuadra") or bajo.startswith("el signo no cuadra"):
+            if "nif" in bajo and ("copiado" in bajo or "memoria" in bajo
+                                  or "guardado" in bajo):
+                marcar(C_NIF, texto, REVISAR)
+            if "cuenta " in bajo and ("propuesta" in bajo or "descarte" in bajo
+                                      or "subclave" in bajo):
+                marcar(C_CUENTA, texto, REVISAR)
+            if "el total no cuadra" in bajo or "el signo no cuadra" in bajo:
                 marcar(C_TOTAL, texto)
 
-        fondo = QColor("#ffcdd2" if estado == ERROR else "#fff3cd")
-        texto_color = QColor("#7f0000" if estado == ERROR else "#6b4f00")
         for columna, detalles in por_columna.items():
             item = self.tabla.item(fila, columna)
             if not item:
                 continue
-            item.setBackground(fondo)
-            item.setForeground(texto_color)
+            grave = columna in graves
+            item.setBackground(QColor("#ffcdd2" if grave else "#fff3cd"))
+            item.setForeground(QColor("#7f0000" if grave else "#6b4f00"))
             fuente = item.font()
             fuente.setBold(True)
             item.setFont(fuente)
@@ -3253,9 +3305,13 @@ class VentanaPrincipal(QMainWindow):
                     f"factura sale como {'gasto' if tipo == 'gasto' else 'ingreso'}: "
                     f"compruebe si está bien")
         # Sin taco declarado: la que se sale de lo que hace todo su bloque.
-        tipos = [self._tipo_fila(i) for i in range(len(self.filas))
-                 if self.filas[i]["bloque"] == bloque]
-        if len(tipos) >= 5 and tipos.count(tipo) == 1:
+        pasada = getattr(self, "_pasada", None)
+        if pasada:
+            cuenta = pasada["por_bloque"].get(bloque, Counter())
+        else:
+            cuenta = Counter(self._tipo_fila(i) for i in range(len(self.filas))
+                             if self.filas[i]["bloque"] == bloque)
+        if sum(cuenta.values()) >= 5 and cuenta[tipo] == 1:
             return ("Es la única factura de su bloque que sale como "
                     f"{'gasto' if tipo == 'gasto' else 'ingreso'}: compruébela")
         return ""
@@ -3275,7 +3331,10 @@ class VentanaPrincipal(QMainWindow):
 
     def _aviso_irpf_transportista(self, r: int, f: Factura) -> str:
         """Control visible del 1% en los ingresos de transportistas."""
-        if self._tipo_fila(r) != "venta" or not self._cliente_es_transportista():
+        pasada = getattr(self, "_pasada", None)
+        transportista = (pasada["transportista"] if pasada
+                         else self._cliente_es_transportista())
+        if self._tipo_fila(r) != "venta" or not transportista:
             return ""
         if f.base_irpf is None and f.pct_irpf is None and f.cuota_irpf is None:
             return ("INGRESO DE TRANSPORTISTA SIN IRPF: compruebe si esta "
@@ -3298,11 +3357,17 @@ class VentanaPrincipal(QMainWindow):
     def _revalidar_todo(self):
         self._ejercicio_lote = self._calcular_ejercicio_lote()
         self._actualizar_selector_periodo()
+        self._pasada = None
+        pasada = self._preparar_pasada()
         self._errores_documento, self._duplicados = controles_documentos(
-            [self._leer_fila(r) for r in range(self.tabla.rowCount())],
-            [self._tipo_fila(r) for r in range(self.tabla.rowCount())])
-        for r in range(self.tabla.rowCount()):
-            self._revalidar_fila(r)
+            pasada["facturas"], pasada["tipos"])
+        pasada["errores_documento"] = self._errores_documento
+        self._pasada = pasada
+        try:
+            for r in range(self.tabla.rowCount()):
+                self._revalidar_fila(r)
+        finally:
+            self._pasada = None
         self._actualizar_columnas_recargo()
         # El resumen se rehace SIEMPRE, tambien con la tabla vacia: si no, al
         # vaciar el lote se quedaban abajo los totales del lote anterior y

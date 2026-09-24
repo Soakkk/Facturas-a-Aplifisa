@@ -131,6 +131,9 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
         lista = nombres.get(nif, [])
         c.nombre = Counter(lista).most_common(1)[0][0] if lista else ""
         c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
+        # El nombre con el que ya se le conoce (aqui o en la suite) manda
+        # sobre las variantes leidas en las facturas.
+        c.nombre = clientes.nombre_confirmado(nif) or c.nombre
         c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
 
     # Con empate se propone al que RECIBE las facturas: un taco de facturas

@@ -58,9 +58,14 @@ def guardar_recargo_equivalencia(nif, activo: bool, nombre: str = "") -> None:
 
 
 def nombres_conocidos() -> list:
-    """Nombres de los clientes ya vistos, para no tener que escribirlos."""
+    """Nombres de los clientes ya vistos, para no tener que escribirlos.
+
+    Incluye los del directorio comun de la suite (los mismos que usan los
+    demas programas de la asesoria)."""
+    from . import suite
     nombres = {ficha.get("nombre", "").strip()
                for ficha in _leer_todo().values() if isinstance(ficha, dict)}
+    nombres.update(suite.nombres())
     return sorted(n for n in nombres if n)
 
 
@@ -96,11 +101,27 @@ def marcar_cliente(nif, nombre: str = "") -> None:
             json.dump(todo, fh, indent=2, ensure_ascii=False)
     except OSError:
         pass
+    # Lo confirmado por una persona se comparte con el resto de la suite.
+    from . import suite
+    suite.registrar_cliente(nif, nombre)
 
 
 def es_cliente_confirmado(nif) -> bool:
+    """Confirmado aqui por una persona, o cliente del directorio de la suite."""
+    from . import suite
     nif = _normaliza(nif)
-    return bool(nif and _leer_todo().get(nif, {}).get("confirmado"))
+    return bool(nif and (_leer_todo().get(nif, {}).get("confirmado")
+                         or suite.es_cliente(nif)))
+
+
+def nombre_confirmado(nif) -> str:
+    """El nombre con el que la asesoria conoce a este cliente."""
+    from . import suite
+    nif = _normaliza(nif)
+    ficha = _leer_todo().get(nif, {}) if nif else {}
+    if isinstance(ficha, dict) and ficha.get("confirmado") and ficha.get("nombre"):
+        return str(ficha["nombre"]).strip()
+    return suite.nombre_de(nif)
 
 
 def _clave_nombre(nombre) -> str:
@@ -121,12 +142,17 @@ def buscar_confirmado_por_nombre(nombre: str) -> tuple[str, str] | None:
     clave = _clave_nombre(nombre)
     if not clave:
         return None
-    coincidencias = []
+    from . import suite
+    coincidencias = {}
     for nif, ficha in _leer_todo().items():
         if (isinstance(ficha, dict) and ficha.get("confirmado")
                 and _clave_nombre(ficha.get("nombre")) == clave):
-            coincidencias.append((_normaliza(nif), ficha.get("nombre", "")))
-    return coincidencias[0] if len(coincidencias) == 1 else None
+            coincidencias[_normaliza(nif)] = ficha.get("nombre", "")
+    for nif in suite.clientes():
+        nombre = suite.nombre_de(nif)
+        if nombre and _clave_nombre(nombre) == clave:
+            coincidencias.setdefault(nif, nombre)
+    return next(iter(coincidencias.items())) if len(coincidencias) == 1 else None
 
 
 # --------------------------------------------------- regimen de recargo

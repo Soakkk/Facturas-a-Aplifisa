@@ -82,7 +82,7 @@ def test_filtro_trimestral_y_siguiente_incidencia_no_dejan_filas_ocultas():
     v._siguiente_incidencia()
     assert v.tabla.currentRow() == 3
     assert not v.tabla.isRowHidden(3)
-    assert v.tabla.item(3, C_ESTADO).text() == "!"
+    assert v.tabla.item(3, C_ESTADO).text() == "! Revisar"
     assert not v._hay_filtro_activo()
 
 
