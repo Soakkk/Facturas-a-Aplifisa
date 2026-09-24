@@ -27,6 +27,12 @@ def datos_aparte(tmp_path, monkeypatch):
     """Sin tocar los clientes ni proveedores de verdad del usuario."""
     monkeypatch.setattr(clientes, "dir_datos", lambda: str(tmp_path))
     monkeypatch.setattr(proveedores, "dir_datos", lambda: str(tmp_path))
+    # Con un empate el programa PREGUNTA quién es el cliente. En estas pruebas
+    # la pregunta se cierra sin elegir, salvo que la prueba diga otra cosa.
+    preguntas = []
+    monkeypatch.setattr("facturas_excel.app.DialogoCliente.exec",
+                        lambda self: preguntas.append(self) or 0)
+    return preguntas
 
 
 def factura_gasolinera(numero):
@@ -281,3 +287,16 @@ def test_la_unica_del_bloque_que_va_al_reves_se_marca():
     v._revalidar_todo()
 
     assert "única factura de su bloque" in v.tabla.item(0, C_ESTADO).toolTip()
+
+
+def test_un_empate_con_un_proveedor_nuevo_se_pregunta(datos_aparte):
+    """Antes el programa memorizaba su propia suposición al leer el taco y
+    el empate ya no se preguntaba nunca: si adivinaba mal, lo aprendía."""
+    v = VentanaPrincipal(comprobar_updates=False)
+    crudos = _crudos(2)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(procesar.preparar_lote(crudos, CLIENTE[1], CLIENTE[0]),
+                    CLIENTE[1], CLIENTE[0], crudos)
+    assert len(datos_aparte) == 1
+    # Y nada se ha memorizado sin exportar ni confirmar.
+    assert not proveedores.leer_todo()

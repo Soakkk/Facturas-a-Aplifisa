@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from .extraccion import MODELOS
+from .extraccion import modelos_configurados
 from .rutas import dir_datos
 
 
@@ -18,15 +18,18 @@ FICHERO_SOLICITUD = "solicitud-revision-gemini.md"
 
 
 def modelo_principal() -> str:
-    return MODELOS[0]
+    return modelos_configurados()[0]
 
 
 def texto_solicitud(version_app: str) -> str:
-    modelo = modelo_principal()
+    modelos = modelos_configurados()
+    modelo = modelos[0]
+    respaldo = modelos[1] if len(modelos) > 1 else "ninguno"
     return f"""Revisa el modelo de Gemini de mi proyecto público
 Soakkk/Facturas-a-Aplifisa (aplicación instalada v{version_app}).
 
-El modelo principal actual es {modelo}. Mi prioridad absoluta es mantener o
+El modelo principal actual es {modelo} y el de respaldo (y segunda
+lectura) es {respaldo}. Mi prioridad absoluta es mantener o
 mejorar la calidad de lectura de las facturas; NO quiero bajar calidad para
 ahorrar dinero ni cambiar de modelo solo porque exista uno más nuevo.
 

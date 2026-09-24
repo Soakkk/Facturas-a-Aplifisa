@@ -8,6 +8,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def perfil_aislado(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'perfil'))
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
     from facturas_excel import __version__, notas_version
     notas_version.marcar_vistas(__version__)
     yield

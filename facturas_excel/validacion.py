@@ -25,10 +25,39 @@ TOLERANCIA = 0.02  # euros de margen por redondeos
 RECARGO_DE_IVA = {21.0: 5.2, 10.0: 1.4, 4.0: 0.5}
 
 
+# Tipos de IVA que existen o han existido recientemente en España: los
+# generales (21, 10, 4), los temporales de 2021-2024 (0, 5, 2 y 7,5 en luz,
+# gas y alimentos) y la exención (0). Un 22 % o un 12 % solo sale de una mala
+# lectura, aunque la cuota cuadre con él.
+TIPOS_IVA_VALIDOS = {0.0, 2.0, 4.0, 5.0, 7.5, 10.0, 21.0}
+
+
+class Incidencia(str):
+    """Un aviso de la validación con el dato al que se refiere.
+
+    Sigue siendo un texto (todo lo que ya trabaja con mensajes funciona igual),
+    pero lleva además los campos afectados y su gravedad. Así la pantalla
+    colorea la celda culpable sin tener que adivinarlo leyendo la frase.
+    """
+
+    def __new__(cls, texto: str, campos=(), gravedad: str = "revisar"):
+        obj = super().__new__(cls, texto)
+        obj.campos = tuple(campos)
+        obj.gravedad = gravedad
+        return obj
+
+    def __reduce__(self):
+        return (Incidencia, (str(self), self.campos, self.gravedad))
+
+
 @dataclass
 class Resultado:
     estado: str
     mensajes: List[str]
+
+
+def _hoy() -> date:
+    return date.today()
 
 
 def fecha_de(fecha: str) -> Optional[date]:
@@ -48,23 +77,47 @@ def fecha_de(fecha: str) -> Optional[date]:
     return None
 
 
+_TABLA_DNI = "TRWAGMYFPDXBNJZSQVHLCKE"
+# Prefijos de NIF-IVA de la Unión Europea (el de Grecia es EL).
+PREFIJOS_UE = {
+    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "FI", "FR",
+    "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT",
+    "RO", "SE", "SI", "SK", "XI",
+}
+
+
+def _limpiar_nif(nif) -> str:
+    return str(nif or "").strip().upper().replace("-", "").replace(" ", "") \
+        .replace(".", "")
+
+
 def validar_nif(nif: str) -> bool:
-    """Valida DNI, NIE y CIF espanoles por su digito/letra de control."""
-    if not nif:
+    """Valida DNI, NIE, NIF K/L/M y CIF españoles por su dígito de control.
+
+    En los CIF el tipo de entidad decide si el control es letra o número: una
+    S.L. (B) o una S.A. (A) terminan SIEMPRE en número, y un organismo público
+    (P, Q, S) o una entidad extranjera (N, W) SIEMPRE en letra. Admitir
+    cualquiera de las dos formas daba por buenos CIF mal leídos.
+    """
+    nif = _limpiar_nif(nif)
+    if len(nif) != 9:
         return False
-    nif = nif.strip().upper().replace("-", "").replace(" ", "")
-    tabla_dni = "TRWAGMYFPDXBNJZSQVHLCKE"
 
     # NIE: X/Y/Z -> 0/1/2
-    if nif and nif[0] in "XYZ":
+    if nif[0] in "XYZ":
         nif = str("XYZ".index(nif[0])) + nif[1:]
 
     # DNI / NIE
-    if len(nif) == 9 and nif[:8].isdigit() and nif[8].isalpha():
-        return tabla_dni[int(nif[:8]) % 23] == nif[8]
+    if nif[:8].isdigit() and nif[8].isalpha():
+        return _TABLA_DNI[int(nif[:8]) % 23] == nif[8]
+
+    # NIF de personas físicas sin DNI: K (menores), L (no residentes), M
+    # (extranjeros sin NIE). La letra se calcula con los 7 dígitos.
+    if nif[0] in "KLM" and nif[1:8].isdigit() and nif[8].isalpha():
+        return _TABLA_DNI[int(nif[1:8]) % 23] == nif[8]
 
     # CIF: letra inicial + 7 digitos + control
-    if len(nif) == 9 and nif[0].isalpha() and nif[0] in "ABCDEFGHJNPQRSUVW":
+    if nif[0] in "ABCDEFGHJNPQRSUVW":
         digitos = nif[1:8]
         if not digitos.isdigit():
             return False
@@ -75,11 +128,33 @@ def validar_nif(nif: str) -> bool:
             suma_impar += d if d < 10 else d - 9
         control = (10 - (suma_par + suma_impar) % 10) % 10
         c = nif[8]
-        if c.isdigit():
-            return int(c) == control
-        return c == "JABCDEFGHI"[control]
+        letra = "JABCDEFGHI"[control]
+        if nif[0] in "NPQRSW":
+            return c == letra
+        if nif[0] in "ABEH":
+            return c == str(control)
+        return c == str(control) or c == letra
 
     return False
+
+
+def clasificar_nif(nif) -> str:
+    """Qué clase de identificador es, para avisar con el motivo exacto.
+
+    - "valido": NIF español correcto.
+    - "es_prefijo": NIF español correcto con el prefijo ES del NIF-IVA.
+    - "ue": NIF-IVA de otro país de la UE (no se puede comprobar su control).
+    - "invalido": ni una cosa ni otra (casi siempre, un dígito mal leído).
+    """
+    limpio = _limpiar_nif(nif)
+    if validar_nif(limpio):
+        return "valido"
+    if limpio.startswith("ES") and validar_nif(limpio[2:]):
+        return "es_prefijo"
+    if len(limpio) >= 6 and limpio[:2] in PREFIJOS_UE \
+            and limpio[2:].isalnum() and any(c.isdigit() for c in limpio[2:]):
+        return "ue"
+    return "invalido"
 
 
 def marcar_revisar_concepto(f: Factura, marcar_revisar) -> None:
@@ -123,54 +198,97 @@ def validar(f: Factura) -> Resultado:
     msgs: List[str] = []
     estado = OK
 
-    def marcar_revisar(m):
+    def marcar_revisar(m, *campos):
         nonlocal estado
-        msgs.append(m)
+        msgs.append(Incidencia(m, campos, REVISAR))
         if estado == OK:
             estado = REVISAR
 
-    def marcar_error(m):
+    def marcar_error(m, *campos):
         nonlocal estado
-        msgs.append(m)
+        msgs.append(Incidencia(m, campos, ERROR))
         estado = ERROR
 
     # Campos obligatorios en Aplifisa: Justificante/Fra.Proveedor, Fecha,
     # Concepto y Nombre. Si falta alguno, el registro da error al importar.
+    dia = fecha_de(f.fecha) if f.fecha else None
     if not f.fecha:
-        marcar_error("Falta la fecha (obligatorio)")
-    elif fecha_de(f.fecha) is None:
+        marcar_error("Falta la fecha (obligatorio)", "fecha")
+    elif dia is None:
         # Fecha ilegible: Aplifisa la rechazaria y ademas delata una mala
         # lectura de la factura entera.
         marcar_error(f"No se entiende la fecha «{f.fecha}»: "
-                     f"debe ser dd/mm/aaaa")
-    if not f.num_factura:
-        marcar_error("Falta el nº de factura (obligatorio)")
-    if not f.nombre:
-        marcar_error("Falta el nombre (obligatorio)")
-    if not f.concepto:
-        marcar_error("Falta el concepto (obligatorio)")
+                     f"debe ser dd/mm/aaaa", "fecha")
     else:
-        marcar_revisar_concepto(f, marcar_revisar)
+        hoy = _hoy()
+        if dia > hoy:
+            # Una factura no puede estar fechada en el futuro: es un año o un
+            # mes mal leido (2026 -> 2028, 03 -> 08).
+            marcar_error(f"Fecha futura: {f.fecha} es posterior a hoy. "
+                         "Casi seguro que el año o el mes están mal leídos",
+                         "fecha")
+        # Una fecha antigua NO se marca: en un requerimiento las facturas
+        # son de cualquier año y todas valen (criterio del usuario).
+        operacion = fecha_de(f.fecha_operacion) if f.fecha_operacion else None
+        if operacion and operacion > dia and (operacion - dia).days > 31:
+            marcar_revisar(f"La fecha de operación ({f.fecha_operacion}) es "
+                           f"posterior a la de la factura ({f.fecha}): "
+                           "compruebe las dos", "fecha")
+    if not f.num_factura:
+        marcar_error("Falta el nº de factura (obligatorio)", "num_factura")
+    if not f.nombre:
+        marcar_error("Falta el nombre (obligatorio)", "nombre")
+    if not f.concepto:
+        marcar_error("Falta el concepto (obligatorio)", "concepto")
+    else:
+        marcar_revisar_concepto(
+            f, lambda m: marcar_revisar(m, "concepto", "subclave"))
 
     # NIF: sin NIF o que no valida -> revisar (puede ser OCR o NIF extranjero),
-    # no bloquea, pero avisa para que se compruebe.
+    # no bloquea, pero avisa para que se compruebe con el motivo exacto.
     if not f.nif:
-        marcar_revisar("Falta el NIF")
-    elif not validar_nif(f.nif):
-        marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): {f.nif}")
+        marcar_revisar("Falta el NIF", "nif")
+    else:
+        clase = clasificar_nif(f.nif)
+        if clase == "es_prefijo":
+            marcar_revisar(f"NIF con prefijo ES de operador intracomunitario "
+                           f"({f.nif}): en Aplifisa se registra sin «ES»",
+                           "nif")
+        elif clase == "ue":
+            marcar_revisar(f"NIF extranjero de la UE ({f.nif}): su dígito de "
+                           "control no se puede comprobar. Revise la factura "
+                           "(posible operación intracomunitaria)", "nif")
+        elif clase == "invalido":
+            marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): "
+                           f"{f.nif}", "nif")
 
     # Verde significa que están presentes todos los importes necesarios para
     # el flujo rutinario. Antes, al faltar todos, no se ejecutaba ninguna
     # comprobación aritmética y la fila podía parecer correcta.
     if f.base_iva is None:
-        marcar_error("Falta la base imponible")
+        marcar_error("Falta la base imponible", "base_iva")
     if f.total_impreso is None:
-        marcar_error("Falta el total de la factura")
+        marcar_error("Falta el total de la factura", "total_impreso")
     if not f.es_suplido and not f.iva_incluido_en_base:
         if f.pct_iva is None:
-            marcar_error("Falta el tipo de IVA")
+            marcar_error("Falta el tipo de IVA", "pct_iva")
         if f.cuota_iva is None:
-            marcar_error("Falta la cuota de IVA")
+            marcar_error("Falta la cuota de IVA", "cuota_iva")
+
+    # Un tipo que no existe en España delata una mala lectura aunque la cuota
+    # cuadre con él (la IA puede leer mal el tipo Y calcular la cuota).
+    if f.pct_iva is not None and round(abs(float(f.pct_iva)), 2) \
+            not in TIPOS_IVA_VALIDOS:
+        marcar_error(f"Tipo de IVA {porcentaje(abs(f.pct_iva))}% no existe en "
+                     "España (21, 10, 5, 4, 2 o 0): revise el tipo leído",
+                     "pct_iva")
+
+    # Doble lectura: cada dato en el que los dos modelos no coinciden se
+    # revisa con los dos valores a la vista. No se elige ninguno en silencio.
+    for d in getattr(f, "discrepancias", ()) or ():
+        campo = d.get("campo_factura") or ""
+        marcar_revisar(d.get("texto") or f"Doble lectura: {d.get('etiqueta')} "
+                       "no coincide", *((campo,) if campo else ()))
 
     confianza = str(f.confianza_ia or "").strip().lower()
     if confianza in {"media", "baja"}:
@@ -185,20 +303,22 @@ def validar(f: Factura) -> Resultado:
     if f.base_iva is not None and f.pct_iva is not None:
         esperada = round(f.base_iva * f.pct_iva / 100.0, 2)
         if f.cuota_iva is None:
-            marcar_revisar("Falta la cuota de IVA")
+            marcar_revisar("Falta la cuota de IVA", "cuota_iva")
         elif abs(f.cuota_iva - esperada) > TOLERANCIA:
             marcar_error(
-                f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}"
-            )
+                f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}",
+                "cuota_iva", "base_iva", "pct_iva")
 
     # Si aparece parte de un impuesto, tienen que estar sus tres piezas. Un
     # dato parcial no se puede interpretar de forma segura como cero.
     irpf = (f.base_irpf, f.pct_irpf, f.cuota_irpf)
     if any(v is not None for v in irpf) and not all(v is not None for v in irpf):
-        marcar_error("IRPF incompleto: faltan base, porcentaje o cuota")
+        marcar_error("IRPF incompleto: faltan base, porcentaje o cuota",
+                     "base_irpf", "pct_irpf", "cuota_irpf")
     recargo = (f.base_requiv, f.pct_requiv, f.cuota_requiv)
     if any(v is not None for v in recargo) and not all(v is not None for v in recargo):
-        marcar_error("Recargo de equivalencia incompleto")
+        marcar_error("Recargo de equivalencia incompleto",
+                     "base_requiv", "pct_requiv", "cuota_requiv")
 
     # Recargo de equivalencia: su tipo lo fija el del IVA, y la cuota sale de
     # la base. Un recargo mal leido no descuadra siempre el total (son céntimos),
@@ -208,23 +328,25 @@ def validar(f: Factura) -> Resultado:
         if esperado is not None and abs(f.pct_requiv - esperado) > 0.01:
             marcar_revisar(
                 f"El recargo del {porcentaje(f.pct_iva)}% de IVA es "
-                f"{porcentaje(esperado)}%, no {porcentaje(f.pct_requiv)}%")
+                f"{porcentaje(esperado)}%, no {porcentaje(f.pct_requiv)}%",
+                "pct_requiv")
     if f.base_requiv is not None and f.pct_requiv is not None:
         esperada = round(f.base_requiv * f.pct_requiv / 100.0, 2)
         if f.cuota_requiv is None:
-            marcar_revisar("Falta la cuota del recargo de equivalencia")
+            marcar_revisar("Falta la cuota del recargo de equivalencia",
+                           "cuota_requiv")
         elif abs(f.cuota_requiv - esperada) > TOLERANCIA:
             marcar_error(
                 f"Cuota del recargo descuadra: {f.cuota_requiv} pero "
-                f"base×% = {esperada}")
+                f"base×% = {esperada}", "cuota_requiv")
 
     # Aritmetica del IRPF
     if f.base_irpf is not None and f.pct_irpf is not None and f.cuota_irpf is not None:
         esperada = round(f.base_irpf * f.pct_irpf / 100.0, 2)
         if abs(f.cuota_irpf - esperada) > TOLERANCIA:
             marcar_error(
-                f"Cuota IRPF descuadra: {f.cuota_irpf} pero base×% = {esperada}"
-            )
+                f"Cuota IRPF descuadra: {f.cuota_irpf} pero base×% = {esperada}",
+                "cuota_irpf")
 
     # Cuadre con el total impreso: si no cuadra puede haber suplidos, retencion
     # o financiacion (ej. moviles a plazos) que no son base imponible -> revisar,
@@ -239,20 +361,25 @@ def validar(f: Factura) -> Resultado:
             marcar_error(
                 f"El signo no cuadra: el total es {f.total_impreso} y la base "
                 f"{f.base_iva}. ¿Es un abono/devolución? En un abono TODOS los "
-                f"importes van en negativo."
+                f"importes van en negativo.", "total_impreso", "base_iva"
             )
-        calculado = (f.base_iva or 0) + (f.cuota_iva or 0) \
-            + (f.cuota_requiv or 0) + (f.suplidos or 0) \
-            - (f.cuota_irpf or 0)
-        calculado = round(calculado, 2)
+        calculado = cuadre_de(f)
         if abs(calculado - f.total_impreso) > TOLERANCIA:
             marcar_revisar(
                 f"El total no cuadra: factura pone {f.total_impreso}, "
                 f"base+cuota+suplidos−retención = {calculado} "
-                f"(¿falta algún suplido/retención/financiación?)"
+                f"(¿falta algún suplido/retención/financiación?)",
+                "total_impreso"
             )
 
     return Resultado(estado=estado, mensajes=msgs)
+
+
+def cuadre_de(f: Factura) -> float:
+    """Base + IVA + recargo + suplidos − retención de una fila."""
+    return round((f.base_iva or 0) + (f.cuota_iva or 0)
+                 + (f.cuota_requiv or 0) + (f.suplidos or 0)
+                 - (f.cuota_irpf or 0), 2)
 
 
 def encontrar_duplicados(facturas: List[Factura]) -> Dict[int, int]:

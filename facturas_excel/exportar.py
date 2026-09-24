@@ -216,8 +216,13 @@ def totales_del_excel(config: ConfigColumnas, ruta: str) -> dict:
                     continue
                 vacia = False
                 try:
-                    suma[campo] += float(
-                        str(valor).replace(".", "").replace(",", "."))
+                    if isinstance(valor, (int, float)):
+                        # Modo numero: ya es un numero de Excel. Antes se le
+                        # quitaba el punto decimal y 123.45 sumaba 12345.
+                        suma[campo] += float(valor)
+                    else:
+                        suma[campo] += float(
+                            str(valor).replace(".", "").replace(",", "."))
                 except ValueError:
                     pass
             if (not vacia

@@ -17,6 +17,10 @@ ACCENT_FAINT = "#EAF3FC"
 SUCCESS = "#19724E"
 WARNING = "#86500A"
 DANGER = "#B43737"
+# Barra de título de la suite (casa con la de Generador de avisos 1.6).
+CHROME = "#1F3550"
+CHROME_INK = "#E9F0F8"
+HOVER = "#EAF1F8"
 
 # La referencia usa una sola familia sans-serif en toda la interfaz.
 FUENTE_UI = '"Segoe UI Variable", "Segoe UI", sans-serif'
@@ -62,13 +66,58 @@ QWidget#barraRapida QPushButton:disabled {{
     color: {MUTED}; border-color: {BORDER}; background: {SOFT};
 }}
 
-QFrame#tarjeta {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; }}
+QFrame#tarjeta {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 6px; }}
+
+/* ---- Cinta de herramientas por grupos (como Generador de avisos 1.6) ---- */
+QWidget#barraRapida {{
+    background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
+}}
+QFrame#grupoCinta {{ border: none; border-right: 1px solid #E4EAF2; }}
+QLabel#etiquetaGrupo {{ color: #7A8BA0; font-size: 11px; padding: 2px 0 4px 0; }}
+QToolButton#cintaGrande, QToolButton#cintaPrimaria {{
+    min-width: 76px; min-height: 58px; padding: 4px 6px 2px 6px;
+    border: 1px solid transparent; border-radius: 4px; background: transparent;
+    color: {INK}; font-size: 12px;
+}}
+QToolButton#cintaPrimaria {{ color: {SUCCESS}; font-weight: 600; }}
+QToolButton#cintaPeque {{
+    min-height: 22px; padding: 1px 8px 1px 4px; border: 1px solid transparent;
+    border-radius: 4px; background: transparent; color: {INK}; font-size: 12px;
+}}
+QToolButton#cintaGrande:hover, QToolButton#cintaPrimaria:hover,
+QToolButton#cintaPeque:hover {{ border-color: #CFDDEC; background: {HOVER}; }}
+QToolButton#cintaGrande:pressed, QToolButton#cintaPrimaria:pressed,
+QToolButton#cintaPeque:pressed {{ background: #D8E6F4; }}
+QToolButton#cintaGrande:disabled, QToolButton#cintaPrimaria:disabled,
+QToolButton#cintaPeque:disabled {{ color: #A3B1C0; }}
+
+QListWidget#listaBloques {{
+    background: {CARD}; border: none; outline: none; font-size: 12px;
+}}
+QListWidget#listaBloques::item {{
+    padding: 6px 6px; border-radius: 4px; margin: 1px 0;
+    border-left: 3px solid transparent;
+}}
+QListWidget#listaBloques::item:selected {{
+    background: #E1ECF8; border-left: 3px solid {ACCENT}; color: {INK};
+}}
+QListWidget#listaBloques::item:hover {{ background: {HOVER}; }}
+
+QFrame#barraEstado {{
+    background: {CARD}; border: none; border-top: 1px solid {BORDER};
+}}
+QLabel#contadores {{ font-size: 11px; }}
+QScrollArea#panelFicha, QWidget#panelFichaContenido {{ background: {CARD}; }}
+QSplitter#splitVisor::handle {{ margin: 2px 4px; border-radius: 2px; }}
 QFrame#barraCliente {{
     background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
 }}
-QLabel#tituloSeccion {{ color: {INK}; font-size: 13px; font-weight: 600; }}
-QLabel#marca {{ color: {INK}; font-size: 16px; font-weight: 600; }}
-QLabel#marcaIcono {{ background: {ACCENT_FAINT}; color: {ACCENT}; border-radius: 8px; font-size: 18px; font-weight: 600; }}
+QLabel#tituloSeccion {{
+    color: {CHROME}; font-size: 12px; font-weight: 700;
+    padding-bottom: 3px; border-bottom: 2px solid #E4EAF2;
+}}
+QLabel#marca {{ color: {CHROME}; font-size: 15px; font-weight: 700; }}
+QLabel#marcaIcono {{ background: {CHROME}; color: {CHROME_INK}; border-radius: 6px; font-size: 17px; font-weight: 700; }}
 QLabel#tituloMesa {{ color: {INK}; font-size: 20px; font-weight: 600; }}
 QLabel#contadorLote {{ color: {MUTED}; font-size: 12px; }}
 QLabel#textoSuave {{ color: {MUTED}; font-size: 11px; }}

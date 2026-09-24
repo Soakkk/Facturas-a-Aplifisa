@@ -255,3 +255,16 @@ def test_quitar_el_ultimo_bloque_tambien_limpia_el_resumen(monkeypatch):
     v._quitar_bloque()
     assert v.tabla_resumen.rowCount() == 0
 
+
+
+def test_quitar_bloque_se_puede_deshacer_desde_la_banda(monkeypatch):
+    v = VentanaPrincipal(comprobar_updates=False)
+    cargar_bloque(v, r"C:\tmp\escaneo1.pdf", [factura("F-1")])
+    cargar_bloque(v, r"C:\tmp\escaneo2.pdf", [factura("F-2", 50)])
+    v.combo_filtro_bloque.setCurrentText("escaneo1")
+    v._quitar_bloque()                      # sin «¿seguro?»
+    assert v.tabla.rowCount() == 1
+    assert v.banda.isVisibleTo(v) and v.banda.btn_deshacer.isVisibleTo(v)
+    v.banda.btn_deshacer.click()
+    assert v.tabla.rowCount() == 2
+    assert [b["nombre"] for b in v._bloques] == ["escaneo1", "escaneo2"]

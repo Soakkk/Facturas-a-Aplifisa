@@ -18,10 +18,18 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 2. El programa **detecta al cliente** (el NIF que se repite en el lote) y, por
    cada factura, decide si es **gasto** (el cliente recibe) o **venta** (el
    cliente emite) y quién es la contraparte.
-3. **Tabla de revisión** con semáforo de control de calidad:
-   - 🟢 todo cuadra (cuota = base × tipo, total coincide, NIF válido)
-   - 🟡 revisar (confianza media/baja, NIF dudoso, rol ambiguo…)
-   - 🔴 error (descuadres, faltan campos obligatorios)
+3. **Tabla de revisión** con estados de control de calidad:
+   - ✓ **Verificada**: dos modelos de IA leyeron la hoja y coinciden, y todo
+     cuadra (cuota = base × tipo, total, NIF, tipo de IVA existente, cuenta
+     del catálogo).
+   - ○ **Sin verificar**: todo cuadra, pero la leyó un solo modelo.
+   - ! **Revisar**: las dos lecturas no coinciden, NIF dudoso, cuenta
+     propuesta por descarte, rol ambiguo, factura ya exportada…
+   - ✕ **Error**: descuadres, tipo de IVA inexistente, fecha futura, faltan
+     campos obligatorios.
+   La **ficha de la factura**, junto al documento, agrupa lo leído
+   (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
+   el cuadre como una cuenta y permite elegir entre las dos lecturas.
    Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
    se abre una vista previa grande. Una fila ámbar solo se exporta después de
    pulsar **Marcar revisada**.
@@ -70,6 +78,26 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
 La interfaz sigue el mismo sistema visual que Generador de avisos fiscales:
 cabecera azul marino, flujo por pasos, superficies claras y estados de revisión
 visibles sin perder la imagen original.
+
+## Lectura con IA
+
+- Modelos fijos, configurables en *Configuración → Modelos de lectura*:
+  `gemini-3.8-flash` (principal) y `gemini-3.7-flash` (respaldo y segunda
+  lectura). Nunca alias `-latest`. Si uno se retira, se lee con el otro.
+- Respuesta con formato cerrado (`response_json_schema`) y
+  `thinking_level: LOW`.
+- **Doble lectura** (por defecto, siempre): las dos lecturas se comparan
+  campo a campo y las diferencias se resuelven a mano. Puede limitarse a las
+  lecturas dudosas.
+- Lo que no se ha leído se deja vacío: una hoja ilegible queda en rojo sin
+  nombre ni importes inventados, y una cuenta propuesta por palabras clave o
+  por descarte queda en ámbar.
+- Las facturas exportadas se recuerdan por cliente
+  (`%APPDATA%\FacturasAplifisa\facturas_exportadas.json`) para avisar si
+  vuelven a aparecer; los NIF de proveedores se aprenden al exportar, no al
+  leer.
+- Usa el directorio común de clientes de la suite
+  (`%LOCALAPPDATA%\AsesoriaEMarin\Suite\clientes.json`).
 
 ## Control por factura y ejemplos reales
 

@@ -18,7 +18,12 @@ import unicodedata
 
 # --- cuentas base (ajustables por criterio de la asesoria) ---
 CUENTA_COMBUSTIBLE = "628"   # carburante como suministro; subclave G16 (gas)
-DEFAULT_GASTO = "600"        # Aplifisa asigna 600 por defecto en compras
+# Cuando nada encaja, el mismo criterio que se le da a Gemini: 629 (G22) OTROS
+# SERVICIOS. Antes era 600 (compras de mercaderias) y un servicio cualquiera
+# entraba como compra sin avisar. En cualquier caso, la fila queda en ambar:
+# una cuenta puesta por descarte no es una cuenta leida.
+DEFAULT_GASTO = "629"
+DEFAULT_GASTO_GXX = "G22"
 DEFAULT_VENTA = "700"        # y 700 en ventas (subclave I01)
 
 # Reglas ordenadas por PRIORIDAD (la primera que coincide gana). El orden importa:
@@ -88,12 +93,18 @@ def _contiene(texto: str, clave: str) -> bool:
 def asignar_concepto(tipo: str, texto_busqueda: str) -> str:
     """Devuelve el codigo de concepto segun palabras clave, por prioridad.
     `texto_busqueda` incluye el concepto sugerido y el nombre de la contraparte."""
+    return asignar_concepto_con_origen(tipo, texto_busqueda)[0]
+
+
+def asignar_concepto_con_origen(tipo: str, texto_busqueda: str) -> tuple[str, str]:
+    """(cuenta, origen): "palabras" si una palabra clave la decide, o
+    "defecto" si no encaja nada y se usa la cuenta de descarte."""
     texto = _sin_acentos((texto_busqueda or "").lower())
     reglas = REGLAS_GASTOS if tipo == "gasto" else REGLAS_VENTAS
     for codigo, claves in reglas:
         if any(_contiene(texto, c) for c in claves):
-            return codigo
-    return DEFAULT_GASTO if tipo == "gasto" else DEFAULT_VENTA
+            return codigo, "palabras"
+    return (DEFAULT_GASTO if tipo == "gasto" else DEFAULT_VENTA), "defecto"
 
 
 # --- subclaves AEAT de la 628 -----------------------------------------------

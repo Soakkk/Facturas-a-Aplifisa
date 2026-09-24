@@ -1,5 +1,34 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
+## v1.14.0 — revisión de fiabilidad del 24/09/2026
+
+Estado: **implementado**. Análisis de 16 puntos aceptado por el usuario
+(«dale con todo»):
+
+1. Cuentas sin inventar: 629 (G22) por descarte y en ámbar; 705 con subclave
+   mala corrige la subclave, no la cuenta (`procesar.concepto_propuesto`).
+2. Tipos de IVA existentes, fecha futura en rojo, NIF por tipo de entidad,
+   K/L/M e intracomunitarios (`validacion.py`). Las fechas antiguas NO se
+   marcan (criterio del usuario para requerimientos).
+3. Doble lectura 3.8-flash + 3.7-flash comparada campo a campo
+   (`doble_lectura.py`), resoluble desde la ficha.
+4. `response_json_schema`, `thinking_level LOW`, modelos fijos configurables
+   y sin alias; tarifas editables (la de 3.8-flash la debe dar el usuario).
+5. Historial de facturas exportadas por cliente (`historial.py`).
+6. Los NIF se aprenden al exportar, no al leer.
+7. Sin crédito se cancela el lote; se cuenta lo pagado por hojas fallidas.
+8. Revalidación en una pasada (300 líneas: 5,9 s → 0,18 s).
+9. 10 hojas en paralelo (`hilos_lectura` en ajustes.json).
+10. Directorio común de clientes de la suite (`suite.py`).
+11. Avisos dentro de la ventana con Deshacer (`banda_avisos.py`).
+12. Ficha de la factura junto al documento (`panel_ficha.py`).
+13. Estados Verificada / Sin verificar / Revisar / Error.
+14. Estética de la suite: cinta por grupos, lista de bloques, barra de estado,
+    barra de título #1F3550. Se mantiene el orden de columnas de la 1.13.23.
+15. Incidencias con su campo y gravedad (`validacion.Incidencia`).
+16. Publicación manual desde Actions con la casilla «publicar»; corregida la
+    suma del Excel en modo numérico.
+
 ## Próxima actualización después de v1.13.21 — petición del 11/09/2026
 
 Estado: **implementado**. El rediseño de la tabla, la visibilidad de campos y

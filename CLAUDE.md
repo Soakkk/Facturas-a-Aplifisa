@@ -52,7 +52,9 @@ borra el trabajo del otro sin avisar.
 
 - **Entorno**: `.venv` con Python 3.11 (el `python` del sistema es un 3.7 viejo).
 - **Interfaz**: PySide6 (`app.py`), con diálogos aparte (`dialogo_*.py`).
-- **Lectura**: Gemini (`extraccion.py`), modelo fijado a `gemini-3.7-flash`.
+- **Lectura**: Gemini (`extraccion.py`), modelos fijos `gemini-3.8-flash`
+  (principal) y `gemini-3.7-flash` (respaldo), configurables; doble lectura
+  comparada en `doble_lectura.py`. Nunca alias `-latest`.
 - **Criterio contable**: `conceptos.py` + `config/conceptos_aplifisa.csv`, que es
   el catálogo REAL de conceptos del Aplifisa del usuario. Las cuentas salen de
   ahí; no se inventan.

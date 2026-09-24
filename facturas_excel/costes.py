@@ -32,6 +32,9 @@ PRECIOS: Dict[str, Tuple[float, float]] = {
     "gemini-2.5-pro": (1.25, 10.00),
     "gemini-2.0-flash": (0.10, 0.40),
 }
+# gemini-3.8-flash no esta en la tabla a proposito: no se inventa su tarifa.
+# Mientras no se escriba en Configuracion -> Modelos de lectura se estima con
+# PRECIO_DESCONOCIDO y la barra lo indica con «(tarifa estimada)».
 # Modelo que no esta en la tabla: se cobra como el Flash mas caro. Mejor
 # pasarse en la cuenta que quedarse corto y pillarse los dedos con el tope.
 PRECIO_DESCONOCIDO = (0.75, 3.75)
@@ -57,10 +60,22 @@ def precio_de(modelo: str) -> Tuple[Tuple[float, float], bool]:
     que vale la clave mas larga que encaje por delante.
     """
     nombre = _normaliza(modelo)
-    encajes = [k for k in PRECIOS if nombre.startswith(k)]
+    tabla = dict(PRECIOS)
+    # Tarifas escritas por el usuario (Configuracion -> Modelos de lectura):
+    # mandan sobre la tabla, para no tener que esperar a una actualizacion
+    # cuando Google publica o cambia un precio.
+    propias = ajustes.leer("precios_modelos", {}) or {}
+    if isinstance(propias, dict):
+        for clave, valor in propias.items():
+            try:
+                entrada, salida = (float(v) for v in valor)
+            except (TypeError, ValueError):
+                continue
+            tabla[_normaliza(clave)] = (entrada, salida)
+    encajes = [k for k in tabla if nombre.startswith(k)]
     if not encajes:
         return PRECIO_DESCONOCIDO, False
-    return PRECIOS[max(encajes, key=len)], True
+    return tabla[max(encajes, key=len)], True
 
 
 def euros_por_dolar() -> float:

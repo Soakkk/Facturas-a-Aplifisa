@@ -13,6 +13,7 @@ Reutilizable desde la UI y desde scripts.
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
@@ -20,8 +21,8 @@ from uuid import uuid4
 
 from . import clientes, proveedores
 from .conceptos import (
-    DEFAULT_VENTA, asignar_concepto, es_valido, normalizar_concepto,
-    subclave_628, subclaves_de,
+    DEFAULT_GASTO, DEFAULT_GASTO_GXX, asignar_concepto_con_origen, es_valido,
+    normalizar_concepto, subclave_628, subclaves_de,
 )
 from .extraccion import _num
 from .modelo import Factura
@@ -130,6 +131,9 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
         lista = nombres.get(nif, [])
         c.nombre = Counter(lista).most_common(1)[0][0] if lista else ""
         c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
+        # El nombre con el que ya se le conoce (aqui o en la suite) manda
+        # sobre las variantes leidas en las facturas.
+        c.nombre = clientes.nombre_confirmado(nif) or c.nombre
         c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
 
     # Con empate se propone al que RECIBE las facturas: un taco de facturas
@@ -219,18 +223,71 @@ def normalizar_importes_abono(facturas: List[Factura]) -> bool:
 
 def concepto_gasto(datos: dict) -> tuple[str, str | None]:
     """Cuenta de gasto propuesta, reutilizable al corregir un abono."""
-    cuenta, gxx = normalizar_concepto(
-        datos.get("cuenta_gasto"), datos.get("subclave_gxx"))
-    texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
-    if not cuenta:
-        cuenta = asignar_concepto("gasto", texto)
-    if not gxx and cuenta == "628":
-        gxx = subclave_628(texto)
-    if not gxx and cuenta:
-        posibles = subclaves_de(cuenta)
-        if len(posibles) == 1:
-            gxx = posibles[0][0]
+    cuenta, gxx, _aviso = concepto_propuesto("gasto", datos)
     return cuenta, gxx
+
+
+def _unica_subclave(cuenta) -> str | None:
+    posibles = subclaves_de(cuenta)
+    return posibles[0][0] if len(posibles) == 1 else None
+
+
+def concepto_propuesto(tipo: str, datos: dict) -> tuple[str, str | None, str]:
+    """(cuenta, subclave, aviso) de la factura, sin inventar en silencio.
+
+    Manda la cuenta que Gemini ha elegido del catalogo. Si la cuenta es buena
+    pero su subclave no existe, se corrige SOLO la subclave cuando la cuenta
+    no tiene mas que una (705 -> I01): antes se cambiaba la cuenta entera y
+    un servicio (705) acababa como venta de genero (700) sin avisar.
+    Cuando Gemini no propone nada valido, las palabras clave o la cuenta de
+    descarte dan una propuesta, pero la fila queda en ambar con el motivo.
+    """
+    lado = "gasto" if tipo == "gasto" else "ingreso"
+    campo_cuenta, campo_gxx = (("cuenta_gasto", "subclave_gxx") if lado == "gasto"
+                               else ("cuenta_ingreso", "subclave_ingreso"))
+    cuenta, gxx = normalizar_concepto(datos.get(campo_cuenta),
+                                      datos.get(campo_gxx))
+    texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
+    if lado == "ingreso":
+        texto = f"{datos.get('concepto_texto', '')}"
+    del_catalogo = {c for c, _, _ in catalogo_de(lado)}
+    if cuenta and cuenta in del_catalogo:
+        if gxx and not es_valido(cuenta, gxx):
+            unica = _unica_subclave(cuenta)
+            if unica:
+                return (cuenta, unica,
+                        f"La subclave {gxx} no existe para la {cuenta}: se ha "
+                        f"puesto {unica}, la única que admite.")
+            if cuenta == "628":
+                gxx = subclave_628(texto)
+            else:
+                gxx = None
+        if not gxx:
+            gxx = _unica_subclave(cuenta) or (
+                subclave_628(texto) if cuenta == "628" else None)
+        return cuenta, gxx, ""
+
+    propuesta, origen = asignar_concepto_con_origen(
+        "gasto" if lado == "gasto" else "venta", texto)
+    gxx = None
+    if propuesta == "628":
+        gxx = subclave_628(texto)
+    if propuesta == DEFAULT_GASTO and lado == "gasto" and origen == "defecto":
+        gxx = DEFAULT_GASTO_GXX
+    gxx = gxx or _unica_subclave(propuesta)
+    leida = f" (Gemini propuso «{cuenta}», que no es de {lado})" if cuenta else ""
+    if origen == "palabras":
+        aviso = (f"Cuenta {propuesta} propuesta por palabras clave{leida}: "
+                 "compruebe el concepto.")
+    else:
+        aviso = (f"Cuenta {propuesta} puesta por descarte{leida}: no se ha "
+                 "podido determinar el concepto. Elija la cuenta correcta.")
+    return propuesta, gxx, aviso
+
+
+def catalogo_de(lado: str):
+    from .conceptos import catalogo
+    return catalogo(lado)
 
 
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
@@ -271,23 +328,20 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    if datos.get("_error"):
+        aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
+                "esta hoja; no se ha rellenado ningún dato.".strip()
     if datos.get("_union_inferida"):
         paginas = ", ".join(str(p) for p in datos.get("_paginas_union_inferida", []))
         aviso = f"{aviso} Unión inferida de páginas {paginas}: " \
                 f"{datos.get('_motivo_union_inferida', 'continuidad de hojas')}. " \
                 "Comprueba que pertenecen a la misma factura.".strip()
 
-    # Cuenta contable
-    if tipo == "venta":
-        # Los ingresos tienen su propia lista en Aplifisa (700 ventas, 705
-        # servicios, 740/741 subvenciones...). Si Gemini propone una de ellas
-        # se respeta; si no, la de siempre.
-        cuenta, gxx = normalizar_concepto(
-            datos.get("cuenta_ingreso"), datos.get("subclave_ingreso"))
-        if not es_valido(cuenta, gxx):
-            cuenta, gxx = DEFAULT_VENTA, None
-    else:
-        cuenta, gxx = concepto_gasto(datos)
+    # Cuenta contable: la del catalogo que elige Gemini. Si no la hay, una
+    # propuesta, pero con aviso (nunca una cuenta por descarte en verde).
+    cuenta, gxx, aviso_cuenta = concepto_propuesto(tipo, datos)
+    if aviso_cuenta:
+        aviso = f"{aviso} {aviso_cuenta}".strip()
 
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
@@ -361,6 +415,13 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     normalizar_importes_abono(facturas)
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
+    # Resultado de la doble lectura, en todas las lineas del documento.
+    verificacion = str(datos.get("_verificacion") or "")
+    discrepancias = discrepancias_de(datos, tipo)
+    for f in facturas:
+        f.verificacion = verificacion
+        f.discrepancias = discrepancias
+
     # Solo se avisa si lo escrito a mano toca a los IMPORTES. El asesor anota
     # el CIF y numera las facturas para los requerimientos de Hacienda: si se
     # avisara de eso, saldrian todas en ambar y el semaforo no serviria.
@@ -379,6 +440,34 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
                             gxx=gxx, origen=origen, pagina=pagina, aviso=aviso,
                             sustituye_a=str(datos.get("sustituye_a") or "").strip())
+
+
+# A que dato de la fila afecta cada diferencia de la doble lectura.
+_CAMPO_FACTURA = {
+    "num_factura": "num_factura", "fecha": "fecha", "total": "total_impreso",
+    "cuota_irpf": "cuota_irpf", "lineas_iva": "base_iva", "suplidos": "base_iva",
+}
+
+
+def discrepancias_de(datos: dict, tipo: str) -> tuple:
+    """Las diferencias entre las dos lecturas, listas para la tabla."""
+    from .doble_lectura import texto_diferencia
+    salida = []
+    m1, m2 = datos.get("_modelo_1", ""), datos.get("_modelo_2", "")
+    contraparte = "emisor_nif" if tipo == "gasto" else "receptor_nif"
+    for d in datos.get("_discrepancias") or []:
+        if not isinstance(d, dict):
+            continue
+        copia = dict(d)
+        campo = copia.get("campo")
+        if campo in ("emisor_nif", "receptor_nif"):
+            copia["campo_factura"] = "nif" if campo == contraparte else ""
+        else:
+            copia["campo_factura"] = _CAMPO_FACTURA.get(campo, "")
+        copia["modelo_1"], copia["modelo_2"] = m1, m2
+        copia["texto"] = texto_diferencia(copia, m1, m2)
+        salida.append(copia)
+    return tuple(salida)
 
 
 def _anadir_aviso(pr: FacturaProcesada, texto: str) -> None:
@@ -458,6 +547,24 @@ def aprender_nifs(procesadas: List[FacturaProcesada]) -> int:
         if not pr.facturas:
             continue
         f = pr.facturas[0]
+        if recordar_nif(f.nombre, f.nif):
+            n += 1
+    return n
+
+
+def aprender_nifs_exportados(facturas) -> int:
+    """Memoriza los NIF de las facturas que se acaban de exportar.
+
+    Es el momento seguro: el cliente del lote esta confirmado y cada fila ha
+    pasado la revision. Antes se aprendia nada mas leer, y un reparto al reves
+    (el cliente tomado por proveedor) quedaba guardado para los proximos lotes.
+    """
+    n, vistos = 0, set()
+    for f in facturas:
+        clave = (clave_proveedor(f.nombre), normaliza_nif(f.nif))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
         if recordar_nif(f.nombre, f.nif):
             n += 1
     return n
@@ -616,9 +723,11 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote
     completar_desde_memoria(solo)    # 2º lo sabido de otras veces
-    aprender_nifs(solo)              # 3º memorizar lo leido bien
-    unificar_nombres(solo)           # 4º el mismo proveedor, escrito igual
-    aplicar_recordado(solo)          # 5º lo que ya corrigio el usuario a mano
+    # Lo leido NO se memoriza aqui: todavia no se sabe si el cliente esta bien
+    # elegido ni si esos NIF son buenos. Se aprende al exportar, con los datos
+    # ya revisados (ver aprender_nifs_exportados).
+    unificar_nombres(solo)           # 3º el mismo proveedor, escrito igual
+    aplicar_recordado(solo)          # 4º lo que ya corrigio el usuario a mano
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
 
@@ -742,6 +851,9 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     """
     _, origen_a, pagina_a, datos_a = anterior
     _, origen_b, pagina_b, datos_b = siguiente
+    # Una hoja que no se pudo leer nunca se pega a otra: quedaria escondida.
+    if datos_a.get("_error") or datos_b.get("_error"):
+        return False
     if not _mismo_origen(origen_a, origen_b):
         return False
     ultima_a = datos_a.get("_ultima_pagina_consolidada", pagina_a)
@@ -822,6 +934,25 @@ def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
             fusion[campo] = deepcopy(siguiente[campo])
     for campo in _CAMPOS_BOOLEANOS:
         fusion[campo] = bool(primera.get(campo) or siguiente.get(campo))
+
+    # Doble lectura: las diferencias de identidad valen de todas las hojas;
+    # las de importes, solo de la hoja de la que salen los importes finales
+    # (el subtotal de una hoja inicial se descarta, y su diferencia tambien).
+    fiscales = {"total", "lineas_iva", "cuota_irpf", "suplidos"}
+    discrepancias = []
+    for datos, aporta_importes in ((primera, fuentes_lineas != (siguiente,)),
+                                   (siguiente, True)):
+        for d in datos.get("_discrepancias") or []:
+            if isinstance(d, dict) and (aporta_importes or d.get("campo") not in fiscales):
+                if d not in discrepancias:
+                    discrepancias.append(d)
+    fusion["_discrepancias"] = discrepancias
+    verificaciones = {str(d.get("_verificacion") or "") for d in (primera, siguiente)}
+    fusion["_verificacion"] = ("simple" if "simple" in verificaciones
+                               else "doble" if "doble" in verificaciones else "")
+    for clave in ("_modelo_1", "_modelo_2"):
+        if not fusion.get(clave) and siguiente.get(clave):
+            fusion[clave] = siguiente[clave]
 
     orden_confianza = {"alta": 0, "media": 1, "baja": 2}
     confianzas = [str(d.get("confianza") or "").strip().lower()
@@ -963,5 +1094,18 @@ def aplicar_recordado(procesadas: List[FacturaProcesada]) -> int:
         pr.cuenta, pr.gxx = cuenta, gxx
         for f in pr.facturas:
             f.concepto, f.subclave = cuenta, gxx
+        # La cuenta ya la decidio una persona: sobra el aviso de propuesta.
+        pr.aviso = quitar_aviso_cuenta(pr.aviso)
         puestos += 1
     return puestos
+
+
+_AVISO_CUENTA = re.compile(
+    r"(?:La subclave \S+ no existe para la \S+: se ha puesto \S+, la única "
+    r"que admite\.|Cuenta \S+ (?:propuesta por palabras clave|puesta por "
+    r"descarte)[^:]*:[^.]*\.(?: Elija la cuenta correcta\.)?)")
+
+
+def quitar_aviso_cuenta(aviso: str) -> str:
+    """Retira el aviso de cuenta propuesta cuando ya la ha fijado alguien."""
+    return " ".join(_AVISO_CUENTA.sub("", aviso or "").split())

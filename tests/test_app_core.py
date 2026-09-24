@@ -332,12 +332,14 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         assert boton.width() >= boton.sizeHint().width()
         assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
     assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
+    assert not v.lista_card.isVisible()       # la tabla gana el sitio
     v.resize(1420, 820)
     _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
     assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
     assert v.txt_buscar.width() >= 260
+    assert v.lista_card.isVisible()
 
 
 def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():
