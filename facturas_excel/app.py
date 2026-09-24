@@ -127,6 +127,7 @@ def _sin_aviso_ejercicios_antiguo(aviso: str) -> str:
     """Quita el aviso global que antes se copiaba en todas las facturas."""
     return _AVISO_EJERCICIOS_ANTIGUO.sub("", str(aviso or "")).strip()
 
+ANCHO_LISTA_BLOQUES = 1280   # por debajo, la lista lateral se oculta
 HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
 
 
@@ -747,6 +748,7 @@ class VentanaPrincipal(QMainWindow):
         # Lista lateral de bloques: cada PDF o escaneo con lo que le queda
         # por revisar. Pulsar uno filtra la tabla; «Todo el lote» lo quita.
         lista_card = QFrame()
+        self.lista_card = lista_card
         lista_card.setObjectName("tarjeta")
         lista_card.setMinimumWidth(150)
         ll = QVBoxLayout(lista_card)
@@ -970,14 +972,14 @@ class VentanaPrincipal(QMainWindow):
             if maximo < 16_777_215:
                 preferido = min(preferido, maximo)
             necesario = preferido + (8 if usado else 0)
-            if usado and usado + necesario > disponible and fila_actual < 2:
+            if usado and usado + necesario > disponible and fila_actual < 3:
                 fila_actual += 1
                 usado = 0
                 necesario = preferido
             fila = self.filas_herramientas[fila_actual]
             fila.insertWidget(fila.count() - 1, widget)
             usado += necesario
-        fila_registro = min(fila_actual + 1, 3)
+        fila_registro = min(fila_actual + 1, len(self.filas_herramientas) - 1)
         fila = self.filas_herramientas[fila_registro]
         fila.insertWidget(fila.count() - 1, self.combo_filtro_registro)
 
@@ -4201,6 +4203,10 @@ class VentanaPrincipal(QMainWindow):
         super().resizeEvent(event)
         ancho = event.size().width()
         self._actualizar_barra_responsiva(ancho)
+        # En ventanas estrechas la lista de bloques deja su sitio a la tabla:
+        # el mismo filtro sigue en el desplegable «Todos los bloques».
+        if hasattr(self, "lista_card"):
+            self.lista_card.setVisible(ancho >= ANCHO_LISTA_BLOQUES)
         self._distribuir_herramientas(ancho)
         if self.tabla.currentRow() >= 0:
             self._mostrar_miniatura()
