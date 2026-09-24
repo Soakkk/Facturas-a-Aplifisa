@@ -78,7 +78,8 @@ from facturas_excel.pdf import PAGINAS_POR_BLOQUE, cargar_imagenes, dividir_pdf
 from facturas_excel.procesar import (
     a_total_factura, analizar_cliente, clave_proveedor, construir,
     detectar_cliente,
-    fusionar_paginas_manual, normaliza_nif, preparar_lote,
+    aprender_nifs_exportados, fusionar_paginas_manual, normaliza_nif,
+    preparar_lote, quitar_aviso_cuenta,
     recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
 )
 from facturas_excel.registro import (
@@ -2524,7 +2525,15 @@ class VentanaPrincipal(QMainWindow):
     def _cuenta_escrita_a_mano(self, r) -> str:
         """La cuenta que se le pone a un proveedor se le queda puesta, igual
         que hace Aplifisa: sus proximas facturas ya entran con ese concepto."""
-        if r >= len(self.filas) or self._tipo_fila(r) != "gasto":
+        if r >= len(self.filas):
+            return ""
+        # La cuenta la ha puesto una persona: sobra el aviso de «cuenta
+        # propuesta» en todas las líneas de esa factura.
+        clave = clave_documento(self.filas[r]["factura"])
+        for registro in self.filas:
+            if clave_documento(registro["factura"]) == clave:
+                registro["aviso"] = quitar_aviso_cuenta(registro["aviso"])
+        if self._tipo_fila(r) != "gasto":
             return ""
         f = self._leer_fila(r)
         cuenta = (self.tabla.item(r, C_CUENTA).text() or "").strip()
@@ -3756,22 +3765,63 @@ class VentanaPrincipal(QMainWindow):
         excluidas = []
         errores = []
         pendientes_revision = []
+        self._ya_exportadas_export = []
         for fila in range(self.tabla.rowCount()):
             f = self._leer_fila(fila)
             registro = self.filas[fila]
+            # El aviso de «ya exportada» no cuenta aquí: se decide aparte.
+            estado = registro.get("estado_base", registro.get("estado"))
             if getattr(self, "_errores_documento", {}).get(fila) and not f.tratamiento_manual:
                 errores.append(fila)
             elif fila in self._duplicados:
                 excluidas.append((fila, "duplicada"))
             elif f.tratamiento_manual:
                 excluidas.append((fila, f.tratamiento_manual))
-            elif registro.get("estado") == ERROR:
+            elif estado == ERROR:
                 errores.append(fila)
-            elif registro.get("estado") == REVISAR and not f.revision_confirmada:
+            elif estado == REVISAR and not f.revision_confirmada:
                 pendientes_revision.append(fila)
             else:
+                if registro.get("ya_exportada"):
+                    self._ya_exportadas_export.append((fila, f))
                 por_tipo[self._tipo_fila(fila)].append(f)
         return por_tipo, excluidas, errores, pendientes_revision
+
+    def _decidir_ya_exportadas(self, por_tipo) -> bool:
+        """Pregunta qué hacer con las facturas que ya salieron en otro lote.
+
+        Devuelve False si se cancela la exportación. Por defecto se QUITAN:
+        volver a importarlas las registraría dos veces.
+        """
+        ya = getattr(self, "_ya_exportadas_export", [])
+        if not ya:
+            return True
+        lineas = "\n".join(
+            f"  · Línea {fila + 1}: {f.num_factura or 's/n'} de "
+            f"{f.nombre or '?'} — exportada el "
+            f"{self.filas[fila]['ya_exportada'].get('exportada', '?')}"
+            for fila, f in ya[:8])
+        if len(ya) > 8:
+            lineas += f"\n  · … y {len(ya) - 8} más"
+        caja = QMessageBox(self)
+        caja.setIcon(QMessageBox.Warning)
+        caja.setWindowTitle("Facturas ya exportadas")
+        caja.setText(f"{len(ya)} línea(s) ya salieron hacia Aplifisa en otro "
+                     "lote. Si se vuelven a importar, quedarán registradas "
+                     "dos veces.")
+        caja.setInformativeText(lineas)
+        quitar = caja.addButton("Exportar sin ellas", QMessageBox.AcceptRole)
+        incluir = caja.addButton("Incluirlas otra vez", QMessageBox.DestructiveRole)
+        caja.addButton("Cancelar", QMessageBox.RejectRole)
+        caja.setDefaultButton(quitar)
+        caja.exec()
+        pulsado = caja.clickedButton()
+        if pulsado is quitar:
+            fuera = {id(f) for _fila, f in ya}
+            for tipo in por_tipo:
+                por_tipo[tipo] = [f for f in por_tipo[tipo] if id(f) not in fuera]
+            return True
+        return pulsado is incluir
 
     def _nombre_cliente_archivo(self) -> str:
         nombre = (getattr(self, "_cliente_nombre", "") or
@@ -3820,6 +3870,8 @@ class VentanaPrincipal(QMainWindow):
                 + "\n  · ".join(partes))
             self._siguiente_incidencia()
             return
+        if not self._decidir_ya_exportadas(por_tipo):
+            return
         if not any(por_tipo.values()):
             QMessageBox.information(
                 self, "Sin facturas rutinarias",
@@ -3839,6 +3891,7 @@ class VentanaPrincipal(QMainWindow):
         problemas_export = []      # lo que no cuadre entre archivo y pantalla
         resumen_archivos = []      # (ruta, lineas, totales) para enseñarlo
         tipos_exportados = []      # los parciales se borran solo tras verificar
+        rutas_por_tipo = {}
         cliente_archivo = self._nombre_cliente_archivo()
         for tipo, xml in (
             ("gasto", "gastos.xml"),
@@ -3861,6 +3914,7 @@ class VentanaPrincipal(QMainWindow):
             resumen_archivos.append(
                 (ruta, len(listas), totales_del_excel(config, ruta)))
             tipos_exportados.append(tipo)
+            rutas_por_tipo[tipo] = ruta
 
         if problemas_export:
             QMessageBox.critical(
@@ -3874,6 +3928,14 @@ class VentanaPrincipal(QMainWindow):
             len(archivo.eliminar_excel_temporales(cliente_archivo, tipo))
             for tipo in tipos_exportados
         )
+        # Solo con el Excel ya verificado: se recuerda lo exportado (para
+        # avisar si vuelve a aparecer) y se aprenden sus NIF, ya revisados.
+        exportadas = {t: por_tipo[t] for t in tipos_exportados}
+        historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
+                            rutas_por_tipo, getattr(self, "_cliente_nombre", ""))
+        aprender_nifs_exportados(
+            [f for t in tipos_exportados for f in por_tipo[t]])
+        self._revalidar_todo()
         detalle = "\n".join(
             f"  · {os.path.basename(ruta)}: {lineas} línea(s), "
             f"base {eur(t['base_iva'])}, "
