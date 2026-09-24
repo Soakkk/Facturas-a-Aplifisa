@@ -36,6 +36,7 @@ from facturas_excel import (
     __version__, ajustes, archivo, costes, escaner, historial, notas_version,
     pendientes, revision_gemini, sesion, updater, muestras_revision,
 )
+from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
 from facturas_excel.dialogo_cliente import DialogoCliente
@@ -662,6 +663,8 @@ class VentanaPrincipal(QMainWindow):
         barra_busqueda.addWidget(self.combo_filtro_estado)
         cuerpo.addLayout(barra_busqueda)
         cuerpo.addWidget(self.alerta)
+        self.banda = BandaAvisos(self)
+        cuerpo.addWidget(self.banda)
         self.combo_filtro_registro = ComboSinRueda()
         self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
         self.combo_filtro_registro.setToolTip(
@@ -1140,6 +1143,12 @@ class VentanaPrincipal(QMainWindow):
         self.btn_ventas = self.btn_gastos
 
 
+    def _avisar(self, texto: str, tipo: str = INFO, deshacer=None,
+                segundos: int = 10) -> None:
+        """Aviso dentro de la ventana, sin bloquear (ver banda_avisos)."""
+        if hasattr(self, "banda"):
+            self.banda.mostrar(texto, tipo, deshacer=deshacer, segundos=segundos)
+
     def _mostrar_notas_version_al_arrancar(self):
         self._mostrar_notas_version(forzar=False)
 
@@ -1459,8 +1468,7 @@ class VentanaPrincipal(QMainWindow):
             f"Pega tu API key de Google AI Studio.\nActual: {pista}")
         if ok and texto.strip():
             guardar_api_key(texto.strip())
-            QMessageBox.information(self, "Guardada",
-                                    "API key guardada de forma segura.")
+            self._avisar("API key guardada de forma segura.", EXITO)
 
     def _configurar_tope(self):
         euros, ok = QInputDialog.getDouble(
@@ -1635,8 +1643,7 @@ class VentanaPrincipal(QMainWindow):
     # ---------- escaneo ----------
     def _escanear(self):
         if getattr(self, "_hilo_escaneo", None) and self._hilo_escaneo.isRunning():
-            QMessageBox.information(self, "Escaneando",
-                                    "Espere a que termine el escaneo en curso.")
+            self._avisar("Espere a que termine el escaneo en curso.", AVISO)
             return
         disponibles = escaner.escaneres()
         if not disponibles:
@@ -2147,10 +2154,9 @@ class VentanaPrincipal(QMainWindow):
         analisis = self._analisis_del_lote()
         if len(analisis.candidatos) < 2:
             if not automatico:
-                QMessageBox.information(
-                    self, "Cliente del lote",
+                self._avisar(
                     "En estas facturas solo se ha identificado una parte con "
-                    "NIF, así que no hay entre quién elegir.")
+                    "NIF, así que no hay entre quién elegir.", INFO)
             return
         dialogo = DialogoCliente(analisis.candidatos, self,
                                  elegido=getattr(self, "_cliente_nif", ""))
@@ -2179,6 +2185,8 @@ class VentanaPrincipal(QMainWindow):
         self._rellenar_tabla()
         self._revalidar_todo()
         self.lbl_estado.setText(f"Lote rehecho con {nombre or nif} como cliente.")
+        self._avisar(f"Lote rehecho con {nombre or nif} como cliente, sin "
+                     "volver a pagar la lectura.", INFO)
 
     def _nombre_bloque(self, base_preferido: str = "") -> str:
         """Nombre corto del bloque: el del PDF cargado, sin repetirse."""
@@ -2266,15 +2274,12 @@ class VentanaPrincipal(QMainWindow):
     def _quitar_bloque(self):
         nombre = self.combo_filtro_bloque.currentText()
         if nombre == TODOS_LOS_BLOQUES or not self._bloques:
-            QMessageBox.information(
-                self, "Quitar un bloque",
-                "Elija primero un bloque en el desplegable de al lado.")
+            self._avisar("Para quitar un bloque, elíjalo primero en la lista "
+                         "de bloques o en el desplegable.", AVISO)
             return
-        if QMessageBox.question(
-                self, "Quitar el bloque",
-                f"¿Quitar del lote el bloque «{nombre}» y todas sus facturas?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-            return
+        # Sin «¿Seguro?»: se quita y se ofrece deshacerlo en la banda.
+        quitados = [(i, b) for i, b in enumerate(self._bloques)
+                    if b["nombre"] == nombre]
         self._bloques = [b for b in self._bloques if b["nombre"] != nombre]
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
@@ -2287,6 +2292,19 @@ class VentanaPrincipal(QMainWindow):
         self.btn_gastos.setEnabled(hay_datos)
         self.btn_registro.setEnabled(hay_datos)
         self.lbl_estado.setText(f"Bloque «{nombre}» quitado del lote.")
+
+        def deshacer():
+            for indice, bloque in quitados:
+                self._bloques.insert(min(indice, len(self._bloques)), bloque)
+            self._actualizar_combo_bloques()
+            self._rellenar_tabla()
+            self._revalidar_todo()
+            hay = self.tabla.rowCount() > 0
+            self.btn_gastos.setEnabled(hay)
+            self.btn_registro.setEnabled(hay)
+            self._avisar(f"Bloque «{nombre}» recuperado.", EXITO)
+        self._avisar(f"Bloque «{nombre}» quitado del lote.", INFO,
+                     deshacer=deshacer)
 
     def _vaciar_todo(self):
         if not self._bloques and not self.filas:
@@ -2811,33 +2829,39 @@ class VentanaPrincipal(QMainWindow):
         """Da salida únicamente a avisos ámbar comprobados por una persona."""
         filas = self._filas_seleccionadas()
         if not filas:
-            QMessageBox.information(
-                self, "Revisión", "Seleccione una o varias filas ámbar.")
+            self._avisar("Seleccione una o varias filas ámbar.", AVISO)
             return
-        confirmadas = 0
+        confirmadas = []
         for fila in filas:
             registro = self.filas[fila]
             f = self._leer_fila(fila)
             if (registro.get("estado") == REVISAR
-                    and not f.tratamiento_manual):
+                    and not f.tratamiento_manual and not f.revision_confirmada):
                 f.revision_confirmada = True
-                confirmadas += 1
+                confirmadas.append(f)
         self._revalidar_todo()
         if confirmadas:
-            self.lbl_estado.setText(
-                f"{confirmadas} línea(s) revisada(s): ya pueden exportarse.")
+            texto = (f"{len(confirmadas)} línea(s) revisada(s): ya pueden "
+                     "exportarse.")
+            self.lbl_estado.setText(texto)
+
+            def deshacer():
+                for factura in confirmadas:
+                    factura.revision_confirmada = False
+                self._revalidar_todo()
+                self._avisar("Revisión deshecha: vuelven a estar pendientes.",
+                             INFO)
+            self._avisar(texto, EXITO, deshacer=deshacer)
         else:
-            QMessageBox.information(
-                self, "Revisión",
+            self._avisar(
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
-                "corrigen y las operaciones manuales no se exportan.")
+                "corrigen y las operaciones manuales no se exportan.", AVISO)
 
     def _alternar_gestion_manual(self) -> None:
         """Aparta la factura completa, aunque tenga varias líneas de IVA."""
         seleccionadas = self._filas_seleccionadas()
         if not seleccionadas:
-            QMessageBox.information(
-                self, "Gestión manual", "Seleccione al menos una factura.")
+            self._avisar("Seleccione al menos una factura.", AVISO)
             return
         claves = set()
         for fila in seleccionadas:
@@ -2899,11 +2923,10 @@ class VentanaPrincipal(QMainWindow):
         filas = self._filas_seleccionadas()
         crudos = self._crudos_de_filas(filas)
         if len(crudos) < 2:
-            QMessageBox.information(
-                self, "Unir hojas",
-                "Seleccione filas de al menos dos hojas distintas. Si una "
-                "factura tiene varias líneas de IVA en la misma hoja, cuentan "
-                "como una sola hoja.")
+            self._avisar(
+                "Para unir hojas, seleccione filas de al menos dos hojas "
+                "distintas. Si una factura tiene varias líneas de IVA en la "
+                "misma hoja, cuentan como una sola hoja.", AVISO)
             return
         referencias = []
         for _ib, _ir, (_img, _origen, pagina, datos) in crudos:
@@ -2970,8 +2993,8 @@ class VentanaPrincipal(QMainWindow):
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},
                        reverse=True)
         if not filas:
-            QMessageBox.information(
-                self, "Eliminar facturas", "Seleccione una o varias filas completas.")
+            self._avisar("Seleccione una o varias filas completas para "
+                         "eliminarlas.", AVISO)
             return
         self._guardar_muestra_revision()
         self._invalidar_contraste_registro()
@@ -2996,6 +3019,8 @@ class VentanaPrincipal(QMainWindow):
         self._aplicar_filtro()
         self.lbl_estado.setText(
             f"{len(filas)} línea(s) eliminada(s). Puede deshacer la operación.")
+        self._avisar(f"{len(filas)} línea(s) eliminada(s) del lote.", INFO,
+                     deshacer=self._deshacer_borrado)
 
     def _deshacer_borrado(self) -> None:
         if not self._ultimo_borrado:
@@ -3017,6 +3042,7 @@ class VentanaPrincipal(QMainWindow):
         self._revalidar_todo()
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
+        self._avisar(f"{cantidad} línea(s) restaurada(s).", EXITO)
 
     def _abrir_ficha(self, fila, columna):
         """Al pulsar el semáforo se abre la ficha con lo que le pasa a la fila.
@@ -3642,8 +3668,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _guardar_listado_totales(self) -> None:
         if not self.tabla.rowCount():
-            QMessageBox.information(
-                self, "Listado de totales", "No hay facturas para incluir.")
+            self._avisar("No hay facturas para incluir en el listado.", AVISO)
             return
         cliente = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", (
             getattr(self, "_cliente_nombre", "") or "CLIENTE")).strip()
@@ -3873,10 +3898,10 @@ class VentanaPrincipal(QMainWindow):
         if not self._decidir_ya_exportadas(por_tipo):
             return
         if not any(por_tipo.values()):
-            QMessageBox.information(
-                self, "Sin facturas rutinarias",
+            self._avisar(
                 "No hay facturas para exportar automáticamente. "
-                f"Se han apartado {len(excluidas)} línea(s) para gestión manual.")
+                f"Se han apartado {len(excluidas)} línea(s) para gestión "
+                "manual o ya exportadas.", INFO)
             return
 
         # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
@@ -3945,9 +3970,8 @@ class VentanaPrincipal(QMainWindow):
             f"  · {carpeta}" for carpeta in sorted({
                 os.path.dirname(ruta) for ruta, _lineas, _totales in resumen_archivos
             }))
-        QMessageBox.information(
-            self, "Exportación terminada",
-            f"Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
+        self._avisar(
+            f"Exportación terminada y comprobada. Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
             f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
@@ -3956,7 +3980,8 @@ class VentanaPrincipal(QMainWindow):
             + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
                if temporales_eliminados else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
-              "en pantalla, línea por línea. No se han creado Excel parciales.")
+              "en pantalla, línea por línea. No se han creado Excel parciales.",
+            EXITO, segundos=0)
 
 
 def _argumentos(argv):
