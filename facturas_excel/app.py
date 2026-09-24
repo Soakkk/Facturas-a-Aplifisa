@@ -41,6 +41,7 @@ from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
 from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
+from facturas_excel.dialogo_modelos import DialogoModelos
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
 from facturas_excel.dialogo_orden import (
@@ -67,6 +68,7 @@ from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import (
     ACCENT, ACCENT_FAINT, BORDER, INK, MUTED, SUCCESS, WARNING, DANGER, aplicar_tema,
 )
+from facturas_excel.panel_ficha import PanelFicha
 from facturas_excel.ficha_incidencias import (
     TITULOS as TITULOS_ESTADO, FichaIncidencias,
 )
@@ -798,7 +800,28 @@ class VentanaPrincipal(QMainWindow):
         self.visor_scroll.setWidget(self.lbl_img)
         lv.addWidget(titulo_visor)
         lv.addLayout(barra_documento)
-        lv.addWidget(self.visor_scroll, 1)
+        # Documento arriba y ficha de la factura debajo: lo leído, al lado de
+        # donde se ha leído.
+        self.split_visor = QSplitter(Qt.Vertical)
+        self.split_visor.setObjectName("splitVisor")
+        self.split_visor.setChildrenCollapsible(False)
+        self.split_visor.setHandleWidth(8)
+        self.split_visor.addWidget(self.visor_scroll)
+        ficha_card = QWidget()
+        lf = QVBoxLayout(ficha_card)
+        lf.setContentsMargins(0, 4, 0, 0)
+        lf.setSpacing(2)
+        titulo_ficha = QLabel("Ficha de la factura")
+        titulo_ficha.setObjectName("tituloSeccion")
+        lf.addWidget(titulo_ficha)
+        self.ficha = PanelFicha()
+        self.ficha.discrepancia_resuelta.connect(self._resolver_discrepancia)
+        lf.addWidget(self.ficha, 1)
+        self.split_visor.addWidget(ficha_card)
+        self.split_visor.setSizes(self._tamanos_divisor("split_visor", [300, 330]))
+        self.split_visor.splitterMoved.connect(
+            lambda *_: self._timer_divisores.start())
+        lv.addWidget(self.split_visor, 1)
         split.addWidget(visor_card)
         split.setStretchFactor(0, 7)
         split.setStretchFactor(1, 3)
@@ -982,6 +1005,8 @@ class VentanaPrincipal(QMainWindow):
             ajustes.guardar("split_revision", self.split_revision.sizes())
         if hasattr(self, "split_contenido"):
             ajustes.guardar("split_contenido", self.split_contenido.sizes())
+        if hasattr(self, "split_visor"):
+            ajustes.guardar("split_visor", self.split_visor.sizes())
 
     def showEvent(self, evento):
         super().showEvent(evento)
@@ -1048,6 +1073,12 @@ class VentanaPrincipal(QMainWindow):
         self.accion_gestion_manual = comprobar.addAction(
             "Apartar selección para gestión manual…",
             self._alternar_gestion_manual)
+        self.accion_olvidar_exportacion = comprobar.addAction(
+            "Olvidar que la selección ya se exportó…",
+            self._olvidar_exportacion)
+        self.accion_olvidar_exportacion.setToolTip(
+            "Si Aplifisa rechazó el Excel, quita esas facturas del historial "
+            "de exportadas para poder exportarlas otra vez sin aviso.")
         self.accion_gestion_manual.setToolTip(
             "Uso excepcional: aparta o recupera facturas que no deben entrar "
             "en la exportación automática.")
@@ -1065,6 +1096,8 @@ class VentanaPrincipal(QMainWindow):
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
         config.addAction("Carpeta de documentación digitalizada…",
                          self._configurar_carpeta_escaneos)
+        config.addAction("Modelos de lectura y doble lectura…",
+                         self._configurar_modelos)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
 
@@ -1469,6 +1502,12 @@ class VentanaPrincipal(QMainWindow):
         if ok and texto.strip():
             guardar_api_key(texto.strip())
             self._avisar("API key guardada de forma segura.", EXITO)
+
+    def _configurar_modelos(self):
+        dialogo = DialogoModelos(self)
+        if dialogo.exec() == QDialog.Accepted:
+            self._avisar(dialogo.guardar(), EXITO)
+            self._pintar_gasto()
 
     def _configurar_tope(self):
         euros, ok = QInputDialog.getDouble(
@@ -2857,6 +2896,26 @@ class VentanaPrincipal(QMainWindow):
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
                 "corrigen y las operaciones manuales no se exportan.", AVISO)
 
+    def _olvidar_exportacion(self) -> None:
+        filas = [f for f in self._filas_seleccionadas()
+                 if self.filas[f].get("ya_exportada")]
+        if not filas:
+            self._avisar("Seleccione filas marcadas como «ya exportada».", AVISO)
+            return
+        por_tipo = {"gasto": [], "venta": []}
+        for fila in filas:
+            por_tipo[self._tipo_fila(fila)].append(self._leer_fila(fila))
+        cliente = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        cuantas = historial.olvidar(cliente, por_tipo, nombre)
+        self._revalidar_todo()
+
+        def deshacer():
+            historial.registrar(cliente, por_tipo, {}, nombre)
+            self._revalidar_todo()
+        self._avisar(f"{cuantas} factura(s) quitadas del historial de "
+                     "exportadas.", INFO, deshacer=deshacer)
+
     def _alternar_gestion_manual(self) -> None:
         """Aparta la factura completa, aunque tenga varias líneas de IVA."""
         seleccionadas = self._filas_seleccionadas()
@@ -3411,6 +3470,8 @@ class VentanaPrincipal(QMainWindow):
         self._pintar_alerta()
         if hasattr(self, "combo_filtro_estado"):
             self._aplicar_filtro()
+        self._refrescar_ficha()
+        self._pintar_lista_bloques()
         self._timer_muestras.start()
 
     def _pintar_alerta(self):
@@ -3719,6 +3780,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _mostrar_miniatura(self):
         r = self.tabla.currentRow()
+        self._refrescar_ficha()
         if r < 0 or r >= len(self.filas):
             self._limpiar_visor()
             return
@@ -3736,6 +3798,183 @@ class VentanaPrincipal(QMainWindow):
             self._limpiar_visor()
             self.lbl_origen.setText(origen or "Documento cargado")
             self.lbl_img.setText("Vista previa no disponible para esta factura")
+
+    # ---------- ficha de la factura ----------
+    def _filas_del_documento(self, fila: int) -> list[int]:
+        clave = clave_documento(self.filas[fila]["factura"])
+        return [r for r in range(len(self.filas))
+                if clave_documento(self.filas[r]["factura"]) == clave]
+
+    def _datos_ficha(self, fila: int) -> dict:
+        """Lo que enseña la ficha, a partir de la fila y de sus avisos."""
+        from facturas_excel.doble_lectura import _fmt as fmt_lectura
+        registro = self.filas[fila]
+        f = registro["factura"]
+        tipo = self._tipo_fila(fila)
+        estado = registro.get("estado", OK)
+        confirmada = (estado == REVISAR and f.revision_confirmada
+                      and not f.tratamiento_manual)
+        de_linea = {"base_iva", "pct_iva", "cuota_iva", "base_requiv",
+                    "pct_requiv", "cuota_requiv"}
+
+        def repartir(mensajes):
+            marcas, linea, otros = {}, [], []
+            for m in mensajes:
+                campos = getattr(m, "campos", None) or ()
+                gravedad = getattr(m, "gravedad", REVISAR)
+                texto = str(m)
+                if texto == "Revisada y confirmada manualmente":
+                    continue
+                destino = [c for c in campos if c not in ("total_impreso",)]
+                if not destino:
+                    otros.append((gravedad, texto))
+                    continue
+                for campo in destino:
+                    if campo in de_linea:
+                        linea.append((gravedad, texto))
+                    else:
+                        clave = "concepto" if campo == "subclave" else campo
+                        marcas.setdefault(clave, []).append((gravedad, texto))
+            return marcas, linea, otros
+
+        marcas, _linea, otros = repartir(registro.get("mensajes") or [])
+        filas_doc = self._filas_del_documento(fila)
+        lineas = []
+        vistos = set()
+        for r in filas_doc:
+            g = self.filas[r]["factura"]
+            _m, marcas_linea, _o = repartir(self.filas[r].get("mensajes") or [])
+            marcas_linea = [x for x in marcas_linea if x not in vistos]
+            vistos.update(marcas_linea)
+            lineas.append({"base": g.base_iva, "pct": g.pct_iva,
+                           "cuota": g.cuota_iva, "pct_re": g.pct_requiv,
+                           "cuota_re": g.cuota_requiv,
+                           "suplido": getattr(g, "es_suplido", False),
+                           "marcas": marcas_linea})
+        docs = [self.filas[r]["factura"] for r in filas_doc]
+        irpf = next((g.cuota_irpf for g in docs if g.cuota_irpf is not None), None)
+        partes = []
+        calculado = 0.0
+        for g in docs:
+            for valor in (g.base_iva, g.cuota_iva, g.cuota_requiv, g.suplidos):
+                if valor is not None:
+                    calculado += valor
+                    partes.append(eur(valor).replace(" €", ""))
+        if irpf:
+            calculado -= irpf
+        formula = " + ".join(partes) + (f" − {eur(irpf).replace(' €', '')}"
+                                         if irpf else "")
+        impreso = f.total_impreso
+        cuadre = {"formula": formula or "—", "calculado": round(calculado, 2),
+                  "impreso": impreso,
+                  "ok": impreso is not None and abs(round(calculado, 2) - impreso) <= 0.02
+                  } if partes else None
+        if impreso is not None and cuadre and not cuadre["ok"]:
+            otros = [x for x in otros if "total no cuadra" not in x[1].lower()]
+        discrepancias = []
+        for d in getattr(f, "discrepancias", ()) or ():
+            aplicable = d.get("campo_factura") in COLUMNA_DE_CAMPO
+            if d.get("campo") == "lineas_iva":
+                l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
+                aplicable = len(l2) == 1 and len(filas_doc) == 1
+            discrepancias.append(dict(d, aplicable=aplicable, textos=(
+                fmt_lectura(d.get("valor_1")), fmt_lectura(d.get("valor_2")))))
+        verificacion = getattr(f, "verificacion", "")
+        if verificacion == "doble":
+            lectura = ("Leída por dos modelos: coinciden en todo."
+                       if not discrepancias else
+                       f"Leída por dos modelos: {len(discrepancias)} dato(s) no "
+                       "coinciden. Elija el bueno mirando el documento.")
+        elif verificacion == "simple":
+            lectura = "Leída por un solo modelo: sin contrastar con otra lectura."
+        else:
+            lectura = "Lectura anterior a la doble lectura (sin contrastar)."
+        cuenta = f.concepto or ""
+        if f.subclave:
+            cuenta += f" ({f.subclave})"
+        descripcion = descripcion_de(f.concepto, f.subclave) if f.concepto else ""
+        if descripcion:
+            cuenta += f" · {descripcion}"
+        return {
+            "fila": fila,
+            "estado": self._presentacion_estado(estado, f, confirmada),
+            "titulo": f"Línea {fila + 1} · {f.num_factura or 'sin nº'}",
+            "rol": "Proveedor" if tipo == "gasto" else "Cliente",
+            "nombre": f.nombre or "", "nif": f.nif or "",
+            "num": f.num_factura or "", "fecha": f.fecha or "",
+            "lineas": lineas, "irpf": irpf, "cuadre": cuadre,
+            "tipo": "Gasto (factura recibida)" if tipo == "gasto"
+                    else "Ingreso (factura emitida)",
+            "cuenta": cuenta, "marcas": marcas, "otros_motivos": otros,
+            "lectura": lectura, "doble": verificacion == "doble",
+            "discrepancias": discrepancias,
+        }
+
+    def _pintar_lista_bloques(self) -> None:
+        """Lista lateral de bloques (se completa con la estética nueva)."""
+        return
+
+    def _refrescar_ficha(self) -> None:
+        if not hasattr(self, "ficha"):
+            return
+        r = self.tabla.currentRow()
+        if r < 0 or r >= len(self.filas) or self.tabla.isRowHidden(r):
+            self.ficha.vacio()
+            return
+        self.ficha.mostrar(self._datos_ficha(r))
+
+    def _resolver_discrepancia(self, fila: int, indice: int, lectura: int) -> None:
+        """Se queda con una de las dos lecturas de un dato en disputa."""
+        if fila >= len(self.filas):
+            return
+        f = self.filas[fila]["factura"]
+        discrepancias = list(getattr(f, "discrepancias", ()) or ())
+        if indice >= len(discrepancias):
+            return
+        d = discrepancias[indice]
+        filas_doc = self._filas_del_documento(fila)
+        if lectura == 2:
+            self.tabla.blockSignals(True)
+            try:
+                if d.get("campo") == "lineas_iva":
+                    linea = next(x for x in d.get("lineas_2") or []
+                                 if isinstance(x, dict))
+                    from facturas_excel.extraccion import _num
+                    for columna, clave in ((C_BASE, "base"), (C_PCT, "tipo_iva"),
+                                           (C_CUOTA, "cuota_iva"),
+                                           (C_PCT_RE, "pct_requiv"),
+                                           (C_CUOTA_RE, "cuota_requiv")):
+                        self.tabla.item(fila, columna).setText(
+                            fmt(_num(linea.get(clave))))
+                else:
+                    columna = COLUMNA_DE_CAMPO[d["campo_factura"]]
+                    valor = d.get("valor_2")
+                    if columna in (C_TOTAL, C_CUOTA_IRPF):
+                        from facturas_excel.extraccion import _num
+                        texto = fmt(_num(valor))
+                    elif columna == C_NIF:
+                        texto = normaliza_nif(valor)
+                    else:
+                        texto = "" if valor is None else str(valor)
+                    for r in filas_doc:
+                        self.tabla.item(r, columna).setText(texto)
+            finally:
+                self.tabla.blockSignals(False)
+            self._invalidar_contraste_registro()
+            self._invalidar_revision_documento(fila)
+            if d.get("campo_factura") == "nif":
+                self._nif_escrito_a_mano(fila)
+        campo = d.get("campo")
+        for r in filas_doc:
+            registro = self.filas[r]
+            for factura in [registro["factura"], *registro.get("fuentes", [])]:
+                factura.discrepancias = tuple(
+                    x for x in (getattr(factura, "discrepancias", ()) or ())
+                    if x.get("campo") != campo)
+        self._revalidar_todo()
+        elegido = (d.get(f"modelo_{lectura}") or f"lectura {lectura}")
+        self._avisar(f"{d.get('etiqueta')}: se queda el valor de {elegido}.",
+                     EXITO)
 
     def _abrir_vista_previa(self):
         """Muestra la página seleccionada grande y con barras de desplazamiento."""
