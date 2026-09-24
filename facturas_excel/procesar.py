@@ -13,6 +13,7 @@ Reutilizable desde la UI y desde scripts.
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
@@ -20,8 +21,8 @@ from uuid import uuid4
 
 from . import clientes, proveedores
 from .conceptos import (
-    DEFAULT_VENTA, asignar_concepto, es_valido, normalizar_concepto,
-    subclave_628, subclaves_de,
+    DEFAULT_GASTO, DEFAULT_GASTO_GXX, asignar_concepto_con_origen, es_valido,
+    normalizar_concepto, subclave_628, subclaves_de,
 )
 from .extraccion import _num
 from .modelo import Factura
@@ -219,18 +220,71 @@ def normalizar_importes_abono(facturas: List[Factura]) -> bool:
 
 def concepto_gasto(datos: dict) -> tuple[str, str | None]:
     """Cuenta de gasto propuesta, reutilizable al corregir un abono."""
-    cuenta, gxx = normalizar_concepto(
-        datos.get("cuenta_gasto"), datos.get("subclave_gxx"))
-    texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
-    if not cuenta:
-        cuenta = asignar_concepto("gasto", texto)
-    if not gxx and cuenta == "628":
-        gxx = subclave_628(texto)
-    if not gxx and cuenta:
-        posibles = subclaves_de(cuenta)
-        if len(posibles) == 1:
-            gxx = posibles[0][0]
+    cuenta, gxx, _aviso = concepto_propuesto("gasto", datos)
     return cuenta, gxx
+
+
+def _unica_subclave(cuenta) -> str | None:
+    posibles = subclaves_de(cuenta)
+    return posibles[0][0] if len(posibles) == 1 else None
+
+
+def concepto_propuesto(tipo: str, datos: dict) -> tuple[str, str | None, str]:
+    """(cuenta, subclave, aviso) de la factura, sin inventar en silencio.
+
+    Manda la cuenta que Gemini ha elegido del catalogo. Si la cuenta es buena
+    pero su subclave no existe, se corrige SOLO la subclave cuando la cuenta
+    no tiene mas que una (705 -> I01): antes se cambiaba la cuenta entera y
+    un servicio (705) acababa como venta de genero (700) sin avisar.
+    Cuando Gemini no propone nada valido, las palabras clave o la cuenta de
+    descarte dan una propuesta, pero la fila queda en ambar con el motivo.
+    """
+    lado = "gasto" if tipo == "gasto" else "ingreso"
+    campo_cuenta, campo_gxx = (("cuenta_gasto", "subclave_gxx") if lado == "gasto"
+                               else ("cuenta_ingreso", "subclave_ingreso"))
+    cuenta, gxx = normalizar_concepto(datos.get(campo_cuenta),
+                                      datos.get(campo_gxx))
+    texto = f"{datos.get('concepto_texto', '')} {datos.get('emisor_nombre', '')}"
+    if lado == "ingreso":
+        texto = f"{datos.get('concepto_texto', '')}"
+    del_catalogo = {c for c, _, _ in catalogo_de(lado)}
+    if cuenta and cuenta in del_catalogo:
+        if gxx and not es_valido(cuenta, gxx):
+            unica = _unica_subclave(cuenta)
+            if unica:
+                return (cuenta, unica,
+                        f"La subclave {gxx} no existe para la {cuenta}: se ha "
+                        f"puesto {unica}, la única que admite.")
+            if cuenta == "628":
+                gxx = subclave_628(texto)
+            else:
+                gxx = None
+        if not gxx:
+            gxx = _unica_subclave(cuenta) or (
+                subclave_628(texto) if cuenta == "628" else None)
+        return cuenta, gxx, ""
+
+    propuesta, origen = asignar_concepto_con_origen(
+        "gasto" if lado == "gasto" else "venta", texto)
+    gxx = None
+    if propuesta == "628":
+        gxx = subclave_628(texto)
+    if propuesta == DEFAULT_GASTO and lado == "gasto" and origen == "defecto":
+        gxx = DEFAULT_GASTO_GXX
+    gxx = gxx or _unica_subclave(propuesta)
+    leida = f" (Gemini propuso «{cuenta}», que no es de {lado})" if cuenta else ""
+    if origen == "palabras":
+        aviso = (f"Cuenta {propuesta} propuesta por palabras clave{leida}: "
+                 "compruebe el concepto.")
+    else:
+        aviso = (f"Cuenta {propuesta} puesta por descarte{leida}: no se ha "
+                 "podido determinar el concepto. Elija la cuenta correcta.")
+    return propuesta, gxx, aviso
+
+
+def catalogo_de(lado: str):
+    from .conceptos import catalogo
+    return catalogo(lado)
 
 
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
@@ -277,17 +331,11 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
                 f"{datos.get('_motivo_union_inferida', 'continuidad de hojas')}. " \
                 "Comprueba que pertenecen a la misma factura.".strip()
 
-    # Cuenta contable
-    if tipo == "venta":
-        # Los ingresos tienen su propia lista en Aplifisa (700 ventas, 705
-        # servicios, 740/741 subvenciones...). Si Gemini propone una de ellas
-        # se respeta; si no, la de siempre.
-        cuenta, gxx = normalizar_concepto(
-            datos.get("cuenta_ingreso"), datos.get("subclave_ingreso"))
-        if not es_valido(cuenta, gxx):
-            cuenta, gxx = DEFAULT_VENTA, None
-    else:
-        cuenta, gxx = concepto_gasto(datos)
+    # Cuenta contable: la del catalogo que elige Gemini. Si no la hay, una
+    # propuesta, pero con aviso (nunca una cuenta por descarte en verde).
+    cuenta, gxx, aviso_cuenta = concepto_propuesto(tipo, datos)
+    if aviso_cuenta:
+        aviso = f"{aviso} {aviso_cuenta}".strip()
 
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
@@ -963,5 +1011,18 @@ def aplicar_recordado(procesadas: List[FacturaProcesada]) -> int:
         pr.cuenta, pr.gxx = cuenta, gxx
         for f in pr.facturas:
             f.concepto, f.subclave = cuenta, gxx
+        # La cuenta ya la decidio una persona: sobra el aviso de propuesta.
+        pr.aviso = quitar_aviso_cuenta(pr.aviso)
         puestos += 1
     return puestos
+
+
+_AVISO_CUENTA = re.compile(
+    r"(?:La subclave \S+ no existe para la \S+: se ha puesto \S+, la única "
+    r"que admite\.|Cuenta \S+ (?:propuesta por palabras clave|puesta por "
+    r"descarte)[^:]*:[^.]*\.(?: Elija la cuenta correcta\.)?)")
+
+
+def quitar_aviso_cuenta(aviso: str) -> str:
+    """Retira el aviso de cuenta propuesta cuando ya la ha fijado alguien."""
+    return " ".join(_AVISO_CUENTA.sub("", aviso or "").split())
