@@ -171,3 +171,14 @@ def test_las_facturas_sin_fecha_valida_van_al_final():
     lote = [_f("A", "sin fecha"), _f("B", "31/01/2025")]
     assert [f.num_factura for f in ordenar_para_exportar(lote, "fecha")] == \
         ["B", "A"]
+
+
+def test_los_totales_cuadran_tambien_con_importes_numericos(tmp_path):
+    """Con los importes como números de Excel, 123,45 se sumaba como 12.345."""
+    from facturas_excel.exportar import MODO_NUMERO
+    facturas = [factura("FA-1", 123.45, 25.92), factura("FA-2", 50.0, 10.5)]
+    ruta = str(tmp_path / "gastos.xlsx")
+    exportar_excel(facturas, config(), ruta, modo_numeros=MODO_NUMERO)
+    totales = totales_del_excel(config(), ruta)
+    assert totales["base_iva"] == 173.45
+    assert totales["cuota_iva"] == 36.42

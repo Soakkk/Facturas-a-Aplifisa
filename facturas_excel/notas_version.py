@@ -6,6 +6,43 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.14.0": """
+<h2>Novedades de la versión 1.14.0</h2>
+<p>Esta versión está pensada para que ningún dato mal leído llegue a Aplifisa
+sin que se vea, y para entender de un vistazo qué se ha leído.</p>
+<ul>
+  <li><b>Doble lectura:</b> cada hoja la leen dos modelos de Gemini
+      (3.8-flash y 3.7-flash) y se comparan NIF, número, fecha, desglose de
+      IVA, retención y total. Si no coinciden, la factura queda en ámbar con
+      los dos valores y un botón para quedarse con el bueno. Se puede dejar
+      solo para las dudosas en Configuración → Modelos de lectura.</li>
+  <li><b>Nuevos estados:</b> <i>Verificada</i> (las dos lecturas coinciden y
+      todo cuadra), <i>Sin verificar</i> (todo cuadra, pero la leyó un solo
+      modelo), <i>Revisar</i> y <i>Error</i>. Abajo se ve el recuento.</li>
+  <li><b>Ficha de la factura</b> junto al documento: identificación, importes
+      y contabilidad, cada dato con ✓ o !, y el cuadre como una cuenta
+      («480,00 + 100,80 = 580,80 ✓ total impreso 580,80»).</li>
+  <li><b>No se inventan cuentas:</b> una factura sin concepto claro ya no
+      entra como 600 Compras en verde; se propone 629 Otros servicios y queda
+      en ámbar para elegir. Un servicio (705) con la subclave mal leída ya no se
+      convierte en venta de género (700).</li>
+  <li><b>Controles nuevos:</b> tipo de IVA que no existe (p. ej. 22 %) y fecha
+      futura salen en rojo; los CIF se comprueban según el tipo de sociedad;
+      los NIF intracomunitarios (ES…, FR…) se explican en vez de salir como
+      «dudosos».</li>
+  <li><b>Facturas ya exportadas:</b> el programa recuerda lo que ya salió
+      hacia Aplifisa. Si una factura vuelve a aparecer en otro lote, se avisa
+      y al exportar se propone dejarla fuera.</li>
+  <li><b>Clientes de la suite:</b> reconoce al momento a los clientes del
+      directorio común (el mismo que usa Generador de avisos) y apunta allí
+      los que confirme aquí.</li>
+  <li><b>Más rápido:</b> corregir una celda en un lote de 300 líneas pasa de
+      6 segundos a menos de 0,2. Se leen 10 hojas a la vez.</li>
+  <li><b>Avisos dentro de la ventana con «Deshacer»</b> (eliminar filas,
+      quitar un bloque, marcar revisadas…), y nueva cinta de herramientas
+      con el estilo de la suite.</li>
+</ul>
+""",
     "1.13.24": """
 <h2>Novedades de la versión 1.13.24</h2>
 <ul>

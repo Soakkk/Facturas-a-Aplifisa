@@ -1,11 +1,38 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de septiembre de 2026 (versión 1.13.7). Apunta abajo lo que
+Actualizado el 24 de septiembre de 2026 (versión 1.14.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
 
-### Lo que se ha resuelto hoy (pruébalo)
+### Lo nuevo de la 1.14 (pruébalo)
+
+**Doble lectura.** Cada hoja la leen ahora dos modelos (3.8-flash y
+3.7-flash). Si no coinciden en el NIF, el número, la fecha, el desglose o el
+total, la factura sale en ámbar y en la ficha de al lado ves los dos valores
+con un botón para quedarte con el bueno. Si coinciden y todo cuadra, sale
+**Verificada**. Cuesta más o menos el doble; si prefieres, en Configuración →
+Modelos de lectura puedes dejarla solo para las dudosas.
+
+**Ya no se inventan cuentas.** Si no se sabe el concepto, se propone 629
+Otros servicios en ámbar (antes entraba como 600 Compras en verde).
+
+**Facturas ya exportadas.** Si una factura que ya mandaste a Aplifisa vuelve a
+aparecer en otro lote, se avisa y al exportar se propone dejarla fuera.
+
+**Más controles:** IVA del 22 % o fecha futura en rojo; CIF comprobados según
+el tipo de sociedad; NIF intracomunitarios explicados.
+
+### Lo que me falta saber de ti (1.14)
+
+1. **La tarifa de gemini-3.8-flash.** No la he querido inventar. Mientras no
+   la escribas en Configuración → Modelos de lectura, el gasto de ese modelo
+   se estima y abajo pone «(tarifa estimada)».
+2. **¿Doble lectura siempre o solo en las dudosas?** He dejado «siempre».
+
+---
+
+### Lo que se resolvió en la 1.13 (pruébalo)
 
 **Escanear.** El botón «Escanear facturas» (Ctrl+E) maneja el alimentador de tu
 HP, guarda el PDF completo en
