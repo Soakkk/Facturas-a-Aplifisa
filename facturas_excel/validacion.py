@@ -283,6 +283,13 @@ def validar(f: Factura) -> Resultado:
                      "España (21, 10, 5, 4, 2 o 0): revise el tipo leído",
                      "pct_iva")
 
+    # Doble lectura: cada dato en el que los dos modelos no coinciden se
+    # revisa con los dos valores a la vista. No se elige ninguno en silencio.
+    for d in getattr(f, "discrepancias", ()) or ():
+        campo = d.get("campo_factura") or ""
+        marcar_revisar(d.get("texto") or f"Doble lectura: {d.get('etiqueta')} "
+                       "no coincide", *((campo,) if campo else ()))
+
     confianza = str(f.confianza_ia or "").strip().lower()
     if confianza in {"media", "baja"}:
         marcar_revisar(

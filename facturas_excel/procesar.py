@@ -325,6 +325,9 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    if datos.get("_error"):
+        aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
+                "esta hoja; no se ha rellenado ningún dato.".strip()
     if datos.get("_union_inferida"):
         paginas = ", ".join(str(p) for p in datos.get("_paginas_union_inferida", []))
         aviso = f"{aviso} Unión inferida de páginas {paginas}: " \
@@ -409,6 +412,13 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     normalizar_importes_abono(facturas)
     aviso = f"{aviso} {_cuadre_factura(facturas)}".strip()
 
+    # Resultado de la doble lectura, en todas las lineas del documento.
+    verificacion = str(datos.get("_verificacion") or "")
+    discrepancias = discrepancias_de(datos, tipo)
+    for f in facturas:
+        f.verificacion = verificacion
+        f.discrepancias = discrepancias
+
     # Solo se avisa si lo escrito a mano toca a los IMPORTES. El asesor anota
     # el CIF y numera las facturas para los requerimientos de Hacienda: si se
     # avisara de eso, saldrian todas en ambar y el semaforo no serviria.
@@ -427,6 +437,34 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
                             gxx=gxx, origen=origen, pagina=pagina, aviso=aviso,
                             sustituye_a=str(datos.get("sustituye_a") or "").strip())
+
+
+# A que dato de la fila afecta cada diferencia de la doble lectura.
+_CAMPO_FACTURA = {
+    "num_factura": "num_factura", "fecha": "fecha", "total": "total_impreso",
+    "cuota_irpf": "cuota_irpf", "lineas_iva": "base_iva", "suplidos": "base_iva",
+}
+
+
+def discrepancias_de(datos: dict, tipo: str) -> tuple:
+    """Las diferencias entre las dos lecturas, listas para la tabla."""
+    from .doble_lectura import texto_diferencia
+    salida = []
+    m1, m2 = datos.get("_modelo_1", ""), datos.get("_modelo_2", "")
+    contraparte = "emisor_nif" if tipo == "gasto" else "receptor_nif"
+    for d in datos.get("_discrepancias") or []:
+        if not isinstance(d, dict):
+            continue
+        copia = dict(d)
+        campo = copia.get("campo")
+        if campo in ("emisor_nif", "receptor_nif"):
+            copia["campo_factura"] = "nif" if campo == contraparte else ""
+        else:
+            copia["campo_factura"] = _CAMPO_FACTURA.get(campo, "")
+        copia["modelo_1"], copia["modelo_2"] = m1, m2
+        copia["texto"] = texto_diferencia(copia, m1, m2)
+        salida.append(copia)
+    return tuple(salida)
 
 
 def _anadir_aviso(pr: FacturaProcesada, texto: str) -> None:
@@ -790,6 +828,9 @@ def _son_paginas_de_la_misma_factura(anterior: tuple, siguiente: tuple) -> bool:
     """
     _, origen_a, pagina_a, datos_a = anterior
     _, origen_b, pagina_b, datos_b = siguiente
+    # Una hoja que no se pudo leer nunca se pega a otra: quedaria escondida.
+    if datos_a.get("_error") or datos_b.get("_error"):
+        return False
     if not _mismo_origen(origen_a, origen_b):
         return False
     ultima_a = datos_a.get("_ultima_pagina_consolidada", pagina_a)
@@ -870,6 +911,25 @@ def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
             fusion[campo] = deepcopy(siguiente[campo])
     for campo in _CAMPOS_BOOLEANOS:
         fusion[campo] = bool(primera.get(campo) or siguiente.get(campo))
+
+    # Doble lectura: las diferencias de identidad valen de todas las hojas;
+    # las de importes, solo de la hoja de la que salen los importes finales
+    # (el subtotal de una hoja inicial se descarta, y su diferencia tambien).
+    fiscales = {"total", "lineas_iva", "cuota_irpf", "suplidos"}
+    discrepancias = []
+    for datos, aporta_importes in ((primera, fuentes_lineas != (siguiente,)),
+                                   (siguiente, True)):
+        for d in datos.get("_discrepancias") or []:
+            if isinstance(d, dict) and (aporta_importes or d.get("campo") not in fiscales):
+                if d not in discrepancias:
+                    discrepancias.append(d)
+    fusion["_discrepancias"] = discrepancias
+    verificaciones = {str(d.get("_verificacion") or "") for d in (primera, siguiente)}
+    fusion["_verificacion"] = ("simple" if "simple" in verificaciones
+                               else "doble" if "doble" in verificaciones else "")
+    for clave in ("_modelo_1", "_modelo_2"):
+        if not fusion.get(clave) and siguiente.get(clave):
+            fusion[clave] = siguiente[clave]
 
     orden_confianza = {"alta": 0, "media": 1, "baja": 2}
     confianzas = [str(d.get("confianza") or "").strip().lower()

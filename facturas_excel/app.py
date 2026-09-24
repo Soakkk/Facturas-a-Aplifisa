@@ -112,7 +112,15 @@ def _sin_aviso_ejercicios_antiguo(aviso: str) -> str:
     """Quita el aviso global que antes se copiaba en todas las facturas."""
     return _AVISO_EJERCICIOS_ANTIGUO.sub("", str(aviso or "")).strip()
 
-HILOS = 6  # facturas procesadas en paralelo (con key de pago se puede subir)
+HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
+
+
+def hilos_lectura() -> int:
+    """Hojas que se leen a la vez; ajustable en ajustes.json (hilos_lectura)."""
+    try:
+        return max(1, min(20, int(ajustes.leer("hilos_lectura", HILOS))))
+    except (TypeError, ValueError):
+        return HILOS
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 # Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
@@ -253,45 +261,63 @@ class Worker(QThread):
             total = len(imagenes)
             registros = [None] * total
 
-            consumo = []   # (modelo, tokens entrada, tokens salida) por factura
+            consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
+            sin_credito = []
 
             def tarea(idx):
                 origen, pagina, img = imagenes[idx]
+                if sin_credito:
+                    # Se acabó el crédito en otra hoja: no se pide nada más.
+                    return idx, (img, origen, pagina, {
+                        "emisor_nombre": None, "lineas_iva": [{}],
+                        "_error": "No leída: la API key se quedó sin crédito"})
                 try:
                     leido = extractor.extraer(img, origen, pagina)
-                    consumo.append((leido.modelo, leido.tokens_entrada,
-                                    leido.tokens_salida))
+                    consumo.extend(leido.consumos or [(
+                        leido.modelo, leido.tokens_entrada, leido.tokens_salida)])
                     datos = leido.crudo
                 except SinCredito:
+                    sin_credito.append(True)
                     raise  # detiene todo el lote con aviso
                 except Exception as e:  # una factura ilegible no tumba el lote
-                    datos = {"emisor_nombre": "(NO SE PUDO LEER)", "lineas_iva": [{}],
+                    # Lo pagado por los intentos fallidos también cuenta.
+                    consumo.extend(getattr(e, "consumos", []) or [])
+                    # Sin nombre inventado: la hoja queda vacía y en rojo, con
+                    # el motivo, en lugar de un proveedor «(NO SE PUDO LEER)».
+                    datos = {"emisor_nombre": None, "lineas_iva": [{}],
                              "_error": str(e)[:120]}
                     self.fallos.append((origen, pagina, str(e)[:120]))
                 return idx, (img, origen, pagina, datos)
 
             hechas = 0
-            with ThreadPoolExecutor(max_workers=HILOS) as ex:
+            ex = ThreadPoolExecutor(max_workers=hilos_lectura())
+            try:
                 futuros = [ex.submit(tarea, i) for i in range(total)]
                 for fut in as_completed(futuros):
                     idx, reg = fut.result()
                     registros[idx] = reg
                     hechas += 1
                     self.progreso.emit(hechas, total)
-
-            # Lo gastado en Gemini, con los tokens reales de cada respuesta.
-            modelo, coste_lote = "", 0.0
-            for m, entrada, salida in consumo:
-                modelo = m or modelo
-                coste_lote += costes.registrar(m, entrada, salida)
-            if consumo:
-                self.gasto.emit(modelo, round(coste_lote, 6))
+            finally:
+                # Si algo corta el lote (sin crédito), las hojas que aún no
+                # han empezado se cancelan: no se sigue pagando por nada.
+                ex.shutdown(wait=True, cancel_futures=True)
+                self._registrar_consumo(consumo)
 
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)
         except Exception as e:  # noqa
             self.fallo.emit(str(e))
+
+    def _registrar_consumo(self, consumo) -> None:
+        """Lo gastado en Gemini, con los tokens reales de cada respuesta."""
+        modelo, coste_lote = "", 0.0
+        for m, entrada, salida in consumo:
+            modelo = modelo or m
+            coste_lote += costes.registrar(m, entrada, salida)
+        if consumo:
+            self.gasto.emit(modelo, round(coste_lote, 6))
 
 
 class HiloEscaneo(QThread):

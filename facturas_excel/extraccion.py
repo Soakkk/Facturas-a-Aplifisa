@@ -12,23 +12,50 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 from google import genai
 from google.genai import types
 
-# Modelos por orden de preferencia (con reserva ante 503/alta demanda).
+# Modelos de lectura (septiembre de 2026).
 #
-# Va FIJADO a gemini-3.7-flash a peticion del usuario (2026-09-02), no al alias
-# "gemini-flash-latest": ese alias salta solo al modelo que Google saque, y con
-# el saltaria tambien la tarifa y la forma de leer las facturas sin avisar.
-# Fijandolo, el dia que cambie algo se ve aqui y se decide.
-# Precio (2026-09-02): 0,75 $ / 3,75 $ por millon de tokens; el 1/1/2027 pasa a
-# 1,50 / 7,50 -> repasar entonces si compensa frente a gemini-2.5-flash
-# (0,30 / 2,50), que tambien leia bien estas facturas.
-# Detras van las reservas por si un dia ese modelo se retira o da 503.
-MODELOS = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-pro-latest"]
+# Se usan modelos FIJOS, nunca los alias "-latest": un alias salta solo al
+# modelo que Google saque, y con el saltarian tambien la tarifa y la forma de
+# leer las facturas sin avisar. Hasta la 1.13 el respaldo eran precisamente
+# esos alias; ahora el respaldo es otro modelo fijo y los dos se pueden
+# cambiar en Configuracion -> Modelos de lectura.
+#   - gemini-3.8-flash: el mas preciso para leer documentos escaneados.
+#   - gemini-3.7-flash: el anterior; hace de respaldo y de segunda lectura.
+MODELO_PRINCIPAL = "gemini-3.8-flash"
+MODELO_RESPALDO = "gemini-3.7-flash"
+MODELOS = [MODELO_PRINCIPAL, MODELO_RESPALDO]
+MODELOS_CONOCIDOS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]
+
+# Doble lectura: "siempre" (cada hoja la leen los dos modelos), "dudosas" (la
+# segunda solo si la primera no cuadra, trae un NIF invalido o confianza no
+# alta) o "no".
+DOBLE_SIEMPRE, DOBLE_DUDOSAS, DOBLE_NO = "siempre", "dudosas", "no"
+DOBLE_POR_DEFECTO = DOBLE_SIEMPRE
+
+
+def modelos_configurados() -> List[str]:
+    """[principal, respaldo] segun los ajustes, sin repetir."""
+    from . import ajustes
+    principal = str(ajustes.leer("modelo_principal", MODELO_PRINCIPAL) or "").strip()
+    respaldo = str(ajustes.leer("modelo_respaldo", MODELO_RESPALDO) or "").strip()
+    salida = []
+    for modelo in (principal or MODELO_PRINCIPAL, respaldo):
+        if modelo and modelo not in salida and "latest" not in modelo:
+            salida.append(modelo)
+    return salida or list(MODELOS)
+
+
+def modo_doble_lectura() -> str:
+    from . import ajustes
+    modo = str(ajustes.leer("doble_lectura", DOBLE_POR_DEFECTO) or "")
+    return modo if modo in (DOBLE_SIEMPRE, DOBLE_DUDOSAS, DOBLE_NO) \
+        else DOBLE_POR_DEFECTO
 
 
 # Tiempo maximo que se espera a Gemini por pagina. Sin esto una peticion que
@@ -43,6 +70,30 @@ class SinCredito(Exception):
 
 class TiempoAgotado(Exception):
     """Gemini no contesto a tiempo: esa pagina se da por no leida."""
+
+
+class ModeloNoDisponible(Exception):
+    """El modelo pedido no existe o Google lo ha retirado."""
+
+
+class ErrorLectura(Exception):
+    """Una hoja no se pudo leer; lleva lo que ya se habia pagado por ella."""
+
+    def __init__(self, mensaje: str, consumos=None):
+        super().__init__(mensaje)
+        self.consumos = list(consumos or [])
+
+
+def _es_modelo_retirado(e: Exception) -> bool:
+    texto = str(e).lower()
+    return ("404" in texto or "not_found" in texto or "not found" in texto
+            or "no longer available" in texto or "deprecated" in texto) \
+        and "model" in texto
+
+
+def _es_error_de_esquema(e: Exception) -> bool:
+    texto = str(e).lower()
+    return "400" in texto and ("schema" in texto or "thinking" in texto)
 
 
 def _es_timeout(e: Exception) -> bool:
@@ -191,82 +242,256 @@ una firma de "RECIBI MERCANCIAS" NO cuentan: son normales y no se avisa de
 ellas."""
 
 
+def _anulable(tipo: str) -> dict:
+    return {"type": [tipo, "null"]}
+
+
+_LINEA = {
+    "type": "object",
+    "properties": {
+        "base": _anulable("number"), "tipo_iva": _anulable("number"),
+        "cuota_iva": _anulable("number"), "pct_requiv": _anulable("number"),
+        "cuota_requiv": _anulable("number"),
+    },
+    "required": ["base", "tipo_iva", "cuota_iva", "pct_requiv", "cuota_requiv"],
+}
+
+# Formato CERRADO de la respuesta: los importes llegan como numeros (no como
+# "1.234" que puede ser mil doscientos o uno coma dos), las opciones cerradas
+# solo pueden ser una de las previstas y no falta ninguna clave.
+ESQUEMA = {
+    "type": "object",
+    "properties": {
+        "emisor_nombre": _anulable("string"), "emisor_nif": _anulable("string"),
+        "receptor_nombre": _anulable("string"),
+        "receptor_nif": _anulable("string"),
+        "num_factura": _anulable("string"), "fecha": _anulable("string"),
+        "fecha_operacion": _anulable("string"),
+        "estado_pagina_factura": {
+            "type": "string", "enum": ["unica", "inicio", "intermedia", "final"]},
+        "lineas_iva": {"type": "array", "items": _LINEA},
+        "base_irpf": _anulable("number"), "pct_irpf": _anulable("number"),
+        "cuota_irpf": _anulable("number"), "suplidos": _anulable("number"),
+        "es_bien_inversion": {"type": "boolean"},
+        "total": _anulable("number"),
+        "sustituye_a": _anulable("string"),
+        "manuscrito_en_importes": {"type": "boolean"},
+        "cuenta_gasto": _anulable("string"), "subclave_gxx": _anulable("string"),
+        "cuenta_ingreso": _anulable("string"),
+        "subclave_ingreso": _anulable("string"),
+        "concepto_texto": _anulable("string"),
+        "confianza": {"type": "string", "enum": ["alta", "media", "baja"]},
+    },
+}
+ESQUEMA["required"] = list(ESQUEMA["properties"])
+
+
 @dataclass
 class DatosFactura:
     crudo: dict
     origen: str = ""
     pagina: int = 0
     # Lo que ha costado leer esta factura: el modelo que ha contestado de
-    # verdad (el alias 'gemini-flash-latest' cambia solo) y sus tokens.
+    # verdad y sus tokens (suma de todas las llamadas).
     modelo: str = ""
     tokens_entrada: int = 0
     tokens_salida: int = 0
+    # (modelo, tokens de entrada, tokens de salida) de CADA llamada: con la
+    # doble lectura hay dos modelos con tarifas distintas.
+    consumos: list = field(default_factory=list)
 
 
 class Extractor:
-    def __init__(self, api_key: str, modelos: Optional[List[str]] = None):
+    def __init__(self, api_key: str, modelos: Optional[List[str]] = None,
+                 modo_doble: Optional[str] = None):
         self.client = genai.Client(
             api_key=api_key,
             # El SDK lo quiere en milisegundos.
             http_options=types.HttpOptions(timeout=TIEMPO_LIMITE * 1000))
-        self.modelos = modelos or MODELOS
+        self.modelos = list(modelos or modelos_configurados())
+        self.modo_doble = modo_doble or modo_doble_lectura()
+        self._con_esquema = True
+        # Modelos que Google ha dado por retirados: no se vuelven a pedir en
+        # las siguientes hojas del mismo bloque.
+        self._retirados: set = set()
 
-    def _generar(self, img: bytes):
+    # ------------------------------------------------------------ llamadas
+    def _config(self):
+        if not self._con_esquema:
+            return types.GenerateContentConfig(
+                response_mime_type="application/json")
+        return types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=ESQUEMA,
+            # LOW: estos modelos no admiten MINIMAL y la temperatura se
+            # ignora. Pensar poco basta para copiar datos y va mas rapido.
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.LOW))
+
+    def _llamar(self, modelo: str, img: bytes):
+        """Una respuesta de ese modelo, con reintentos solo ante saturacion."""
         ultimo = None
-        for modelo in self.modelos:
-            for intento in range(3):
-                try:
-                    return self.client.models.generate_content(
-                        model=modelo,
-                        contents=[types.Part.from_bytes(data=img, mime_type="image/jpeg"),
-                                  _PROMPT],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"),
-                    )
-                except Exception as e:  # 503, rate limit, etc.
-                    ultimo = e
-                    msg = str(e).lower()
-                    if any(k in msg for k in ("credit", "billing", "depleted")):
-                        raise SinCredito(
-                            "Tu API key no tiene crédito/facturación activa. "
-                            "Activa la facturación en aistudio.google.com y añade saldo."
-                        ) from e
-                    if _es_timeout(e):
-                        # Un tiron de red se reintenta una vez; si vuelve a
-                        # colgarse, esta pagina se marca y el lote sigue. Antes
-                        # se probaban 3 modelos x 3 intentos sin limite ninguno.
-                        if intento == 0:
-                            continue
-                        raise TiempoAgotado(
-                            f"Gemini no contestó en {TIEMPO_LIMITE} segundos "
-                            f"(se intentó dos veces).") from e
-                    if "503" in msg or "unavailable" in msg or "429" in msg:
-                        time.sleep(2 * (intento + 1))
+        for intento in range(3):
+            try:
+                return self.client.models.generate_content(
+                    model=modelo,
+                    contents=[types.Part.from_bytes(data=img, mime_type="image/jpeg"),
+                              _PROMPT],
+                    config=self._config(),
+                )
+            except Exception as e:  # 503, rate limit, etc.
+                ultimo = e
+                msg = str(e).lower()
+                if any(k in msg for k in ("credit", "billing", "depleted")):
+                    raise SinCredito(
+                        "Tu API key no tiene crédito/facturación activa. "
+                        "Activa la facturación en aistudio.google.com y añade saldo."
+                    ) from e
+                if _es_modelo_retirado(e):
+                    raise ModeloNoDisponible(
+                        f"El modelo {modelo} no está disponible: {e}") from e
+                if self._con_esquema and _es_error_de_esquema(e):
+                    # Un modelo que no admita el formato cerrado sigue
+                    # leyendo con el formato libre de siempre.
+                    self._con_esquema = False
+                    continue
+                if _es_timeout(e):
+                    # Un tiron de red se reintenta una vez; si vuelve a
+                    # colgarse, esta pagina se marca y el lote sigue.
+                    if intento == 0:
                         continue
-                    break
+                    raise TiempoAgotado(
+                        f"Gemini no contestó en {TIEMPO_LIMITE} segundos "
+                        f"(se intentó dos veces).") from e
+                if "503" in msg or "unavailable" in msg or "429" in msg:
+                    time.sleep(2 * (intento + 1))
+                    continue
+                raise
         raise ultimo
 
-    def extraer(self, img: bytes, origen: str = "", pagina: int = 0) -> DatosFactura:
-        datos = None
+    def _generar(self, img: bytes):
+        """Respuesta del primer modelo que conteste (principal, luego respaldo)."""
+        ultimo = None
+        for modelo in self._disponibles():
+            try:
+                return self._llamar(modelo, img)
+            except (SinCredito, TiempoAgotado):
+                raise
+            except ModeloNoDisponible as e:
+                self._retirados.add(modelo)
+                ultimo = e
+            except Exception as e:
+                ultimo = e
+        raise ultimo
+
+    def _leer_con(self, modelo: str, img: bytes, pagina: int):
+        """(datos, modelo real, consumos) de un modelo concreto."""
+        consumos = []
         ultimo_texto = ""
-        modelo, entrada, salida = "", 0, 0
         for _ in range(3):  # Gemini a veces emite JSON invalido; reintentar
-            resp = self._generar(img)
+            try:
+                resp = self._llamar(modelo, img)
+            except (SinCredito, ModeloNoDisponible):
+                raise
+            except Exception as e:
+                raise ErrorLectura(str(e), consumos) from e
             # Los reintentos tambien se pagan: se suman todos.
-            m, e, sal = _consumo(resp)
-            modelo = m or modelo
-            entrada += e
-            salida += sal
+            real, entrada, salida = _consumo(resp)
+            consumos.append((real or modelo, entrada, salida))
             ultimo_texto = resp.text or ""
             datos = _parse_json_tolerante(ultimo_texto)
-            if datos is not None:
-                break
-        if datos is None:
-            raise ValueError(
-                f"No se pudo leer el JSON de Gemini (pag {pagina}): {ultimo_texto[:200]}")
-        return DatosFactura(crudo=datos, origen=origen, pagina=pagina,
-                            modelo=modelo, tokens_entrada=entrada,
-                            tokens_salida=salida)
+            if isinstance(datos, dict):
+                return datos, (real or modelo), consumos
+        raise ErrorLectura(
+            f"No se pudo leer el JSON de Gemini (pag {pagina}): "
+            f"{ultimo_texto[:200]}", consumos)
+
+    def _disponibles(self) -> List[str]:
+        return [m for m in self.modelos if m not in self._retirados]
+
+    def _leer_uno(self, img: bytes, pagina: int, empezar_por: int = 0):
+        """Lee con el primer modelo disponible, saltando los retirados."""
+        disponibles = self._disponibles()[empezar_por:]
+        ultimo = None
+        consumos = []
+        for modelo in disponibles:
+            try:
+                datos, real, gastado = self._leer_con(modelo, img, pagina)
+                return datos, real, consumos + gastado
+            except ModeloNoDisponible as e:
+                self._retirados.add(modelo)
+                ultimo = e
+            except ErrorLectura as e:
+                consumos.extend(e.consumos)
+                ultimo = e
+        if ultimo is None:
+            ultimo = ModeloNoDisponible("No hay ningún modelo de lectura disponible.")
+        raise ErrorLectura(str(ultimo), consumos)
+
+    # --------------------------------------------------------------- lectura
+    def extraer(self, img: bytes, origen: str = "", pagina: int = 0) -> DatosFactura:
+        from .doble_lectura import combinar, es_dudosa
+
+        disponibles = self._disponibles()
+        modo = self.modo_doble if len(disponibles) >= 2 else DOBLE_NO
+        consumos: list = []
+
+        if modo == DOBLE_SIEMPRE:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futuros = [ex.submit(self._leer_con, m, img, pagina)
+                           for m in disponibles[:2]]
+                resultados = []
+                for modelo, fut in zip(disponibles[:2], futuros):
+                    try:
+                        datos, real, gastado = fut.result()
+                        consumos.extend(gastado)
+                        resultados.append((datos, real, ""))
+                    except SinCredito:
+                        raise
+                    except ModeloNoDisponible as e:
+                        self._retirados.add(modelo)
+                        resultados.append((None, modelo, str(e)))
+                    except ErrorLectura as e:
+                        consumos.extend(e.consumos)
+                        resultados.append((None, modelo, str(e)))
+            (d1, m1, e1), (d2, m2, e2) = resultados
+            if d1 is None and d2 is None:
+                raise ErrorLectura(e1 or e2, consumos)
+            if d1 is None:
+                crudo = combinar(d2, None, m2, "", error_2=e1)
+            elif d2 is None:
+                crudo = combinar(d1, None, m1, "", error_2=e2)
+            else:
+                crudo = combinar(d1, d2, m1, m2)
+        else:
+            d1, m1, gastado = self._leer_uno(img, pagina)
+            consumos.extend(gastado)
+            crudo = combinar(d1, None, m1, "")
+            if modo == DOBLE_DUDOSAS and es_dudosa(d1):
+                otro = next((m for m in self._disponibles() if m != self._base(m1)), None)
+                if otro:
+                    try:
+                        d2, m2, gastado = self._leer_con(otro, img, pagina)
+                        consumos.extend(gastado)
+                        crudo = combinar(d1, d2, m1, m2)
+                    except SinCredito:
+                        raise
+                    except (ErrorLectura, ModeloNoDisponible) as e:
+                        consumos.extend(getattr(e, "consumos", []))
+                        crudo = combinar(d1, None, m1, "", error_2=str(e))
+
+        return DatosFactura(
+            crudo=crudo, origen=origen, pagina=pagina,
+            modelo=crudo.get("_modelo_1", ""),
+            tokens_entrada=sum(c[1] for c in consumos),
+            tokens_salida=sum(c[2] for c in consumos),
+            consumos=consumos)
+
+    def _base(self, modelo_real: str) -> str:
+        """El modelo configurado al que corresponde un nombre real con cola."""
+        real = str(modelo_real or "").replace("models/", "")
+        return next((m for m in self.modelos if real.startswith(m)), real)
 
 
 def _consumo(resp):

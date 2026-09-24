@@ -63,6 +63,10 @@ class Factura:
     iva_incluido_en_base: bool = False       # régimen de recargo: gasto por total
     eliminada: bool = False                  # retirada del lote por el usuario
     tipo_revision: Optional[str] = None      # gasto/venta corregido en la tabla
+    # Doble lectura: "doble" si dos modelos leyeron la hoja, "simple" si solo
+    # uno. Las discrepancias son las diferencias sin resolver entre ambos.
+    verificacion: str = ""
+    discrepancias: tuple = ()
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -73,7 +77,7 @@ class Factura:
                      "subclave", "descripcion_concepto", "es_suplido",
                      "confianza_ia", "revision_confirmada",
                      "tratamiento_manual", "iva_incluido_en_base", "eliminada",
-                     "tipo_revision"}
+                     "tipo_revision", "verificacion", "discrepancias"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 
