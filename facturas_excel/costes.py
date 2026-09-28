@@ -96,7 +96,9 @@ def _col():
     """El gasto por meses, en la base de datos local (antes gasto.json)."""
     from .almacen import Coleccion
     return Coleccion("gasto", dir_datos(), legado=_ruta(),
-                     convertir=lambda antiguo: antiguo.get("meses", {}) or {})
+                     convertir=lambda antiguo: {
+                         k: v for k, v in (antiguo.get("meses") or {}).items()
+                         if isinstance(v, dict)})
 
 
 def _leer() -> dict:

@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS facturas (
     pdf             TEXT,
     origen          TEXT,
     paginas         TEXT,
+    por_total       INTEGER,
     actualizado     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS facturas_cliente ON facturas (cliente, ejercicio);
@@ -144,9 +145,14 @@ class Coleccion:
             _migradas.add(marca)
             return
         antiguos = _leer_json(self.legado) if self.legado else None
-        if antiguos:
-            if self.convertir:
+        if antiguos and self.convertir:
+            try:
                 antiguos = self.convertir(antiguos)
+            except Exception:
+                antiguos = None       # un JSON con forma rara no se copia
+        if not isinstance(antiguos, dict):
+            antiguos = None
+        if antiguos:
             momento = ahora()
             con.executemany(
                 "INSERT OR IGNORE INTO datos VALUES (?, ?, ?, ?)",

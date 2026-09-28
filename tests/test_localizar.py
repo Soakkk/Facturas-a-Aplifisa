@@ -156,3 +156,26 @@ def test_se_puede_desactivar_y_se_guarda_en_la_sesion(monkeypatch):
     v._guardar_sesion()
     otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
     assert otra._localizaciones == v._localizaciones
+
+
+def test_cerrar_con_la_busqueda_en_marcha_no_espera_ni_rompe(monkeypatch):
+    import threading
+    import time as _t
+    liberar = threading.Event()
+
+    def pedir_lento(api_key, modelo, img, lista):
+        liberar.wait(10)
+        return [], []
+    monkeypatch.setattr(localizar, "pedir", pedir_lento)
+    monkeypatch.setattr(claves, "leer_api_key", lambda: "clave-de-prueba")
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._anadir_fila(_png(), _factura(total_impreso=112.0), "gasto", "600", "", "")
+    v._revalidar_todo()
+    v._localizar_dudosas()
+    assert v._hilo_localizar.isRunning()
+    inicio = _t.monotonic()
+    v.close()
+    assert _t.monotonic() - inicio < 3
+    assert v._hilo_localizar.cancelado
+    liberar.set()
+    v._hilo_localizar.wait(5000)

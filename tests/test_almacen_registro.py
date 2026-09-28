@@ -199,3 +199,33 @@ def test_la_ventana_del_registro_busca_y_cuenta():
     assert d.tabla.rowCount() == 1
     assert d.tabla.item(0, 5).text() == "F-2"
     assert d.tabla.item(0, 9).text() == "GASTOS 2026.xlsx"
+
+
+def test_un_json_antiguo_con_forma_rara_no_rompe_nada():
+    _sin_base_de_datos()
+    _escribir("facturas_exportadas.json", {"clientes": {"X": ["no", "es", "dict"],
+                                                        "Y": {"k": "tampoco"}}})
+    _escribir("gasto.json", {"meses": ["roto"]})
+    assert historial.buscar("12345678Z", _factura("F-1"), "gasto") is None
+    assert costes.gasto_del_mes() == 0
+    historial.registrar("12345678Z", {"gasto": [_factura("F-1")]}, {})
+    assert historial.buscar("12345678Z", _factura("F-1"), "gasto")
+
+
+def test_mover_un_taco_actualiza_tambien_sus_paginas(tmp_path):
+    f = _factura("F-9")
+    viejo = str(tmp_path / "Gastos" / "taco.pdf")
+    f.origen_imagen, f.pagina_origen, f.ultima_pagina_origen = viejo, 2, 2
+    historial.registrar("12345678Z", {"gasto": [f]}, {})
+    nuevo = str(tmp_path / "Tacos escaneados" / "taco.pdf")
+    registro_facturas.cambiar_ruta(str(tmp_path / "Gastos" / "." / "taco.pdf"), nuevo)
+    [ficha] = registro_facturas.consultar("F-9")
+    assert ficha["origen"] == nuevo
+    assert json.loads(ficha["paginas"]) == [[nuevo, 2]]
+
+
+def test_sin_iva_el_registro_no_inventa_un_cero():
+    f = _factura("F-5", iva=0.0)
+    f.pct_iva = f.cuota_iva = None
+    historial.registrar("12345678Z", {"gasto": [f]}, {})
+    assert registro_facturas.consultar("F-5")[0]["cuota_iva"] is None

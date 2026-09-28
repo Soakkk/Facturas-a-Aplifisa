@@ -94,10 +94,16 @@ def _migrar_historial(carpeta: str) -> None:
             except (OSError, ValueError):
                 antiguo = {}
             filas = []
-            for cliente, facturas in (antiguo.get("clientes") or {}).items():
-                for k, info in (facturas or {}).items():
+            clientes = antiguo.get("clientes") if isinstance(antiguo, dict) else None
+            for cliente, facturas in (clientes if isinstance(clientes, dict) else {}).items():
+                if not isinstance(facturas, dict):
+                    continue
+                for k, info in facturas.items():
                     if isinstance(info, dict):
-                        filas.append(_fila_desde_historial(cliente, k, info))
+                        try:
+                            filas.append(_fila_desde_historial(str(cliente), str(k), info))
+                        except (TypeError, ValueError, AttributeError):
+                            continue   # una entrada rota no impide lo demás
             con.executemany(_INSERTAR, filas)
             con.execute("INSERT OR REPLACE INTO migraciones VALUES (?, ?, ?)",
                         ("facturas_exportadas", ruta if filas else None,
@@ -116,7 +122,7 @@ _COLUMNAS = ("id", "cliente", "cliente_nif", "cliente_nombre", "tipo", "nif",
              "nombre", "num_factura", "fecha", "ejercicio", "base", "cuota_iva",
              "cuota_requiv", "cuota_irpf", "total", "estado", "leida_en",
              "revisada_en", "exportada_en", "archivada_en", "excel", "pdf",
-             "origen", "paginas", "actualizado")
+             "origen", "paginas", "por_total", "actualizado")
 _INSERTAR = (f"INSERT OR REPLACE INTO facturas ({', '.join(_COLUMNAS)}) "
              f"VALUES ({', '.join('?' * len(_COLUMNAS))})")
 
@@ -164,8 +170,11 @@ def _agrupar(facturas_por_tipo: Dict[str, Iterable]) -> Dict[str, dict]:
                     "tipo": lado(tipo), "num_factura": f.num_factura,
                     "nombre": f.nombre, "nif": f.nif, "fecha": f.fecha,
                     "ejercicio": dia.year if dia else None,
-                    "total": f.total_impreso, "base": 0.0, "cuota_iva": 0.0,
+                    "total": f.total_impreso, "base": 0.0, "cuota_iva": None,
                     "cuota_requiv": 0.0, "cuota_irpf": 0.0,
+                    # Cliente en recargo por el total: la «base» es el total
+                    # y no hay desglose de IVA que comparar.
+                    "por_total": 0,
                     "origen": f.origen_imagen or None,
                     "paginas": json.dumps(paginas, ensure_ascii=False) if paginas else None,
                     "_facturas": [],
@@ -173,7 +182,10 @@ def _agrupar(facturas_por_tipo: Dict[str, Iterable]) -> Dict[str, dict]:
             fila = agrupadas[k]
             fila["_facturas"].append(f)
             fila["base"] = round(fila["base"] + (f.base_iva or 0), 2)
-            fila["cuota_iva"] = round(fila["cuota_iva"] + (f.cuota_iva or 0), 2)
+            if f.cuota_iva is not None:
+                fila["cuota_iva"] = round((fila["cuota_iva"] or 0) + f.cuota_iva, 2)
+            if getattr(f, "iva_incluido_en_base", False):
+                fila["por_total"] = 1
             fila["cuota_requiv"] = round(fila["cuota_requiv"] + (f.cuota_requiv or 0), 2)
             if f.cuota_irpf:
                 fila["cuota_irpf"] = f.cuota_irpf
@@ -409,10 +421,30 @@ def ejercicios() -> List[int]:
 
 def cambiar_ruta(vieja: str, nueva: str) -> None:
     """Un documento se ha movido: que las fichas apunten a su sitio nuevo."""
+    def mismo(ruta) -> bool:
+        return bool(ruta) and os.path.normcase(os.path.abspath(ruta)) == \
+            os.path.normcase(os.path.abspath(vieja))
+
     try:
         with _con() as con:
-            con.execute("UPDATE facturas SET origen = ? WHERE origen = ?", (nueva, vieja))
-            con.execute("UPDATE facturas SET pdf = ? WHERE pdf = ?", (nueva, vieja))
+            for fila in con.execute("SELECT id, origen, pdf, paginas FROM facturas").fetchall():
+                cambios = {}
+                if mismo(fila["origen"]):
+                    cambios["origen"] = nueva
+                if mismo(fila["pdf"]):
+                    cambios["pdf"] = nueva
+                try:
+                    paginas = json.loads(fila["paginas"] or "[]")
+                except ValueError:
+                    paginas = []
+                if any(mismo(o) for o, _p in paginas):
+                    cambios["paginas"] = json.dumps(
+                        [(nueva if mismo(o) else o, p) for o, p in paginas],
+                        ensure_ascii=False)
+                if cambios:
+                    con.execute(
+                        f"UPDATE facturas SET {', '.join(f'{c} = ?' for c in cambios)} "
+                        "WHERE id = ?", (*cambios.values(), fila["id"]))
     except sqlite3.Error:
         pass
 

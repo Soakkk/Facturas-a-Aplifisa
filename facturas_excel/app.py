@@ -770,7 +770,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             getattr(self, "_hilo_descarga_update", None),
             getattr(self, "_hilo_escaneo", None),
             getattr(self, "worker", None),
-            getattr(self, "_hilo_localizar", None),
         ):
             if hilo and hilo.isRunning():
                 hilo.wait(5000)
@@ -1158,6 +1157,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     linea.concepto, linea.subclave = correcta.cuenta, correcta.gxx
 
     def closeEvent(self, ev):
+        # Lo que se estaba señalando en el documento no hace falta ya.
+        if getattr(self, "_hilo_localizar", None):
+            self._hilo_localizar.cancelar()
         # No destruir QThreads vivos (abortaria el proceso)
         self.esperar_hilos()
         try:

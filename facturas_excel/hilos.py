@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from facturas_excel import ajustes, costes, escaner, updater
 from facturas_excel.extraccion import Extractor, SinCredito
@@ -158,8 +158,13 @@ class HiloDescargaActualizacion(QThread):
             self.error.emit(str(e))
 
 
-class HiloLocalizar(QThread):
-    """Pide a Gemini dónde está cada dato en varias hojas, sin parar la mesa."""
+class HiloLocalizar(QObject):
+    """Pide a Gemini dónde está cada dato en varias hojas, sin parar la mesa.
+
+    Va en un hilo de Python «de fondo» (daemon), no en un QThread: se pone en
+    marcha solo al acabar de leer y una consulta puede tardar; si se cierra el
+    programa a mitad, no hay que esperarla ni puede tumbar el cierre.
+    """
     hecho = Signal(str, object)     # clave de la imagen, [Caja]
     gasto = Signal(str, float)      # modelo, coste de todas las consultas
     terminado = Signal(int, int)    # hojas señaladas, hojas que fallaron
@@ -169,6 +174,25 @@ class HiloLocalizar(QThread):
         self.api_key = api_key
         self.modelo = modelo
         self.trabajos = list(trabajos)   # [(clave, imagen, peticiones)]
+        self.cancelado = False
+        self._hilo = None
+
+    def start(self):
+        import threading
+        self._hilo = threading.Thread(target=self.run, daemon=True,
+                                      name="localizar-datos")
+        self._hilo.start()
+
+    def isRunning(self) -> bool:
+        return bool(self._hilo and self._hilo.is_alive())
+
+    def wait(self, milisegundos: int = 0) -> bool:
+        if self._hilo:
+            self._hilo.join(milisegundos / 1000 if milisegundos else None)
+        return not self.isRunning()
+
+    def cancelar(self):
+        self.cancelado = True
 
     def run(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -176,10 +200,13 @@ class HiloLocalizar(QThread):
         consumo, bien, mal = [], 0, 0
 
         def tarea(trabajo):
+            if self.cancelado:
+                raise RuntimeError("cancelado")
             clave, img, lista = trabajo
             return clave, localizar.pedir(self.api_key, self.modelo, img, lista)
 
-        with ThreadPoolExecutor(max_workers=min(4, hilos_lectura())) as ex:
+        ex = ThreadPoolExecutor(max_workers=min(4, hilos_lectura()))
+        try:
             for futuro in [ex.submit(tarea, t) for t in self.trabajos]:
                 try:
                     clave, (cajas, consumos) = futuro.result()
@@ -188,8 +215,13 @@ class HiloLocalizar(QThread):
                     continue
                 consumo.extend(consumos)
                 bien += 1
-                self.hecho.emit(clave, cajas)
+                if not self.cancelado:
+                    self.hecho.emit(clave, cajas)
+        finally:
+            ex.shutdown(wait=not self.cancelado, cancel_futures=True)
         coste = sum(costes.registrar(m, e, s, facturas=0) for m, e, s in consumo)
+        if self.cancelado:
+            return
         if consumo:
             self.gasto.emit(consumo[0][0], round(coste, 6))
         self.terminado.emit(bien, mal)

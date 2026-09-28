@@ -113,8 +113,12 @@ def casos_disponibles(maximo: int = MAXIMO_POR_DEFECTO) -> List[Caso]:
             elegidos.append(Caso(
                 ruta=hoja[0], pagina=hoja[1], tipo=f.get("tipo") or "gasto",
                 esperado={"nif": f.get("nif"), "num_factura": f.get("num_factura"),
-                          "fecha": f.get("fecha"), "base": f.get("base"),
-                          "cuota_iva": f.get("cuota_iva"), "total": f.get("total")},
+                          "fecha": f.get("fecha"),
+                          # Recargo por el total: lo guardado no es el
+                          # desglose de la factura, no se puede comparar.
+                          "base": None if f.get("por_total") else f.get("base"),
+                          "cuota_iva": None if f.get("por_total") else f.get("cuota_iva"),
+                          "total": f.get("total")},
                 etiqueta=f["id"]))
     return elegidos
 
@@ -145,7 +149,8 @@ def leido(datos: dict, tipo: str) -> Dict[str, object]:
 def igual(campo: str, bueno, leido_) -> bool:
     from .doble_lectura import _iguales
     if campo in ("base", "cuota_iva", "total"):
-        return _iguales("total", bueno, leido_)
+        # Un importe vacío y un 0,00 son lo mismo.
+        return _iguales("total", bueno or 0.0, leido_ or 0.0)
     if campo == "nif":
         return _iguales("emisor_nif", bueno, leido_)
     return _iguales(campo, bueno, leido_)

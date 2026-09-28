@@ -105,3 +105,23 @@ def test_la_ventana_estima_el_coste_y_sin_clave_no_deja_pasar(tmp_path):
     assert not d.btn_pasar.isEnabled()
     d = DialogoExamen(api_key="clave")
     assert d.btn_pasar.isEnabled()
+
+
+def test_por_el_total_no_se_compara_base_ni_iva(tmp_path):
+    f = _exportada(tmp_path, "F-1", "B12345674", 121.0, pdf=False)
+    # Cliente en recargo por el total: lo exportado es una línea por el total.
+    total = Factura(num_factura="F-1", fecha="10/03/2026", nombre="PROV", nif="B12345674",
+                    base_iva=121.0, total_impreso=121.0, origen_imagen=f.origen_imagen,
+                    pagina_origen=1, ultima_pagina_origen=1)
+    total.iva_incluido_en_base = True
+    historial.registrar("12345678Z", {"gasto": [total]}, {}, "CLIENTE DE PRUEBA")
+    [caso] = examen.casos_disponibles()
+    assert caso.esperado["base"] is None and caso.esperado["cuota_iva"] is None
+    r = examen.pasar([caso], lambda m, img: (_lectura(f), []), ["a", "b"],
+                     imagen=lambda c: b"x")
+    assert r.porcentaje("a") == 100.0 and not r.verificadas_con_error
+
+
+def test_importe_vacio_y_cero_son_lo_mismo():
+    assert examen.igual("cuota_iva", 0.0, None)
+    assert not examen.igual("cuota_iva", 21.0, None)
