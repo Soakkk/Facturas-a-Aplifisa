@@ -30,7 +30,7 @@ def datos_aparte(tmp_path, monkeypatch):
     # Con un empate el programa PREGUNTA quién es el cliente. En estas pruebas
     # la pregunta se cierra sin elegir, salvo que la prueba diga otra cosa.
     preguntas = []
-    monkeypatch.setattr("facturas_excel.app.DialogoCliente.exec",
+    monkeypatch.setattr("facturas_excel.dialogo_cliente.DialogoCliente.exec",
                         lambda self: preguntas.append(self) or 0)
     return preguntas
 
@@ -191,7 +191,7 @@ def _crudos(n=4):
 
 def test_cambiar_el_cliente_rehace_el_lote_sin_volver_a_pagar(monkeypatch):
     v = VentanaPrincipal(comprobar_updates=False)
-    monkeypatch.setattr("facturas_excel.app.DialogoCliente.exec",
+    monkeypatch.setattr("facturas_excel.dialogo_cliente.DialogoCliente.exec",
                         lambda self: 0)          # que no salte el dialogo solo
     crudos = _crudos()
     # Se carga con el cliente MAL detectado (la gasolinera).

@@ -89,8 +89,15 @@ def test_filtro_trimestral_y_siguiente_incidencia_no_dejan_filas_ocultas():
 def test_todos_los_campos_siguen_editables_sin_cambiar_indices():
     v = ventana()
     for c in (C_CUENTA, C_GXX, C_NIF, C_BASE, C_CUOTA_IRPF, C_TOTAL):
-        assert not v.tabla.isColumnHidden(c)
         assert v.tabla.item(0, c).flags() & Qt.ItemIsEditable
+    for c in (C_CUENTA, C_GXX, C_NIF, C_BASE, C_TOTAL):
+        assert not v.tabla.isColumnHidden(c)
+    # Sin retenciones en el lote, sus columnas no ocupan sitio...
+    assert v.tabla.isColumnHidden(C_CUOTA_IRPF)
+    # ...salvo que se pidan todas.
+    v.accion_todas_columnas.setChecked(True)
+    assert not v.tabla.isColumnHidden(C_CUOTA_IRPF)
+    v.accion_todas_columnas.setChecked(False)
     assert v.tabla.horizontalHeader().visualIndex(C_CUENTA) == 2
     assert v.tabla.horizontalHeader().visualIndex(C_GXX) == 3
     assert v.tabla.horizontalHeader().visualIndex(C_NOMBRE) == 6
@@ -152,3 +159,24 @@ def test_filtro_sin_coincidencias_no_muestra_documento_anterior():
     assert not v.tabla.selectionModel().selectedRows()
     assert v._pixmap_documento.isNull()
     assert "0 facturas" in v.lbl_resultados.text()
+
+
+def test_las_retenciones_se_ven_si_el_cliente_ya_las_tuvo():
+    from facturas_excel import historial
+    antigua = Factura(num_factura="V-9", fecha="02/02/2026", nombre="CLIENTE FINAL SA",
+                      nif="B30048276", base_iva=100.0, pct_iva=21.0, cuota_iva=21.0,
+                      base_irpf=100.0, pct_irpf=15.0, cuota_irpf=15.0,
+                      total_impreso=106.0)
+    historial.registrar("12345678Z", {"venta": [antigua]}, {}, "PROFESIONAL DE PRUEBA")
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nif, v._cliente_nombre = "12345678Z", "PROFESIONAL DE PRUEBA"
+    f = Factura(num_factura="V-10", fecha="03/03/2026", nombre="CLIENTE FINAL SA",
+                nif="B30048276", concepto="705", subclave="I01", base_iva=100.0,
+                pct_iva=21.0, cuota_iva=21.0, total_impreso=121.0)
+    v._anadir_fila(b"", f, "venta", "705", "I01", "")
+    v._revalidar_todo()
+    assert not v.tabla.isColumnHidden(C_CUOTA_IRPF)
+    # Otro cliente sin retenciones: no ocupan sitio.
+    v._cliente_nif, v._cliente_nombre = "B12345674", "OTRA SL"
+    v._revalidar_todo()
+    assert v.tabla.isColumnHidden(C_CUOTA_IRPF)

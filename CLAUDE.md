@@ -51,7 +51,20 @@ borra el trabajo del otro sin avisar.
 ## Cómo está montado
 
 - **Entorno**: `.venv` con Python 3.11 (el `python` del sistema es un 3.7 viejo).
-- **Interfaz**: PySide6 (`app.py`), con diálogos aparte (`dialogo_*.py`).
+- **Interfaz**: PySide6. `app.py` monta la ventana; el trabajo está repartido
+  en `ventana_lectura.py` (cola y Gemini), `ventana_archivo.py` (escanear,
+  recoger, expedientes), `ventana_aplifisa.py` (exportar y cuadrar),
+  `ventana_validacion.py` (semáforo, avisos, totales), `ventana_ficha.py`
+  (visor, ficha y recuadros), `cinta.py`, `hilos.py`. Diálogos en
+  `dialogo_*.py`.
+- **Lote**: `lote.py`. Cada línea es una `Fila` con su `Factura`; la tabla
+  (`tabla_facturas.py`) solo la enseña. Lo que se escribe en una celda pasa a
+  la factura en `_on_celda`; lo que cambia el programa se cambia en la
+  factura y se repinta con `tabla.pintar`. No leer datos de las celdas.
+- **Datos guardados**: `almacen.py` (SQLite en `%APPDATA%`, colecciones con
+  migración única desde los JSON antiguos) y `registro_facturas.py` (una
+  ficha por factura con su recorrido, Excel y PDF; `historial.py` es su
+  fachada). El directorio de clientes de la suite sigue en JSON, compartido.
 - **Lectura**: Gemini (`extraccion.py`), modelos fijos `gemini-3.8-flash`
   (principal) y `gemini-3.7-flash` (respaldo), configurables; doble lectura
   comparada en `doble_lectura.py`. Nunca alias `-latest`.
@@ -60,8 +73,9 @@ borra el trabajo del otro sin avisar.
   ahí; no se inventan.
 - **Escaneo**: `escaner.py`. El alimentador va por **NAPS2** (WIA solo devuelve
   la primera hoja del taco con esta HP); el cristal, por WIA.
-- **Datos del usuario**: `%APPDATA%\FacturasAplifisa` (ajustes, clientes,
-  proveedores, gasto de Gemini).
+- **Datos del usuario**: `%APPDATA%\FacturasAplifisa`, en
+  `facturas_aplifisa.db` (ajustes, clientes, proveedores, gasto de Gemini,
+  registro de facturas, exámenes) más la sesión, las muestras y las notas.
 - **Canal con el usuario**: `config/pendientes.md` es lo que él ve dentro del
   programa (Ayuda → Diagnóstico y sugerencias). Ahí se le pregunta lo que haga
   falta, y él contesta en

@@ -3,7 +3,7 @@
 Hay CIF que vienen impresos en un margen, en letra diminuta o de refilon, y se
 leen mal o no se leen. En cuanto uno se sabe bien (porque se leyo nitido en una
 factura o porque lo escribio una persona), no hay que volver a averiguarlo: se
-guarda en %APPDATA%\\FacturasAplifisa\\proveedores.json y sirve para el resto de
+guarda en la base de datos local (almacen.py) y sirve para el resto de
 lotes y de clientes.
 
 Almacen tonto a proposito: la clave la calcula quien llama (procesar.py, que es
@@ -12,7 +12,6 @@ quien sabe normalizar nombres). Asi no hay import circular.
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Dict, Optional
 
@@ -25,13 +24,14 @@ def _ruta() -> str:
     return os.path.join(dir_datos(), _FICHERO)
 
 
+def _col():
+    """Los proveedores, en la base de datos local (antes proveedores.json)."""
+    from .almacen import Coleccion
+    return Coleccion("proveedores", dir_datos(), legado=_ruta())
+
+
 def leer_todo() -> Dict[str, dict]:
-    try:
-        with open(_ruta(), encoding="utf-8") as fh:
-            datos = json.load(fh)
-        return datos if isinstance(datos, dict) else {}
-    except (OSError, ValueError):  # no existe todavia o esta corrupto
-        return {}
+    return {k: v for k, v in _col().leer_todo().items() if isinstance(v, dict)}
 
 
 def leer(clave: str) -> Optional[dict]:
@@ -56,12 +56,7 @@ def guardar(clave: str, nif: str, nombre: str = "", manual: bool = False) -> boo
         return False
     todo[clave] = {"nif": nif, "nombre": nombre or (ficha or {}).get("nombre", ""),
                    "manual": bool(manual) or bool((ficha or {}).get("manual"))}
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False, sort_keys=True)
-        return True
-    except OSError:
-        return False  # no poder recordarlo no debe tumbar la app
+    return _col().guardar(clave, todo[clave])
 
 
 def guardar_campos(clave: str, **campos) -> bool:
@@ -78,12 +73,7 @@ def guardar_campos(clave: str, **campos) -> bool:
     ficha = dict(ficha) if isinstance(ficha, dict) else {}
     ficha.update({k: v for k, v in campos.items() if v not in (None, "")})
     todo[clave] = ficha
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False, sort_keys=True)
-        return True
-    except OSError:
-        return False
+    return _col().guardar(clave, todo[clave])
 
 
 def buscar_por_nif(nif: str) -> Optional[dict]:

@@ -100,7 +100,13 @@ Documentación Facturas/
   revisar la propuesta. Duplicados idénticos a `_Duplicados`; se puede
   deshacer (registro en `_Organizacion`).
 - **Expedientes** se generan desde las carpetas (los originales no se tocan)
-  y se actualizan solos al exportar y al recoger.
+  y se actualizan solos al exportar y al recoger. Su resumen sale del
+  registro de facturas: lo exportado, con el PDF de cada una, y lo archivado
+  sin exportar.
+- **Registro de facturas** (cinta → Archivo → *Registro*): una ficha por
+  factura con su recorrido (leída → revisada → exportada → archivada), el
+  Excel en el que salió y su PDF. Se busca por proveedor, NIF, número o
+  importe.
 
 ## Lectura con IA
 
@@ -115,10 +121,21 @@ Documentación Facturas/
 - Lo que no se ha leído se deja vacío: una hoja ilegible queda en rojo sin
   nombre ni importes inventados, y una cuenta propuesta por palabras clave o
   por descarte queda en ámbar.
-- Las facturas exportadas se recuerdan por cliente
-  (`%APPDATA%\FacturasAplifisa\facturas_exportadas.json`) para avisar si
-  vuelven a aparecer; los NIF de proveedores se aprenden al exportar, no al
-  leer.
+- **Recuadros en el documento**: para las facturas en ámbar o rojo se
+  pregunta a Gemini dónde está escrito cada dato (cajas 0-1000 sobre la
+  imagen) y el visor lo recuadra; al pulsar una celda se recuadra ese dato.
+  Con doble lectura en desacuerdo se ven los dos valores y si aparecen o no en
+  la hoja. Para el resto, botón *¿De dónde sale?*. Nunca cambia datos.
+- **Examen de precisión** (Ayuda → *Examen de precisión de la lectura*):
+  relee facturas ya revisadas y exportadas con cada modelo y da el porcentaje
+  de aciertos por dato y las que habrían salido verificadas con un dato mal.
+- Las facturas exportadas se recuerdan por cliente en el registro para avisar
+  si vuelven a aparecer; los NIF de proveedores se aprenden al exportar, no
+  al leer.
+- Todo lo que el programa recuerda (ajustes, clientes, proveedores, gasto de
+  Gemini, registro de facturas, exámenes) vive en una base de datos local:
+  `%APPDATA%\FacturasAplifisa\facturas_aplifisa.db` (SQLite). Los JSON de
+  versiones anteriores se copian la primera vez y no se tocan.
 - Usa el directorio común de clientes de la suite
   (`%LOCALAPPDATA%\AsesoriaEMarin\Suite\clientes.json`).
 

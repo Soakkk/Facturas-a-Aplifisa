@@ -1,4 +1,5 @@
 """Un PDF por factura al exportar, con el taco original apartado."""
+from facturas_excel import ventana_aplifisa
 import os
 
 import fitz
@@ -116,9 +117,9 @@ def test_exportar_parte_el_taco_y_actualiza_la_ventana(monkeypatch):
             pass
 
         def orden(self):
-            return modulo_app.ORDEN_PDF
+            return ventana_aplifisa.ORDEN_PDF
 
-    monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
     base = archivo.carpeta_escaneos()
     carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
     taco = _taco(os.path.join(carpeta, "taco.pdf"), 2)
@@ -155,9 +156,9 @@ def test_las_apartadas_tambien_tienen_su_pdf_pero_no_las_sustituidas(monkeypatch
             pass
 
         def orden(self):
-            return modulo_app.ORDEN_PDF
+            return ventana_aplifisa.ORDEN_PDF
 
-    monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
     base = archivo.carpeta_escaneos()
     carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
     taco = _taco(os.path.join(carpeta, "taco.pdf"), 3)

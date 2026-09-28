@@ -161,6 +161,11 @@ QPushButton#botonVisor {{
     padding: 0; border: none; background: transparent; color: {ACCENT};
 }}
 QPushButton#botonVisor:hover {{ background: {ACCENT_FAINT}; border: none; }}
+QPushButton#botonSenalar {{
+    min-height: 26px; max-height: 26px; padding: 0 8px; border: none;
+    background: transparent; color: {ACCENT}; font-weight: 600;
+}}
+QPushButton#botonSenalar:hover {{ background: {ACCENT_FAINT}; border: none; }}
 
 QLineEdit, QComboBox {{
     background: {CARD}; border: 1px solid {BORDER}; border-radius: 7px;

@@ -5,6 +5,7 @@ peticiones seguidas y hasta ahora, mientras se leia un lote, soltar otro PDF
 solo daba un "espera a que termine". Ahora cada documento espera su turno.
 """
 
+from facturas_excel import ventana_lectura
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -47,8 +48,8 @@ class WorkerFalso(QObject):
 @pytest.fixture
 def ventana(tmp_path, monkeypatch):
     WorkerFalso.creados = []
-    monkeypatch.setattr(app_mod, "Worker", WorkerFalso)
-    monkeypatch.setattr(app_mod, "leer_api_key", lambda: "clave-de-prueba")
+    monkeypatch.setattr(ventana_lectura, "Worker", WorkerFalso)
+    monkeypatch.setattr(ventana_lectura, "leer_api_key", lambda: "clave-de-prueba")
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
     monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: None))
     v = VentanaPrincipal(comprobar_updates=False)

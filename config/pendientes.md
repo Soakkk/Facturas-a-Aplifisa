@@ -1,11 +1,36 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 24 de septiembre de 2026 (versión 1.16.0). Apunta abajo lo que
+Actualizado el 28 de septiembre de 2026 (versión 1.17.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
 
-### Lo nuevo de la 1.16 (pruébalo)
+### Lo nuevo de la 1.17 (pruébalo)
+
+**De dónde sale cada dato.** En las facturas en ámbar o rojo, el documento de
+la derecha recuadra el dato dudoso. Pulsa una celda (NIF, total, fecha…) y se
+recuadra ese dato; la hoja se acerca sola. Si las dos lecturas no coinciden,
+la ficha te dice cuál de los dos valores está en la hoja y cuál no aparece.
+Para cualquier otra factura, botón «¿De dónde sale?» encima del documento.
+
+**Registro de facturas.** Cinta → Archivo → «Registro». Todas las facturas
+que salen del programa, con su recorrido, su Excel y su PDF. Busca por
+proveedor, NIF, número o importe.
+
+**Examen de precisión.** Ayuda → «Examen de precisión de la lectura…». Vuelve
+a leer facturas que ya revisaste y te dice cuánto acierta cada modelo. Te
+dice lo que cuesta antes de empezar; pásalo cuando quieras comparar.
+
+**Columnas.** Recargo y retenciones solo salen cuando tocan a ese cliente.
+Para verlas siempre: Ver → «Ver todas las columnas».
+
+Dime:
+- Si los recuadros caen en su sitio en tus facturas reales (con las de
+  prueba sí, pero lo que manda es tu papel escaneado).
+- Si prefieres que los recuadros se pidan también para las verdes (cuesta
+  algo más por factura).
+
+### Lo nuevo de la 1.16
 
 **Una factura, un PDF.** Al exportar, el taco escaneado se parte y cada
 factura queda en su propio PDF dentro de Gastos o Ingresos, con la fecha y el
@@ -13,7 +38,7 @@ proveedor en el nombre («2026-02-12 GASOLINERA EJEMPLO SL G-118.pdf»). Cada
 una va al año de su fecha. El taco original se guarda en «Tacos escaneados».
 Lo que ya tenías archivado no se ha tocado.
 
-### Lo nuevo de la 1.15 (pruébalo)
+### Lo nuevo de la 1.15
 
 **Recoger lo suelto.** En la cinta, grupo Archivo → «Recoger sueltos…». Mira
 el Escritorio y Descargas, reconoce de qué cliente es cada factura por su NIF
@@ -27,7 +52,7 @@ los totales, y un ZIP con todo. Se actualiza solo cada vez que exportas.
 Dime si te encaja el formato del resumen o si quieres ver algo más en él
 (por ejemplo, las facturas del ejercicio que NO se exportaron desde aquí).
 
-### Lo nuevo de la 1.14 (pruébalo)
+### Lo nuevo de la 1.14
 
 **Doble lectura.** Cada hoja la leen ahora dos modelos (3.8-flash y
 3.7-flash). Si no coinciden en el NIF, el número, la fecha, el desglose o el
@@ -54,7 +79,7 @@ el tipo de sociedad; NIF intracomunitarios explicados.
 
 ---
 
-### Lo que se resolvió en la 1.13 (pruébalo)
+### Lo que se resolvió en la 1.13
 
 **Escanear.** El botón «Escanear facturas» (Ctrl+E) maneja el alimentador de tu
 HP, guarda el PDF completo en

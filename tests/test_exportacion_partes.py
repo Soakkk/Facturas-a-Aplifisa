@@ -4,6 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog
 
+from facturas_excel import ventana_aplifisa
 import facturas_excel.app as modulo_app
 from facturas_excel.app import VentanaPrincipal
 from facturas_excel.modelo import Factura
@@ -44,11 +45,11 @@ def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
             pass
 
         def orden(self):
-            return modulo_app.ORDEN_PDF
+            return ventana_aplifisa.ORDEN_PDF
 
     escritos = []
     limpiezas = []
-    monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
     monkeypatch.setattr(
         modulo_app.archivo, "ruta_excel_consolidado",
         lambda cliente, ejercicio, tipo: str(
@@ -56,11 +57,11 @@ def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
     monkeypatch.setattr(
         modulo_app.archivo, "eliminar_excel_temporales",
         lambda cliente, tipo: limpiezas.append((cliente, tipo)) or ["parte.xlsx"])
-    monkeypatch.setattr(modulo_app, "leer_config", lambda ruta: object())
-    monkeypatch.setattr(modulo_app, "exportar_excel",
+    monkeypatch.setattr(ventana_aplifisa, "leer_config", lambda ruta: object())
+    monkeypatch.setattr(ventana_aplifisa, "exportar_excel",
                         lambda facturas, config, ruta: escritos.append(ruta))
-    monkeypatch.setattr(modulo_app, "verificar_excel", lambda *args: [])
-    monkeypatch.setattr(modulo_app, "totales_del_excel",
+    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *args: [])
+    monkeypatch.setattr(ventana_aplifisa, "totales_del_excel",
                         lambda *args: {"base_iva": 200, "cuota_iva": 42})
     monkeypatch.setattr(modulo_app.QMessageBox, "information", lambda *args: None)
 

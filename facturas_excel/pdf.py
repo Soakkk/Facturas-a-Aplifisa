@@ -45,6 +45,16 @@ def paginas_pdf_a_jpg(ruta_pdf: str, dpi: int = 150) -> List[bytes]:
     return imagenes
 
 
+def pagina_a_jpg(ruta: str, pagina: int = 1, dpi: int = 150) -> bytes:
+    """Una sola hoja de un PDF (o la imagen suelta), como se manda a leer."""
+    if os.path.splitext(ruta)[1].lower() != ".pdf":
+        with Image.open(ruta) as im:
+            return _comprimir_pil(im)
+    with fitz.open(ruta) as doc:
+        pix = doc[max(1, int(pagina)) - 1].get_pixmap(dpi=dpi)
+        return pix.pil_tobytes(format="JPEG", quality=CALIDAD)
+
+
 def numero_paginas(ruta_pdf: str) -> int:
     """Cuenta páginas sin rasterizar el documento completo."""
     with fitz.open(ruta_pdf) as doc:

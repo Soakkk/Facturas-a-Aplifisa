@@ -1,4 +1,5 @@
 """La captura debe ocurrir en el flujo real, no solo al invocar el módulo."""
+from facturas_excel import ventana_lectura
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import json
@@ -36,7 +37,7 @@ def cargar(v,tmp_path):
 
 def test_original_se_guarda_aunque_no_haya_api(v,tmp_path,monkeypatch):
     ruta=tmp_path/'escaneo.png'; ruta.write_bytes(b'original ficticio')
-    monkeypatch.setattr(app,'leer_api_key',lambda:None)
+    monkeypatch.setattr(ventana_lectura,'leer_api_key',lambda:None)
     v.procesar_rutas([str(ruta)],desde_escaner=True)
     archivos=list((muestras_revision.carpeta()/'originales').glob('*'))
     assert len(archivos)==1 and archivos[0].read_bytes()==b'original ficticio'

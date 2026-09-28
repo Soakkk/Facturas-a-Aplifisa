@@ -6,6 +6,43 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.17.0": """
+<h2>Novedades de la versión 1.17.0</h2>
+<ul>
+  <li><b>De dónde sale cada dato.</b> En las facturas en ámbar o en rojo, el
+      documento de la derecha recuadra dónde está escrito el dato dudoso. Al
+      pulsar una celda de la tabla (NIF, total, fecha…) se recuadra ese dato y
+      la hoja se acerca sola. Si las dos lecturas no coinciden, salen los dos
+      sitios y la ficha dice cuál de los dos valores <i>está en la hoja</i> y
+      cuál <i>no aparece</i>. Para cualquier otra factura, botón
+      <i>«¿De dónde sale?»</i> encima del documento. Es una consulta aparte a
+      Gemini, más corta que la lectura, y solo para las dudosas; se puede
+      quitar en Configuración → Modelos de lectura.</li>
+  <li><b>Registro de facturas</b> (cinta → Archivo → «Registro»): cada
+      factura que sale del programa queda apuntada con su recorrido (leída,
+      revisada, exportada, archivada), el Excel en el que salió y su PDF. Se
+      busca por proveedor, NIF, número o importe y se abre su PDF con doble
+      clic. El resumen del expediente sale de aquí, con el PDF de cada
+      factura y las archivadas que no se exportaron.</li>
+  <li><b>Examen de precisión</b> (Ayuda → «Examen de precisión de la
+      lectura…»): vuelve a leer facturas que usted ya revisó y dice, con
+      números, cuánto acierta cada modelo en cada dato y si alguna habría
+      salido verificada con un dato mal. Dice el coste antes de empezar y
+      guarda cada examen para comparar versiones.</li>
+  <li><b>Columnas según el cliente.</b> Recargo y retenciones solo ocupan
+      sitio cuando tocan: recargo si el cliente está en ese régimen o alguna
+      factura lo trae; retenciones si alguna factura las trae o el cliente
+      ya las tuvo antes. Nunca se esconde una columna con datos. Para verlas
+      todas: Ver → «Ver todas las columnas» (o clic derecho en la cabecera).</li>
+  <li><b>Por dentro:</b> todo lo que el programa recuerda (clientes,
+      proveedores, ajustes, gasto de Gemini, facturas exportadas) está ahora
+      en una sola base de datos en su ordenador. Lo de antes se ha copiado
+      solo; los archivos antiguos quedan como estaban. Además, la ventana
+      principal se ha reorganizado para que corregir, ordenar y filtrar
+      vaya más fino.</li>
+  <li>Todos los importes de la tabla salen con dos decimales.</li>
+</ul>
+""",
     "1.16.0": """
 <h2>Novedades de la versión 1.16.0</h2>
 <ul>

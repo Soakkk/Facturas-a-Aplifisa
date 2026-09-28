@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from . import historial, identidad_archivo
+from . import identidad_archivo, registro_facturas
 from .recoger import CARPETA_EXCEL
 
 TIPOS = (("Gastos", "Gastos"), ("Ingresos", "Ingresos"))
@@ -163,14 +163,15 @@ def _html_resumen(e: Ejercicio, documentos: dict, facturas: list) -> str:
                       f"<td align='right'>{paginas}</td>"
                       f"<td>{html.escape(archivo or '—')}</td></tr>")
     partes.append("</table>")
-    if not facturas:
+    exportadas = [f for f in facturas if f.get("exportada_en")]
+    otras = [f for f in facturas if not f.get("exportada_en")]
+    if not exportadas:
         partes.append("<p><i>No hay facturas de este ejercicio exportadas a "
                       "Aplifisa desde el programa (o se exportaron antes de la "
                       "versión 1.14).</i></p>")
-        return "".join(partes)
     for tipo, titulo in (("gasto", "Gastos exportados a Aplifisa"),
                          ("venta", "Ingresos exportados a Aplifisa")):
-        filas = [f for f in facturas if f.get("tipo") == tipo]
+        filas = [f for f in exportadas if f.get("tipo") == tipo]
         if not filas:
             continue
         suma = {k: round(sum(float(f.get(k) or 0) for f in filas), 2)
@@ -180,7 +181,8 @@ def _html_resumen(e: Ejercicio, documentos: dict, facturas: list) -> str:
             "<table border='1' cellspacing='0' cellpadding='3' width='100%'>"
             "<tr><th align='left'>Fecha</th><th align='left'>Nº</th>"
             "<th align='left'>Nombre</th><th>Base</th><th>IVA</th>"
-            "<th>Recargo</th><th>Retención</th><th>Total</th></tr>")
+            "<th>Recargo</th><th>Retención</th><th>Total</th>"
+            "<th align='left'>PDF</th></tr>")
         for f in filas:
             partes.append(
                 f"<tr><td>{html.escape(str(f.get('fecha') or ''))}</td>"
@@ -190,14 +192,35 @@ def _html_resumen(e: Ejercicio, documentos: dict, facturas: list) -> str:
                 f"<td align='right'>{eur(f.get('cuota_iva'))}</td>"
                 f"<td align='right'>{eur(f.get('cuota_requiv'))}</td>"
                 f"<td align='right'>{eur(f.get('cuota_irpf'))}</td>"
-                f"<td align='right'>{eur(f.get('total'))}</td></tr>")
+                f"<td align='right'>{eur(f.get('total'))}</td>"
+                f"<td>{html.escape(os.path.basename(f.get('pdf') or '') or '—')}</td></tr>")
         partes.append(
             f"<tr><td colspan='3'><b>TOTAL</b></td>"
             f"<td align='right'><b>{eur(suma['base'])}</b></td>"
             f"<td align='right'><b>{eur(suma['cuota_iva'])}</b></td>"
             f"<td align='right'><b>{eur(suma['cuota_requiv'])}</b></td>"
             f"<td align='right'><b>{eur(suma['cuota_irpf'])}</b></td>"
-            f"<td align='right'><b>{eur(suma['total'])}</b></td></tr></table>")
+            f"<td align='right'><b>{eur(suma['total'])}</b></td><td></td></tr></table>")
+    if otras:
+        # Las que tienen su PDF pero no salieron en el Excel: apartadas para
+        # gestión manual (bien de inversión, suplidos…) o exportación deshecha.
+        partes.append(
+            f"<h3>Archivadas sin exportar a Aplifisa: {len(otras)}</h3>"
+            "<p>Apartadas para gestión manual o con la exportación deshecha. "
+            "Tienen su PDF, pero no van en el Excel.</p>"
+            "<table border='1' cellspacing='0' cellpadding='3' width='100%'>"
+            "<tr><th align='left'>Tipo</th><th align='left'>Fecha</th>"
+            "<th align='left'>Nº</th><th align='left'>Nombre</th><th>Total</th>"
+            "<th align='left'>PDF</th></tr>")
+        for f in otras:
+            partes.append(
+                f"<tr><td>{'Ingreso' if f.get('tipo') == 'venta' else 'Gasto'}</td>"
+                f"<td>{html.escape(str(f.get('fecha') or ''))}</td>"
+                f"<td>{html.escape(str(f.get('num_factura') or ''))}</td>"
+                f"<td>{html.escape(str(f.get('nombre') or ''))}</td>"
+                f"<td align='right'>{eur(f.get('total'))}</td>"
+                f"<td>{html.escape(os.path.basename(f.get('pdf') or '') or '—')}</td></tr>")
+        partes.append("</table>")
     return "".join(partes)
 
 
@@ -244,7 +267,9 @@ def crear(base: str, e: Ejercicio, con_zip: bool = True) -> dict:
                                  os.path.join(trabajo, CARPETA_EXCEL, nombre))
                     excels.append(nombre)
         documentos["Excel Aplifisa"] = (len(excels), 0, ", ".join(excels))
-        facturas = historial.del_ejercicio(e.nif, e.ejercicio, e.nombre)
+        # Del registro de facturas: lo exportado y lo archivado sin exportar.
+        facturas = registro_facturas.del_ejercicio(
+            e.nif, e.ejercicio, e.nombre, solo_exportadas=False)
         resumen = f"Resumen {e.ejercicio}.pdf"
         _pdf_desde_html(_html_resumen(e, documentos, facturas),
                         os.path.join(trabajo, resumen))
@@ -270,7 +295,7 @@ def crear(base: str, e: Ejercicio, con_zip: bool = True) -> dict:
                     z.write(ruta, os.path.relpath(ruta, os.path.dirname(destino)))
         os.replace(temporal, zip_ruta)
     return {"carpeta": destino, "zip": zip_ruta, "documentos": documentos,
-            "facturas": len(facturas)}
+            "facturas": sum(1 for f in facturas if f.get("exportada_en"))}
 
 
 def buscar(base: str, nif: str = "", nombre: str = "",
