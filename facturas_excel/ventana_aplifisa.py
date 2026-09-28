@@ -162,6 +162,17 @@ class AplifisaMixin:
         self._avisar(f"{cuantas} factura(s) quitadas del historial de "
                      "exportadas.", INFO, deshacer=deshacer)
 
+    def _momentos_de_lectura(self) -> dict:
+        """{id(factura): cuándo se leyó su bloque}, para el registro."""
+        cuando = {b.get("nombre"): b.get("leido_en") for b in self._bloques}
+        salida = {}
+        for registro in self.filas:
+            momento = cuando.get(registro.bloque)
+            if momento:
+                for f in (registro.factura, *registro.fuentes):
+                    salida[id(f)] = momento
+        return salida
+
     def _para_aplifisa(self, facturas):
         """Traduce el concepto al texto que Aplifisa tiene parametrizado.
 
@@ -350,7 +361,8 @@ class AplifisaMixin:
         # avisar si vuelve a aparecer) y se aprenden sus NIF, ya revisados.
         exportadas = {t: por_tipo[t] for t in tipos_exportados}
         historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
-                            rutas_por_tipo, getattr(self, "_cliente_nombre", ""))
+                            rutas_por_tipo, getattr(self, "_cliente_nombre", ""),
+                            leidas_en=self._momentos_de_lectura())
         # Las apartadas para gestión manual (bien de inversión, suplidos…)
         # no van al Excel, pero son documentación del cliente: también tienen
         # su PDF. Los duplicados y las sustituidas, no.

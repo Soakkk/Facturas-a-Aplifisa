@@ -153,12 +153,13 @@ class ValidacionMixin:
             por_bloque.setdefault(bloque, Counter())[tipos[r]] += 1
         cliente_nif = getattr(self, "_cliente_nif", "")
         cliente_nombre = getattr(self, "_cliente_nombre", "")
+        # Todo lo exportado del cliente en una sola consulta al registro.
+        ya = historial.exportadas_de(cliente_nif, cliente_nombre) if n else {}
         exportadas = {}
         for r in range(n):
-            info = historial.buscar(cliente_nif, facturas[r], tipos[r],
-                                    cliente_nombre)
-            if info:
-                exportadas[r] = info
+            k = historial.clave(facturas[r], tipos[r])
+            if k and k in ya:
+                exportadas[r] = ya[k]
         return {
             "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
             "transportista": self._cliente_es_transportista(),

@@ -13,7 +13,7 @@ from collections import Counter
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 
-from facturas_excel import archivo, escaner
+from facturas_excel import archivo, escaner, registro_facturas
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
@@ -134,6 +134,10 @@ class ArchivoMixin:
             except (OSError, ValueError, RuntimeError):
                 pass
         return hechos
+
+    def _ver_registro_facturas(self) -> None:
+        from facturas_excel.dialogo_registro_facturas import DialogoRegistroFacturas
+        DialogoRegistroFacturas(self).exec()
 
     def _ver_expedientes(self) -> None:
         from facturas_excel.dialogo_expedientes import DialogoExpedientes
@@ -265,6 +269,8 @@ class ArchivoMixin:
             for viejo, nuevo in partido["tacos"].items():
                 self._cambiar_origen(viejo, nuevo)
             afectados.update((nombre, nif, e) for e in partido["afectados"])
+            # Cada factura queda en el registro con su PDF.
+            registro_facturas.archivar(nif, nombre, partido["pdfs"])
             if partido["creados"]:
                 avisos.append(f"{len(partido['creados'])} factura(s) guardadas "
                               "en su propio PDF en el archivo del cliente.")
@@ -313,3 +319,4 @@ class ArchivoMixin:
             cambiar(registro["factura"])
             for f in registro.get("fuentes", []):
                 cambiar(f)
+        registro_facturas.cambiar_ruta(viejo, nuevo)

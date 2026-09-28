@@ -773,6 +773,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         escaneos.addAction("Deshacer la última recogida", self._deshacer_recogida)
         escaneos.addAction("Expedientes por cliente y ejercicio…",
                            self._ver_expedientes)
+        escaneos.addAction("Registro de facturas…", self._ver_registro_facturas)
 
         comprobar = self.menuBar().addMenu("Comprobar")
         self.btn_registro = comprobar.addAction(

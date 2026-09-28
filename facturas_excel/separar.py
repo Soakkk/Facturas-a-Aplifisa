@@ -75,11 +75,12 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
     """Crea un PDF por factura y aparta los tacos originales.
 
     Devuelve {"creados": [...], "ya_estaban": n, "sin_paginas": [...],
-    "tacos": {ruta vieja: ruta nueva}, "afectados": {(ejercicio)}}.
+    "tacos": {ruta vieja: ruta nueva}, "afectados": {(ejercicio)},
+    "pdfs": [(tipo, factura, ruta del PDF)]} (también los que ya estaban).
     """
     import fitz
 
-    creados, sin_paginas, ya_estaban = [], [], 0
+    creados, sin_paginas, ya_estaban, pdfs = [], [], 0, []
     usados: set = set()
     afectados = set()
     abiertos: Dict[str, "fitz.Document"] = {}
@@ -98,6 +99,7 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
             destino = os.path.join(carpeta, nombre_factura(f))
             if os.path.exists(destino):
                 ya_estaban += 1
+                pdfs.append((tipo, f, destino))
                 continue
             nuevo = fitz.open()
             for origen, pagina in paginas:
@@ -119,6 +121,7 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
             nuevo.close()
             os.replace(temporal, destino)
             creados.append(destino)
+            pdfs.append((tipo, f, destino))
             afectados.add(ejercicio)
             usados.update(o for o, _ in paginas)
     finally:
@@ -150,4 +153,5 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
         except OSError:
             pass            # abierto en otro programa: se queda donde está
     return {"creados": creados, "ya_estaban": ya_estaban,
-            "sin_paginas": sin_paginas, "tacos": tacos, "afectados": afectados}
+            "sin_paginas": sin_paginas, "tacos": tacos, "afectados": afectados,
+            "pdfs": pdfs}

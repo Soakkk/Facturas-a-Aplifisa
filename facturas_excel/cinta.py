@@ -123,7 +123,11 @@ def crear_cinta(v) -> None:
         pequeno("Vaciar todo", "trash.svg", v.btn_vaciar.click,
                 "Empieza un lote nuevo."),
     ])
-    grupo("Archivo", [], [
+    v.btn_registro_facturas = grande(
+        "Registro", "registro-large.svg", v._ver_registro_facturas,
+        "Todas las facturas que han salido del programa: en qué paso "
+        "están, en qué Excel salieron y dónde está su PDF.")
+    grupo("Archivo", [v.btn_registro_facturas], [
         pequeno("Escaneos guardados", "folder.svg", v._ver_escaneos,
                 "Los PDF ya escaneados y archivados.  (Ctrl+L)"),
         pequeno("Recoger sueltos…", "open.svg", v._recoger_sueltos,

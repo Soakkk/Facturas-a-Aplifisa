@@ -12,7 +12,7 @@ import os
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 
-from facturas_excel import archivo, costes, muestras_revision
+from facturas_excel import almacen, archivo, costes, muestras_revision
 from facturas_excel.banda_avisos import AVISO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_cliente import DialogoCliente
@@ -238,6 +238,8 @@ class LecturaMixin:
         # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
         self._bloques.append({
             "nombre": self._nombre_bloque(elemento.get("etiqueta")),
+            # Cuándo se leyó: pasa al registro de facturas al exportar.
+            "leido_en": almacen.ahora(),
             "original": elemento.get("original", ""),
             "procesadas": procesadas,
             # Lo leido por Gemini, tal cual: permite rehacer el lote con otro

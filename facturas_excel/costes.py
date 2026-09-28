@@ -9,7 +9,6 @@ una sorpresa a fin de mes.
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import date
 from typing import Dict, Optional, Tuple
@@ -93,21 +92,15 @@ def coste(modelo: str, tokens_entrada: int, tokens_salida: int) -> float:
 
 
 # ------------------------------------------------------------------ almacen
+def _col():
+    """El gasto por meses, en la base de datos local (antes gasto.json)."""
+    from .almacen import Coleccion
+    return Coleccion("gasto", dir_datos(), legado=_ruta(),
+                     convertir=lambda antiguo: antiguo.get("meses", {}) or {})
+
+
 def _leer() -> dict:
-    try:
-        with open(_ruta(), encoding="utf-8") as fh:
-            datos = json.load(fh)
-        return datos if isinstance(datos, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _escribir(datos: dict) -> None:
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(datos, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass  # no poder anotar el gasto no debe tumbar la app
+    return {"meses": _col().leer_todo()}
 
 
 def mes(dia: Optional[date] = None) -> str:
@@ -118,16 +111,21 @@ def registrar(modelo: str, tokens_entrada: int, tokens_salida: int,
               facturas: int = 1, dia: Optional[date] = None) -> float:
     """Anota el gasto del mes y devuelve lo que ha costado esa llamada."""
     importe = coste(modelo, tokens_entrada, tokens_salida)
-    datos = _leer()
-    meses = datos.setdefault("meses", {})
-    ficha = meses.setdefault(mes(dia), {"facturas": 0, "tokens_entrada": 0,
-                                        "tokens_salida": 0, "coste": 0.0})
-    ficha["facturas"] += facturas
-    ficha["tokens_entrada"] += tokens_entrada or 0
-    ficha["tokens_salida"] += tokens_salida or 0
-    ficha["coste"] = round(ficha["coste"] + importe, 6)
-    ficha["ultimo_modelo"] = _normaliza(modelo)
-    _escribir(datos)
+    def sumar(ficha):
+        ficha = dict(ficha or {"facturas": 0, "tokens_entrada": 0,
+                               "tokens_salida": 0, "coste": 0.0})
+        ficha["facturas"] = ficha.get("facturas", 0) + facturas
+        ficha["tokens_entrada"] = ficha.get("tokens_entrada", 0) + (tokens_entrada or 0)
+        ficha["tokens_salida"] = ficha.get("tokens_salida", 0) + (tokens_salida or 0)
+        ficha["coste"] = round(ficha.get("coste", 0.0) + importe, 6)
+        ficha["ultimo_modelo"] = _normaliza(modelo)
+        return ficha
+    try:
+        # Leer y sumar en la misma transacción: las hojas se leen a la vez
+        # en varios hilos y ninguna suma debe pisar a otra.
+        _col().modificar(mes(dia), sumar)
+    except Exception:
+        pass  # no poder anotar el gasto no debe tumbar la app
     return importe
 
 

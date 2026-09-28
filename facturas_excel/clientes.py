@@ -7,7 +7,6 @@ para no tener que marcarlo en cada lote.
 
 from __future__ import annotations
 
-import json
 import os
 import unicodedata
 from typing import Dict
@@ -21,13 +20,18 @@ def _ruta() -> str:
     return os.path.join(dir_datos(), _FICHERO)
 
 
+def _col():
+    """Los clientes, en la base de datos local (antes clientes.json)."""
+    from .almacen import Coleccion
+    return Coleccion("clientes", dir_datos(), legado=_ruta())
+
+
 def _leer_todo() -> Dict[str, dict]:
-    try:
-        with open(_ruta(), encoding="utf-8") as fh:
-            datos = json.load(fh)
-        return datos if isinstance(datos, dict) else {}
-    except (OSError, ValueError):  # no existe todavia o esta corrupto
-        return {}
+    return {k: v for k, v in _col().leer_todo().items() if isinstance(v, dict)}
+
+
+def _guardar_ficha(nif: str, ficha: dict) -> None:
+    _col().guardar(nif, ficha)   # si falla, no debe tumbar la app
 
 
 def _normaliza(nif) -> str:
@@ -50,11 +54,7 @@ def guardar_recargo_equivalencia(nif, activo: bool, nombre: str = "") -> None:
     ficha["recargo_equivalencia"] = bool(activo)
     if nombre:
         ficha["nombre"] = nombre  # solo para poder leer el fichero a ojo
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass  # no poder recordarlo no debe tumbar la app
+    _guardar_ficha(nif, todo[nif])
 
 
 def nombres_conocidos() -> list:
@@ -77,11 +77,7 @@ def recordar_nombre(nif, nombre: str) -> None:
         return
     todo = _leer_todo()
     todo.setdefault(nif, {})["nombre"] = nombre
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
+    _guardar_ficha(nif, todo[nif])
 
 
 def marcar_cliente(nif, nombre: str = "") -> None:
@@ -96,11 +92,7 @@ def marcar_cliente(nif, nombre: str = "") -> None:
     ficha["confirmado"] = True
     if nombre:
         ficha["nombre"] = nombre
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
+    _guardar_ficha(nif, todo[nif])
     # Lo confirmado por una persona se comparte con el resto de la suite.
     from . import suite
     suite.registrar_cliente(nif, nombre)
@@ -195,8 +187,4 @@ def guardar_regimen_recargo(nif, regimen: str, nombre: str = "") -> None:
     ficha["recargo_equivalencia"] = (regimen == TOTAL)   # por si lo lee algo viejo
     if nombre:
         ficha["nombre"] = nombre
-    try:
-        with open(_ruta(), "w", encoding="utf-8") as fh:
-            json.dump(todo, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
+    _guardar_ficha(nif, todo[nif])

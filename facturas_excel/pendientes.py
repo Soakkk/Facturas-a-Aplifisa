@@ -11,7 +11,6 @@ El panel solo salta una vez por version: si molesta, deja de usarse.
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import date
 
@@ -71,13 +70,14 @@ def _ruta_ajustes() -> str:
     return os.path.join(dir_datos(), _AJUSTES)
 
 
+def _ajustes():
+    """Los mismos ajustes del programa (almacen.py), con la carpeta de aquí."""
+    from .almacen import Coleccion
+    return Coleccion("ajustes", dir_datos(), legado=_ruta_ajustes())
+
+
 def _leer_ajustes() -> dict:
-    try:
-        with open(_ruta_ajustes(), encoding="utf-8") as fh:
-            datos = json.load(fh)
-        return datos if isinstance(datos, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return _ajustes().leer_todo()
 
 
 def ya_visto(version: str) -> bool:
@@ -85,10 +85,5 @@ def ya_visto(version: str) -> bool:
 
 
 def marcar_visto(version: str) -> None:
-    datos = _leer_ajustes()
-    datos["pendientes_vistos"] = version
-    try:
-        with open(_ruta_ajustes(), "w", encoding="utf-8") as fh:
-            json.dump(datos, fh, indent=2, ensure_ascii=False)
-    except OSError:
-        pass  # no poder recordarlo no debe tumbar la app
+    _ajustes().guardar("pendientes_vistos", version)
+
