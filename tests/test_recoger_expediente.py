@@ -1,4 +1,5 @@
 """Recoger facturas sueltas y crear el expediente del cliente (datos de prueba)."""
+from facturas_excel import ventana_aplifisa
 import os
 import zipfile
 from types import SimpleNamespace
@@ -171,9 +172,9 @@ def test_exportar_guarda_el_excel_y_actualiza_el_expediente(entorno, monkeypatch
             pass
 
         def orden(self):
-            return modulo_app.ORDEN_PDF
+            return ventana_aplifisa.ORDEN_PDF
 
-    monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
     v = modulo_app.VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     v._cliente_nif, v._cliente_nombre = CLIENTE
     v._bloques = [{"nombre": "b1", "cliente": CLIENTE[1], "nif": CLIENTE[0]}]

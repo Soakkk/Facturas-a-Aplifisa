@@ -4,6 +4,7 @@ Lo importante: un escaneo puede nacer sin saber de quien es y colocarse solo
 cuando el programa detecta al cliente, y nada se borra de verdad.
 """
 
+from facturas_excel import ventana_lectura
 import os
 import zipfile
 
@@ -221,7 +222,7 @@ def test_pdf_largo_externo_archiva_el_original_y_borra_solo_la_parte_interna(
     datos_app = tmp_path / "datos_app"
     carpeta_partes = datos_app / "cola_pdf" / "lote_interno"
     parte = _pdf(str(carpeta_partes / "lote_parte_02_de_04.pdf"))
-    monkeypatch.setattr(app_mod, "dir_datos", lambda: str(datos_app))
+    monkeypatch.setattr(ventana_lectura, "dir_datos", lambda: str(datos_app))
 
     pr = _procesada()
     pr.origen = parte

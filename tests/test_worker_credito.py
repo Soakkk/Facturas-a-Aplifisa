@@ -1,4 +1,5 @@
 """El lote se corta al acabarse el crédito y se cuenta todo lo pagado."""
+from facturas_excel import hilos
 import threading
 
 from PySide6.QtWidgets import QApplication
@@ -22,9 +23,9 @@ def test_sin_credito_no_se_siguen_pidiendo_hojas(monkeypatch):
                 pedidas.append(pagina)
             raise SinCredito("sin saldo")
 
-    monkeypatch.setattr(modulo_app, "Extractor", ExtractorFalso)
-    monkeypatch.setattr(modulo_app, "hilos_lectura", lambda: 1)
-    monkeypatch.setattr(modulo_app, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
+    monkeypatch.setattr(hilos, "hilos_lectura", lambda: 1)
+    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
         ("a.pdf", n, b"img") for n in range(1, 21)])
     w = modulo_app.Worker(["a.pdf"], "clave")
     fallos = []
@@ -46,8 +47,8 @@ def test_lo_pagado_por_una_hoja_fallida_se_cuenta(monkeypatch):
                                 consumos=[("gemini-3.7-flash", 1000, 100)])
 
     registrados = []
-    monkeypatch.setattr(modulo_app, "Extractor", ExtractorFalso)
-    monkeypatch.setattr(modulo_app, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
+    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
         ("a.pdf", 1, b"img"), ("a.pdf", 2, b"img")])
     monkeypatch.setattr(modulo_app.costes, "registrar",
                         lambda m, e, s: registrados.append(m) or 0.001)

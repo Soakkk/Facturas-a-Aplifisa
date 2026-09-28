@@ -89,8 +89,15 @@ def test_filtro_trimestral_y_siguiente_incidencia_no_dejan_filas_ocultas():
 def test_todos_los_campos_siguen_editables_sin_cambiar_indices():
     v = ventana()
     for c in (C_CUENTA, C_GXX, C_NIF, C_BASE, C_CUOTA_IRPF, C_TOTAL):
-        assert not v.tabla.isColumnHidden(c)
         assert v.tabla.item(0, c).flags() & Qt.ItemIsEditable
+    for c in (C_CUENTA, C_GXX, C_NIF, C_BASE, C_TOTAL):
+        assert not v.tabla.isColumnHidden(c)
+    # Sin retenciones en el lote, sus columnas no ocupan sitio...
+    assert v.tabla.isColumnHidden(C_CUOTA_IRPF)
+    # ...salvo que se pidan todas.
+    v.accion_todas_columnas.setChecked(True)
+    assert not v.tabla.isColumnHidden(C_CUOTA_IRPF)
+    v.accion_todas_columnas.setChecked(False)
     assert v.tabla.horizontalHeader().visualIndex(C_CUENTA) == 2
     assert v.tabla.horizontalHeader().visualIndex(C_GXX) == 3
     assert v.tabla.horizontalHeader().visualIndex(C_NOMBRE) == 6

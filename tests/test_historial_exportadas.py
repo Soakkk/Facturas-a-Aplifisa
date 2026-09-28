@@ -1,4 +1,5 @@
 """Facturas ya exportadas en otro lote: se señalan y se preguntan al exportar."""
+from facturas_excel import ventana_aplifisa
 import os
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
@@ -42,19 +43,19 @@ def _preparar_exportacion(monkeypatch, tmp_path, escritos):
             pass
 
         def orden(self):
-            return modulo_app.ORDEN_PDF
+            return ventana_aplifisa.ORDEN_PDF
 
-    monkeypatch.setattr(modulo_app, "DialogoOrden", Orden)
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
     monkeypatch.setattr(modulo_app.archivo, "ruta_excel_consolidado",
                         lambda cliente, ejercicio, tipo: str(tmp_path / f"{tipo}.xlsx"))
     monkeypatch.setattr(modulo_app.archivo, "eliminar_excel_temporales",
                         lambda cliente, tipo: [])
-    monkeypatch.setattr(modulo_app, "leer_config", lambda ruta: object())
-    monkeypatch.setattr(modulo_app, "exportar_excel",
+    monkeypatch.setattr(ventana_aplifisa, "leer_config", lambda ruta: object())
+    monkeypatch.setattr(ventana_aplifisa, "exportar_excel",
                         lambda facturas, config, ruta: escritos.append(
                             [f.num_factura for f in facturas]))
-    monkeypatch.setattr(modulo_app, "verificar_excel", lambda *a: [])
-    monkeypatch.setattr(modulo_app, "totales_del_excel",
+    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *a: [])
+    monkeypatch.setattr(ventana_aplifisa, "totales_del_excel",
                         lambda *a: {"base_iva": 0, "cuota_iva": 0})
     monkeypatch.setattr(modulo_app.QMessageBox, "information", lambda *a: None)
 

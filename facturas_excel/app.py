@@ -8,399 +8,84 @@ plano -> autodetecta el cliente -> tabla de revision con miniatura y semaforo
 from __future__ import annotations
 
 import argparse
-import html
 import os
-import re
 import sys
 
 from collections import Counter
-from dataclasses import replace
-from datetime import date
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (
-    QColor, QCursor, QIcon, QKeySequence, QPageLayout, QPageSize, QPdfWriter,
-    QPixmap, QShortcut, QTextDocument,
-)
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
-    QMessageBox, QProgressBar,
-    QPushButton, QProgressDialog, QScrollArea, QSizePolicy, QSplitter, QStyle,
-    QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
-    QListWidget, QListWidgetItem,
+    QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame,
+    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
+    QMessageBox, QProgressBar, QPushButton, QProgressDialog, QScrollArea,
+    QSizePolicy, QSplitter, QTableWidget, QVBoxLayout, QWidget, QListWidget,
+    QListWidgetItem,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, escaner, historial, notas_version,
-    pendientes, revision_gemini, sesion, updater, muestras_revision,
+    __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
+    revision_gemini, sesion, updater, muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
 from facturas_excel.claves import guardar_api_key, leer_api_key
 from facturas_excel.dialogo_calidad import DialogoCalidad
-from facturas_excel.dialogo_cliente import DialogoCliente
-from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_modelos import DialogoModelos
-from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.dialogo_pendientes import DialogoPendientes
-from facturas_excel.dialogo_orden import (
-    PDF as ORDEN_PDF, DialogoOrden,
-)
 from facturas_excel.dialogo_notas_version import DialogoNotasVersion
 from facturas_excel.dialogo_recargo import DialogoRecargo
-from facturas_excel.dialogo_registro import DialogoRegistro
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
-    DESGLOSE, TOTAL, guardar_regimen_recargo, marcar_cliente, nombres_conocidos,
-    recordar_nombre, regimen_recargo,
+    DESGLOSE, TOTAL, guardar_regimen_recargo, regimen_recargo,
 )
-from facturas_excel.conceptos import (
-    SUBCLAVES_628, catalogo, descripcion_de, es_valido, texto_para,
-)
-from facturas_excel.control_facturas import (
-    clave_documento, controles_documentos, sin_cuadre_antiguo,
-)
+from facturas_excel.conceptos import descripcion_de, es_valido
+from facturas_excel.control_facturas import clave_documento
 from facturas_excel.consulta import (
     PeriodoLote, coincide_busqueda, detectar_periodo, facturas_unicas, periodo_manual,
 )
-from facturas_excel.config_columnas import leer_config
 from facturas_excel.estilo import (
-    ACCENT, ACCENT_FAINT, BORDER, CHROME, CHROME_INK, INK, MUTED, SUCCESS,
-    WARNING, DANGER, aplicar_tema,
+    CHROME, CHROME_INK, MUTED, SUCCESS, WARNING, DANGER, aplicar_tema,
 )
 from facturas_excel.panel_ficha import PanelFicha
-from facturas_excel.ficha_incidencias import (
-    TITULOS as TITULOS_ESTADO, FichaIncidencias,
-)
-from facturas_excel.exportar import (
-    exportar_excel, ordenar_para_exportar, totales_del_excel, verificar_excel,
-)
-from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.modelo import Factura
-from facturas_excel.pdf import PAGINAS_POR_BLOQUE, cargar_imagenes, dividir_pdf
 from facturas_excel.procesar import (
-    a_total_factura, analizar_cliente, clave_proveedor, construir,
-    detectar_cliente,
-    aprender_nifs_exportados, fusionar_paginas_manual, normaliza_nif,
-    preparar_lote, quitar_aviso_cuenta,
+    a_total_factura, clave_proveedor, construir, normaliza_nif, quitar_aviso_cuenta,
     recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
 )
-from facturas_excel.registro import (
-    contrastar, leer_registro, parece_listado,
+from facturas_excel.lote import (
+    CON_ERROR, POR_REVISAR, REVISADA, SIN_VERIFICAR, VERIFICADA, Fila,
+    filas_de_bloques, ordenar as ordenar_filas,
 )
-from facturas_excel.resumen import (
-    eur, porcentaje_iva, resumir, resumir_por_bloque,
+# Las columnas, los estados y el Worker se siguen importando desde aquí en
+# otros módulos y en las pruebas: por eso algunos nombres no se usan dentro.
+from facturas_excel.tabla_facturas import (  # noqa: F401
+    CAMPO_DE_COLUMNA, COLS, COLUMNAS_IRPF, C_BASE, C_BASE_IRPF, C_BASE_RE,
+    C_BLOQUE, C_CUENTA, C_CUOTA, C_CUOTA_IRPF, C_CUOTA_RE, C_ESTADO, C_FECHA,
+    C_GXX, C_NIF, C_NOMBRE, C_NUM, C_PCT, C_PCT_IRPF, C_PCT_RE, C_TIPO, C_TOTAL,
+    ComboSinRueda, TablaFacturas, fmt, parse_numero, valor_de_celda,
 )
-from facturas_excel.rutas import dir_datos, ruta_config
-from facturas_excel.union_bloques import unir_ultimo_bloque
-from facturas_excel.validacion import (
-    ERROR, OK, REVISAR, Incidencia, encontrar_duplicados, huecos_de_numeracion,
-    fecha_de, validar, validar_nif,
+from facturas_excel.validacion import ERROR, OK, REVISAR, validar_nif
+from facturas_excel.ventana_comun import (  # noqa: F401
+    ANCHO_LISTA_BLOQUES, COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO,
+    ICONO_ESTADO, ICONO_MANUAL, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
+    TODOS_LOS_BLOQUES, VisorClicable, _cabeceras_resumen, ruta_recurso,
+    rutas_factura_de_mime,
 )
-
-ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
-
-COLOR_ESTADO = {OK: QColor(SUCCESS), REVISAR: QColor(WARNING), ERROR: QColor(DANGER)}
-# Estados que se ven en la tabla. «Verificada» exige que las dos lecturas de
-# la IA coincidan y que todos los controles pasen; con una sola lectura, aunque
-# todo cuadre, la fila es «Sin verificar» (se puede exportar, pero se sabe que
-# nadie la ha contrastado).
-ICONO_ESTADO = {OK: "✓ Verificada", REVISAR: "! Revisar", ERROR: "✕ Error"}
-ICONO_SIN_VERIFICAR = "○ Sin verificar"
-COLOR_REVISADO = QColor(ACCENT)
-COLOR_MANUAL = QColor(MUTED)
-COLOR_SIN_VERIFICAR = QColor("#3F5F7F")
-ICONO_REVISADO = "✓ Revisada"
-ICONO_MANUAL = "M Manual"
-FONDO_ESTADO = {OK: "#E4F1EA", REVISAR: "#FBEFDC", ERROR: "#F8E1E1",
-                "sin_verificar": "#EEF2F7", "revisada": "#E6EFF8",
-                "manual": "#EEF1F4"}
-
-_AVISO_EJERCICIOS_ANTIGUO = re.compile(
-    r"\s*El PDF mezcla varios ejercicios; se ha archivado en el \d{4}, "
-    r"que es el más frecuente\. Revise su ubicación\.", re.IGNORECASE)
+from facturas_excel.hilos import (  # noqa: F401
+    HILOS, HiloActualizacion, HiloDescargaActualizacion, Worker, hilos_lectura,
+)
+from facturas_excel.cinta import crear_cinta
+from facturas_excel.ventana_aplifisa import AplifisaMixin
+from facturas_excel.ventana_archivo import ArchivoMixin
+from facturas_excel.ventana_ficha import FichaMixin
+from facturas_excel.ventana_lectura import LecturaMixin
+from facturas_excel.ventana_validacion import ValidacionMixin
 
 
-def _sin_aviso_ejercicios_antiguo(aviso: str) -> str:
-    """Quita el aviso global que antes se copiaba en todas las facturas."""
-    return _AVISO_EJERCICIOS_ANTIGUO.sub("", str(aviso or "")).strip()
-
-ANCHO_LISTA_BLOQUES = 1280   # por debajo, la lista lateral se oculta
-HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
-
-
-def hilos_lectura() -> int:
-    """Hojas que se leen a la vez; ajustable en ajustes.json (hilos_lectura)."""
-    try:
-        return max(1, min(20, int(ajustes.leer("hilos_lectura", HILOS))))
-    except (TypeError, ValueError):
-        return HILOS
-EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-
-# Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
-# con su base y sin % ni cuota de IVA (es como lo registra Aplifisa).
-COLS = ["Estado", "Tipo", "Cuenta", "GXX", "Fecha", "Nº Factura", "Nombre",
-        "NIF", "Base", "% IVA", "Cuota", "Base RE", "% RE", "Cuota RE",
-        "Base IRPF", "% IRPF", "Retención", "Total", "Bloque"]
-C_ESTADO, C_TIPO, C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF, \
-C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE, C_BASE_IRPF, \
-    C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL, C_BLOQUE = range(len(COLS))
-COLUMNAS_RECARGO = (C_BASE_RE, C_PCT_RE, C_CUOTA_RE)
-# Qué columna muestra cada dato de la Factura (para señalar la celda culpable).
-COLUMNA_DE_CAMPO = {
-    "fecha": C_FECHA, "num_factura": C_NUM, "nombre": C_NOMBRE, "nif": C_NIF,
-    "concepto": C_CUENTA, "subclave": C_GXX, "base_iva": C_BASE,
-    "pct_iva": C_PCT, "cuota_iva": C_CUOTA, "base_requiv": C_BASE_RE,
-    "pct_requiv": C_PCT_RE, "cuota_requiv": C_CUOTA_RE,
-    "base_irpf": C_BASE_IRPF, "pct_irpf": C_PCT_IRPF,
-    "cuota_irpf": C_CUOTA_IRPF, "total_impreso": C_TOTAL,
-}
-
-# Columnas del resumen por bloque (punto de control antes de exportar). Las del
-# IVA se calculan: una por cada tipo que haya en el lote, con el porcentaje en
-# la cabecera ("IVA 21%") en vez de repetirlo dentro de cada celda.
-COLS_RESUMEN_INICIO = ["Ámbito", "Tipo", "Facturas", "Líneas", "Base"]
-COLS_RESUMEN_FIN = ["Recargo", "IRPF", "Suplidos", "Total factura"]
-TODOS_LOS_BLOQUES = "Todos los bloques"
-
-
-def _ayuda_estado(estado, mensajes) -> str:
-    """El globo del semaforo, con titulo y un punto por cada problema."""
-    titulo, color = TITULOS_ESTADO.get(estado, TITULOS_ESTADO[REVISAR])
-    if not mensajes:
-        return f"<b style='color:{color}'>{titulo}</b>"
-    puntos = "".join(f"<div style='margin-top:3px'>•&nbsp;{m}</div>"
-                     for m in mensajes)
-    return (f"<div style='max-width:420px'>"
-            f"<b style='color:{color}'>{titulo}</b>{puntos}</div>")
-
-
-def _cabeceras_resumen(tipos_iva) -> list:
-    """Las columnas del resumen, con una de IVA por cada tipo que haya."""
-    if tipos_iva:
-        columnas_iva = [f"IVA {porcentaje_iva(p)}%" for p in tipos_iva]
-    else:
-        columnas_iva = ["IVA"]
-    return [*COLS_RESUMEN_INICIO, *columnas_iva, *COLS_RESUMEN_FIN]
-
-
-class _SinRueda:
-    """Ignora la rueda del raton para que no cambie el valor sin querer.
-
-    Bajando por el listado con la rueda, al pasar por encima de un desplegable
-    este se tragaba el giro y cambiaba gasto<->venta en silencio. El valor solo
-    debe cambiarse haciendo clic; la rueda tiene que seguir moviendo la tabla,
-    asi que el evento se deja pasar al padre.
-    """
-
-    def wheelEvent(self, evento):
-        evento.ignore()
-
-
-class ComboSinRueda(_SinRueda, QComboBox):
-    pass
-
-
-class VisorClicable(QLabel):
-    """Miniatura que abre el documento a mayor tamaño con un clic."""
-
-    clicked = Signal()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-def ruta_recurso(nombre):
-    base = getattr(
-        sys, "_MEIPASS",
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base, "assets", nombre)
-
-
-def parse_numero(texto):
-    if texto is None:
-        return None
-    t = str(texto).strip()
-    if not t:
-        return None
-    t = t.replace("€", "").replace(" ", "")
-    if "," in t:
-        # Formato español: 1.234,56
-        t = t.replace(".", "").replace(",", ".")
-    elif t.count(".") > 1 or (
-        t.count(".") == 1 and len(t.rsplit(".", 1)[1]) == 3
-    ):
-        t = t.replace(".", "")
-    try:
-        return float(t)
-    except ValueError:
-        return None
-
-
-def rutas_factura_de_mime(mime):
-    """Rutas locales compatibles contenidas en un arrastre."""
-    if not mime.hasUrls():
-        return []
-    rutas = []
-    for url in mime.urls():
-        if not url.isLocalFile():
-            continue
-        ruta = url.toLocalFile()
-        if os.path.splitext(ruta)[1].lower() in EXT_FACTURA:
-            rutas.append(ruta)
-    return rutas
-
-
-def fmt(v):
-    if v is None:
-        return ""
-    if isinstance(v, float):
-        return f"{v:.2f}".replace(".", ",")
-    return str(v)
-
-
-class Worker(QThread):
-    progreso = Signal(int, int)
-    terminado = Signal(object, str, str, object)  # procesadas, nombre, nif, crudos
-    gasto = Signal(str, float)             # modelo real, coste del lote en euros
-    fallo = Signal(str)
-
-    def __init__(self, rutas, api_key):
-        super().__init__()
-        self.rutas = rutas
-        self.api_key = api_key
-        self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
-
-    def run(self):
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            imagenes = cargar_imagenes(
-                self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
-            if not imagenes:
-                raise ValueError("No se encontraron páginas o imágenes compatibles.")
-            extractor = Extractor(self.api_key)
-            total = len(imagenes)
-            registros = [None] * total
-
-            consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
-            sin_credito = []
-
-            def tarea(idx):
-                origen, pagina, img = imagenes[idx]
-                if sin_credito:
-                    # Se acabó el crédito en otra hoja: no se pide nada más.
-                    return idx, (img, origen, pagina, {
-                        "emisor_nombre": None, "lineas_iva": [{}],
-                        "_error": "No leída: la API key se quedó sin crédito"})
-                try:
-                    leido = extractor.extraer(img, origen, pagina)
-                    consumo.extend(leido.consumos or [(
-                        leido.modelo, leido.tokens_entrada, leido.tokens_salida)])
-                    datos = leido.crudo
-                except SinCredito:
-                    sin_credito.append(True)
-                    raise  # detiene todo el lote con aviso
-                except Exception as e:  # una factura ilegible no tumba el lote
-                    # Lo pagado por los intentos fallidos también cuenta.
-                    consumo.extend(getattr(e, "consumos", []) or [])
-                    # Sin nombre inventado: la hoja queda vacía y en rojo, con
-                    # el motivo, en lugar de un proveedor «(NO SE PUDO LEER)».
-                    datos = {"emisor_nombre": None, "lineas_iva": [{}],
-                             "_error": str(e)[:120]}
-                    self.fallos.append((origen, pagina, str(e)[:120]))
-                return idx, (img, origen, pagina, datos)
-
-            hechas = 0
-            ex = ThreadPoolExecutor(max_workers=hilos_lectura())
-            try:
-                futuros = [ex.submit(tarea, i) for i in range(total)]
-                for fut in as_completed(futuros):
-                    idx, reg = fut.result()
-                    registros[idx] = reg
-                    hechas += 1
-                    self.progreso.emit(hechas, total)
-            finally:
-                # Si algo corta el lote (sin crédito), las hojas que aún no
-                # han empezado se cancelan: no se sigue pagando por nada.
-                ex.shutdown(wait=True, cancel_futures=True)
-                self._registrar_consumo(consumo)
-
-            nombre, nif = detectar_cliente([d for *_, d in registros])
-            procesadas = preparar_lote(registros, nombre, nif)
-            self.terminado.emit(procesadas, nombre, nif, registros)
-        except Exception as e:  # noqa
-            self.fallo.emit(str(e))
-
-    def _registrar_consumo(self, consumo) -> None:
-        """Lo gastado en Gemini, con los tokens reales de cada respuesta."""
-        modelo, coste_lote = "", 0.0
-        for m, entrada, salida in consumo:
-            modelo = modelo or m
-            coste_lote += costes.registrar(m, entrada, salida)
-        if consumo:
-            self.gasto.emit(modelo, round(coste_lote, 6))
-
-
-class HiloEscaneo(QThread):
-    """El escaneo, fuera del hilo de la ventana: un taco de 30 hojas tarda."""
-    progreso = Signal(int)      # hojas escaneadas hasta ahora
-    terminado = Signal(str)     # ruta del PDF
-    fallo = Signal(str)
-
-    def __init__(self, destino, opciones):
-        super().__init__()
-        self.destino = destino
-        self.opciones = opciones
-
-    def run(self):
-        try:
-            ruta = escaner.escanear(
-                self.destino, device_id=self.opciones["device_id"],
-                dpi=self.opciones["dpi"],
-                alimentador=self.opciones["alimentador"],
-                duplex=self.opciones["duplex"],
-                modo_color=self.opciones.get("modo_color", "color"),
-                nombre_dispositivo=self.opciones.get("nombre_dispositivo", ""),
-                progreso=self.progreso.emit)
-            self.terminado.emit(ruta)
-        except Exception as e:
-            self.fallo.emit(str(e))
-
-
-class HiloActualizacion(QThread):
-    resultado = Signal(object)   # Actualizacion o None
-    error = Signal(str)
-
-    def run(self):
-        try:
-            self.resultado.emit(updater.comprobar())
-        except Exception as e:  # sin red, API caida, etc.
-            self.error.emit(str(e))
-
-
-class HiloDescargaActualizacion(QThread):
-    progreso = Signal(int)
-    terminado = Signal(str)
-    error = Signal(str)
-
-    def __init__(self, actualizacion):
-        super().__init__()
-        self.actualizacion = actualizacion
-
-    def run(self):
-        try:
-            ruta = updater.descargar(
-                self.actualizacion, progreso=self.progreso.emit)
-            self.terminado.emit(ruta)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
-class VentanaPrincipal(QMainWindow):
+class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixin,
+                        FichaMixin, QMainWindow):
     def __init__(self, comprobar_updates: bool = True,
                  restaurar_sesion: bool = True):
         super().__init__()
@@ -713,33 +398,13 @@ class VentanaPrincipal(QMainWindow):
                 self.btn_eliminar, self.btn_deshacer_borrado):
             boton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         lt.addLayout(self.layout_herramientas)
-        self.tabla = QTableWidget(0, len(COLS))
-        self.tabla.setAlternatingRowColors(True)
-        self.tabla.setHorizontalHeaderLabels(COLS)
-        self.tabla.setShowGrid(False)
-        self.tabla.setWordWrap(False)
-        self.tabla.verticalHeader().setDefaultSectionSize(38)
-        cabecera_tabla = self.tabla.horizontalHeader()
-        cabecera_tabla.setSectionResizeMode(QHeaderView.Interactive)
-        cabecera_tabla.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
-        cabecera_tabla.setSectionsClickable(True)
-        cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
-        for columna, ancho in {
-                C_ESTADO: 112, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
-                C_FECHA: 92, C_NUM: 100, C_NOMBRE: 172, C_NIF: 104,
-                C_BASE: 82, C_PCT: 55, C_CUOTA: 74,
-                C_BASE_RE: 82, C_PCT_RE: 55, C_CUOTA_RE: 76,
-                C_BASE_IRPF: 82, C_PCT_IRPF: 62, C_CUOTA_IRPF: 78,
-                C_TOTAL: 86}.items():
-            self.tabla.setColumnWidth(columna, ancho)
         # Orden contable estable: clasificación y cuenta primero, identificación
-        # después e importes fiscales al final. Solo se ocultan Bloque (ya está
-        # en el filtro) y las columnas de recargo cuando el lote no lo contiene.
-        self.tabla.setColumnHidden(C_BLOQUE, True)
-        for columna in COLUMNAS_RECARGO:
-            self.tabla.setColumnHidden(columna, True)
-        self.tabla.verticalHeader().setVisible(False)
-        self.tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # después e importes fiscales al final (tabla_facturas.py).
+        self.tabla = TablaFacturas()
+        cabecera_tabla = self.tabla.horizontalHeader()
+        cabecera_tabla.sectionClicked.connect(self._ordenar_tabla_por)
+        cabecera_tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+        cabecera_tabla.customContextMenuRequested.connect(self._menu_columnas)
         self.tabla.itemChanged.connect(self._on_celda)
         self.tabla.cellClicked.connect(self._abrir_ficha)
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
@@ -1135,7 +800,14 @@ class VentanaPrincipal(QMainWindow):
         self.accion_detalle_bloques = ver.addAction("Desglosar totales por escaneo")
         self.accion_detalle_bloques.setCheckable(True)
         self.accion_detalle_bloques.toggled.connect(self._pintar_resumen)
-        config = self.menuBar().addMenu("Configuración")
+        # Recargo y retenciones se ven solo cuando tocan a este cliente o a
+        # este lote; con esto se ven siempre todas.
+        self.accion_todas_columnas = ver.addAction("Ver todas las columnas")
+        self.accion_todas_columnas.setCheckable(True)
+        self.accion_todas_columnas.setChecked(
+            bool(ajustes.leer("ver_todas_columnas", False)))
+        self.accion_todas_columnas.toggled.connect(self._ver_todas_columnas)
+        config =self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
         config.addAction("Carpeta de documentación digitalizada…",
@@ -1158,156 +830,7 @@ class VentanaPrincipal(QMainWindow):
         menu.addAction("Preparar ZIP de ejemplos para revisión…", self._exportar_muestras)
         menu.addAction("Acerca de", self._acerca_de)
 
-        # Cinta de herramientas por grupos, como en el resto de la suite
-        # (Generador de avisos 1.6): lo de cada día a la vista, en grande, y lo
-        # ocasional en pequeño al lado. En pantallas bajas la cinta se compacta
-        # y se sube a la barra de menús.
-        self.barra_rapida = QWidget()
-        self.barra_rapida.setObjectName("barraRapida")
-        accesos = QHBoxLayout(self.barra_rapida)
-        accesos.setContentsMargins(16, 6, 16, 0)
-        accesos.setSpacing(0)
-        marca_icono = QLabel("fa")
-        marca_icono.setObjectName("marcaIcono")
-        marca_icono.setAlignment(Qt.AlignCenter)
-        marca_icono.setFixedSize(36, 36)
-        marca_caja = QHBoxLayout()
-        marca_caja.setContentsMargins(0, 0, 14, 6)
-        marca_caja.setSpacing(10)
-        marca_caja.addWidget(marca_icono)
-        marca = QVBoxLayout()
-        marca.setSpacing(0)
-        titulo = QLabel("Facturas a Aplifisa")
-        titulo.setObjectName("marca")
-        subtitulo = QLabel(f"Mesa de revisión  ·  v{__version__}")
-        subtitulo.setObjectName("textoSuave")
-        marca.addWidget(titulo)
-        marca.addWidget(subtitulo)
-        marca_caja.addLayout(marca)
-        self._marcas_barra = [marca_icono, titulo, subtitulo]
-        accesos.addLayout(marca_caja)
-
-        self._botones_grandes = []
-        self._pilas_cinta = []
-        self._etiquetas_grupo = []
-
-        def grande(texto, icono, accion, ayuda, nombre="cintaGrande"):
-            boton = QToolButton()
-            boton.setObjectName(nombre)
-            boton.setText(texto)
-            boton.setIcon(QIcon(ruta_recurso(icono)))
-            boton.setIconSize(QSize(26, 26))
-            boton.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            boton.setToolTip(ayuda)
-            boton.setAutoRaise(True)
-            boton.clicked.connect(accion)
-            self._botones_grandes.append(boton)
-            return boton
-
-        def pequeno(texto, icono, accion, ayuda=""):
-            boton = QToolButton()
-            boton.setObjectName("cintaPeque")
-            boton.setText(texto)
-            if icono:
-                boton.setIcon(QIcon(ruta_recurso(icono)))
-            boton.setIconSize(QSize(16, 16))
-            boton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            boton.setToolTip(ayuda or texto)
-            boton.setAutoRaise(True)
-            boton.clicked.connect(accion)
-            return boton
-
-        def grupo(etiqueta, grandes, pequenos=()):
-            caja = QFrame()
-            caja.setObjectName("grupoCinta")
-            capa = QVBoxLayout(caja)
-            capa.setContentsMargins(8, 0, 8, 0)
-            capa.setSpacing(0)
-            fila = QHBoxLayout()
-            fila.setSpacing(2)
-            for boton in grandes:
-                fila.addWidget(boton)
-            if pequenos:
-                pila = QWidget()
-                capa_pila = QVBoxLayout(pila)
-                capa_pila.setContentsMargins(2, 0, 0, 0)
-                capa_pila.setSpacing(0)
-                for boton in pequenos:
-                    capa_pila.addWidget(boton)
-                capa_pila.addStretch(1)
-                fila.addWidget(pila)
-                self._pilas_cinta.append(pila)
-            capa.addLayout(fila)
-            lbl = QLabel(etiqueta)
-            lbl.setObjectName("etiquetaGrupo")
-            lbl.setAlignment(Qt.AlignCenter)
-            capa.addWidget(lbl)
-            self._etiquetas_grupo.append(lbl)
-            accesos.addWidget(caja)
-            return caja
-
-        self.btn_cargar = grande(
-            "Abrir PDF", "open-large.svg", self._cargar,
-            "Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
-        self.btn_escanear = grande(
-            "Escanear", "scan-large.svg", self._escanear,
-            "Escanea el taco y lo añade al lote completo.  (Ctrl+E)")
-        self.btn_revisar_gemini = QPushButton("Revisar Gemini", self)
-        self.btn_revisar_gemini.clicked.connect(self._preparar_revision_gemini)
-        self.btn_revisar_gemini.hide()
-        self.btn_vaciar = QPushButton("Vaciar todo", self)
-        self.btn_vaciar.clicked.connect(self._vaciar_todo)
-        self.btn_vaciar.hide()
-        grupo("Documentos", [self.btn_cargar, self.btn_escanear], [
-            pequeno("Vaciar todo", "trash.svg", self.btn_vaciar.click,
-                    "Empieza un lote nuevo."),
-        ])
-        grupo("Archivo", [], [
-            pequeno("Escaneos guardados", "folder.svg", self._ver_escaneos,
-                    "Los PDF ya escaneados y archivados.  (Ctrl+L)"),
-            pequeno("Recoger sueltos…", "open.svg", self._recoger_sueltos,
-                    "Lleva a su carpeta los PDF de facturas y los Excel de "
-                    "Aplifisa que haya sueltos en el Escritorio y Descargas."),
-            pequeno("Expedientes…", "printer.svg", self._ver_expedientes,
-                    "Un PDF de gastos, otro de ingresos, los Excel y un "
-                    "resumen por cliente y ejercicio."),
-        ])
-
-        self.btn_cuadrar = grande(
-            "Cuadrar con Aplifisa", "balance.svg",
-            lambda: self.btn_registro.trigger(),
-            "Contrasta el lote con el listado de Aplifisa en PDF.  (Ctrl+R)")
-        self.btn_registro.changed.connect(
-            lambda: self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled()))
-        self.btn_cuadrar.setEnabled(self.btn_registro.isEnabled())
-        self.btn_cambiar_cliente_cinta = pequeno(
-            "Cambiar cliente…", "user.svg", lambda: self._cambiar_cliente(),
-            "Si el cliente del lote se detectó mal, se rehace sin volver a "
-            "pagar la lectura.")
-        grupo("Comprobar", [self.btn_cuadrar], [
-            self.btn_cambiar_cliente_cinta,
-            pequeno("Listado PDF de totales", "printer.svg",
-                    lambda: self._guardar_listado_totales(),
-                    "Listado imprimible para puntear con Aplifisa."),
-        ])
-        grupo("Configurar", [], [
-            pequeno("Modelos de lectura…", "settings.svg",
-                    self._configurar_modelos,
-                    "Modelo principal, respaldo y doble lectura."),
-            pequeno("API key de Gemini…", "key.svg", self._configurar_key),
-            pequeno("Revisar Gemini", "", self.btn_revisar_gemini.click,
-                    "Prepara una orden para revisar si conviene otro modelo."),
-        ])
-        accesos.addStretch(1)
-
-        self.btn_gastos = grande(
-            "Exportar a Aplifisa", "export-large.svg", self._exportar_todo,
-            "Exporta el lote completo, no solo el resultado de la búsqueda. "
-            "(Ctrl+G)", nombre="cintaPrimaria")
-        self.btn_gastos.setEnabled(False)
-        grupo("Aplifisa", [self.btn_gastos])
-        self.btn_ventas = self.btn_gastos
-
+        crear_cinta(self)
 
     def _avisar(self, texto: str, tipo: str = INFO, deshacer=None,
                 segundos: int = 10) -> None:
@@ -1487,19 +1010,13 @@ class VentanaPrincipal(QMainWindow):
             sesion.borrar()
             return
         self._guardar_muestra_revision()
-        filas = []
-        for fila in range(self.tabla.rowCount()):
-            registro = self.filas[fila]
-            filas.append({
-                "png": registro["png"],
-                "factura": self._leer_fila(fila),
-                "aviso": registro.get("aviso", ""),
-                "bloque": registro.get("bloque", ""),
-                "fuentes": registro.get("fuentes", []),
-                "tipo": self._tipo_fila(fila),
-                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
-                "gxx": self.tabla.item(fila, C_GXX).text(),
-            })
+        filas = [{
+            "png": registro.png, "factura": registro.factura,
+            "aviso": registro.aviso or "", "bloque": registro.bloque or "",
+            "fuentes": registro.fuentes, "tipo": registro.tipo,
+            "cuenta": registro.factura.concepto or "",
+            "gxx": registro.factura.subclave or "",
+        } for registro in self.filas]
         sesion.guardar({
             "bloques": self._bloques,
             "filas": filas,
@@ -1656,119 +1173,6 @@ class VentanaPrincipal(QMainWindow):
         """Modelo que ha contestado, coste del lote y gasto del mes."""
         self.lbl_gasto.setText(costes.resumen(modelo, coste_lote))
 
-    def _on_gasto(self, modelo, coste_lote):
-        self._pintar_gasto(modelo, coste_lote)
-        aviso = costes.aviso_tope()
-        if aviso and not getattr(self, "_aviso_tope_dado", False):
-            # Una vez por sesion: recordarlo en cada lote seria un incordio.
-            self._aviso_tope_dado = True
-            QMessageBox.warning(self, "Gasto de Gemini", aviso)
-
-    def _ofrecer_contraste(self, ruta):
-        """Se ha soltado el listado de Aplifisa en vez de facturas."""
-        if not self.tabla.rowCount():
-            QMessageBox.information(
-                self, "Listado de Aplifisa",
-                f"«{os.path.basename(ruta)}» es el listado de apuntes de "
-                f"Aplifisa, no un taco de facturas.\n\n"
-                f"Cargue primero las facturas y luego pulse «Comprobar "
-                f"registro» para cuadrarlas con él.")
-            return
-        if QMessageBox.question(
-                self, "Listado de Aplifisa",
-                f"«{os.path.basename(ruta)}» parece el listado de apuntes de "
-                f"Aplifisa.\n\n¿Lo contrasto con las facturas del lote?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes) == QMessageBox.Yes:
-            self._contrastar_registro(ruta)
-
-    def _contrastar_registro(self, ruta=""):
-        """El cuadre a tres bandas: factura -> Excel -> lo que quedo en Aplifisa.
-
-        Se le pasa el PDF del "Listado de apuntes" de Aplifisa y se compara
-        apunte a apunte con el lote. Es la unica forma de ver si algo se quedo
-        sin importar o entro con otro importe.
-        """
-        if not self.tabla.rowCount():
-            QMessageBox.information(
-                self, "Contrastar con Aplifisa",
-                "Cargue primero el lote de facturas que quiere comprobar.")
-            return
-        if not ruta:
-            ruta, _ = QFileDialog.getOpenFileName(
-                self, "Listado de apuntes de Aplifisa (PDF)", ESCRITORIO,
-                "Listado de Aplifisa (*.pdf)")
-        if not ruta:
-            return
-        try:
-            registro = leer_registro(ruta)
-        except Exception as e:
-            QMessageBox.critical(self, "No se pudo leer el listado", str(e))
-            return
-        if not registro.apuntes:
-            QMessageBox.warning(
-                self, "Sin apuntes",
-                "No se han encontrado apuntes en ese PDF.\n\n"
-                "Tiene que ser el listado que imprime Aplifisa. Un PDF de papel "
-                "escaneado no sirve: hay que sacarlo del propio programa.")
-            return
-        facturas = [self._leer_fila(r) for r in range(self.tabla.rowCount())]
-        informe = contrastar(facturas, registro)
-        self._aplicar_informe_registro(informe)
-        dialogo = DialogoRegistro(informe, registro, self, facturas=facturas)
-        dialogo.exec()
-        fila = dialogo.fila_seleccionada()
-        if 0 <= fila < self.tabla.rowCount():
-            self._limpiar_filtros()
-            self.tabla.selectRow(fila)
-            self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
-        self.lbl_estado.setText(
-            f"Contraste con Aplifisa: {informe.emparejadas} cuadran, "
-            f"{len(informe.sin_registrar)} sin registrar, "
-            f"{len(informe.de_mas)} de más, {len(informe.distintas)} distintas, "
-            f"{len(informe.dudosas)} dudosas.")
-
-    def _aplicar_informe_registro(self, informe) -> None:
-        self._informe_registro = informe
-        for fila, estado in informe.resultados.items():
-            if fila < len(self.filas):
-                self.filas[fila]["registro_estado"] = estado
-                self.filas[fila]["registro_detalle"] = informe.detalles.get(fila, [])
-        cuentas = Counter(informe.resultados.values())
-        diferencias = sum(cuentas.get(e, 0)
-                          for e in ("sin_registrar", "distinta", "dudosa"))
-        opciones = [
-            ("Aplifisa: todas", "todas"),
-            (f"Aplifisa: solo diferencias ({diferencias})", "diferencias"),
-            (f"No registradas ({cuentas.get('sin_registrar', 0)})", "sin_registrar"),
-            (f"Importe/dato distinto ({cuentas.get('distinta', 0)})", "distinta"),
-            (f"Coincidencia dudosa ({cuentas.get('dudosa', 0)})", "dudosa"),
-            (f"Cuadradas ({cuentas.get('cuadra', 0)})", "cuadra"),
-        ]
-        self.combo_filtro_registro.blockSignals(True)
-        self.combo_filtro_registro.clear()
-        for texto, dato in opciones:
-            self.combo_filtro_registro.addItem(texto, dato)
-        self.combo_filtro_registro.setCurrentIndex(1 if diferencias else 0)
-        self.combo_filtro_registro.setVisible(True)
-        self.combo_filtro_registro.blockSignals(False)
-        self._distribuir_herramientas(self.width())
-        self._aplicar_filtro()
-
-    def _invalidar_contraste_registro(self) -> None:
-        """Una edición hace que el resultado anterior deje de ser fiable."""
-        self._informe_registro = None
-        for registro in getattr(self, "filas", []):
-            registro.pop("registro_estado", None)
-            registro.pop("registro_detalle", None)
-        if not hasattr(self, "combo_filtro_registro"):
-            return
-        self.combo_filtro_registro.blockSignals(True)
-        self.combo_filtro_registro.clear()
-        self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
-        self.combo_filtro_registro.setVisible(False)
-        self.combo_filtro_registro.blockSignals(False)
-
     def _ver_resumen(self, visible: bool):
         """El resumen es solo un punto de control: si estorba, se quita."""
         ajustes.guardar("ver_resumen", bool(visible))
@@ -1813,661 +1217,6 @@ class VentanaPrincipal(QMainWindow):
                 f"({costes._eur(costes.coste_por_factura(dialogo.ppp()))} cada una).")
 
     # ---------- escaneo ----------
-    def _escanear(self):
-        if getattr(self, "_hilo_escaneo", None) and self._hilo_escaneo.isRunning():
-            self._avisar("Espere a que termine el escaneo en curso.", AVISO)
-            return
-        disponibles = escaner.escaneres()
-        if not disponibles:
-            QMessageBox.warning(
-                self, "Sin escáner",
-                "Windows no ve ningún escáner.\n\nCompruebe que la impresora "
-                "está encendida y conectada, y vuelva a intentarlo.\n\n"
-                "Mientras tanto puede usar «Abrir PDF o imágenes».")
-            return
-        dialogo = DialogoEscaneo(disponibles, nombres_conocidos(), self)
-        if dialogo.exec() != QDialog.Accepted:
-            return
-        dialogo.recordar()
-        opciones = dialogo.valores()
-        opciones["nombre_dispositivo"] = dialogo.combo_escaner.currentText()
-        # Sin cliente no se para: el PDF nace en "Sin identificar" y se muda
-        # solo a su carpeta cuando el programa averigua de quién es por el NIF.
-        destino = archivo.ruta_provisional(opciones["carpeta"], opciones["tipo"])
-        self._tipo_escaneo = opciones["tipo"]
-        self._escaneo_reciente = True
-        self._hojas_puestas = opciones.get("hojas", 0)
-        self._escaneo_sin_identificar = not opciones["cliente"]
-        self.btn_escanear.setEnabled(False)
-        self.btn_cargar.setEnabled(False)
-        self.progreso.setVisible(True)
-        self.progreso.setRange(0, 0)          # no se sabe cuántas hojas hay
-        self.lbl_estado.setText("Escaneando… no retire las hojas del alimentador.")
-        self._hilo_escaneo = HiloEscaneo(destino, opciones)
-        self._hilo_escaneo.progreso.connect(
-            lambda n: self.lbl_estado.setText(f"Escaneando… {n} hoja(s)."))
-        self._hilo_escaneo.terminado.connect(self._on_escaneo_hecho)
-        self._hilo_escaneo.fallo.connect(self._on_escaneo_fallo)
-        self._hilo_escaneo.start()
-
-    # ---------- archivo: recoger sueltos y expedientes ----------
-    def _rutas_del_lote(self) -> list:
-        """Archivos que usa el lote abierto: no se mueven al recoger."""
-        rutas = []
-        for bloque in self._bloques:
-            if bloque.get("original"):
-                rutas.append(bloque["original"])
-            rutas.extend(origen for _img, origen, _p, _d in bloque.get("crudos", []))
-        return [r for r in rutas if r]
-
-    def _recoger_sueltos(self) -> None:
-        from facturas_excel import recoger
-        from facturas_excel.dialogo_recogida import (
-            DialogoRecogida, ejecutar_con_progreso)
-        base = archivo.carpeta_escaneos()
-        origenes = recoger.carpetas_origen()
-        if not origenes:
-            self._avisar("No se encuentran las carpetas Escritorio ni Descargas.", AVISO)
-            return
-        try:
-            candidatos = ejecutar_con_progreso(
-                self, "Buscando facturas en el Escritorio y Descargas…",
-                lambda progreso: recoger.buscar(
-                    origenes, base, self._rutas_del_lote(), progreso))
-        except RuntimeError as error:
-            QMessageBox.warning(self, "Recoger facturas", str(error))
-            return
-        if not candidatos:
-            self._avisar("No hay facturas sueltas en el Escritorio ni en "
-                         "Descargas: todo está en su sitio.", EXITO)
-            return
-        dialogo = DialogoRecogida(candidatos, base, leer_api_key() or "", self)
-        if dialogo.exec() != QDialog.Accepted or not dialogo.resultado:
-            return
-        r = dialogo.resultado
-        actualizados = self._actualizar_expedientes(r.get("afectados", []))
-        texto = (f"Recogidos {r['movidos']} archivo(s)"
-                 + (f" y {r['duplicados']} copia(s) repetidas apartadas en "
-                    "_Duplicados" if r["duplicados"] else "")
-                 + (f". Expedientes actualizados: {actualizados}" if actualizados else "")
-                 + ".")
-        if r["errores"]:
-            texto += f" No se pudieron mover {len(r['errores'])}: " + "; ".join(r["errores"][:3])
-        self._avisar(texto, AVISO if r["errores"] else EXITO,
-                     deshacer=self._deshacer_recogida, segundos=0)
-
-    def _deshacer_recogida(self) -> None:
-        from facturas_excel import recoger
-        try:
-            vueltos = recoger.deshacer_ultima(archivo.carpeta_escaneos())
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Deshacer recogida", str(error))
-            return
-        self._avisar(f"{vueltos} archivo(s) devueltos a su sitio." if vueltos
-                     else "No hay ninguna recogida que deshacer.", INFO)
-
-    def _actualizar_expedientes(self, afectados) -> int:
-        """Rehace en silencio los expedientes de esos (nombre, nif, ejercicio)."""
-        from facturas_excel import expediente
-        base = archivo.carpeta_escaneos()
-        hechos = 0
-        for nombre, nif, ejercicio in afectados:
-            e = expediente.buscar(base, nif, nombre, ejercicio)
-            if not e:
-                continue
-            try:
-                expediente.crear(base, e)
-                hechos += 1
-            except (OSError, ValueError, RuntimeError):
-                pass
-        return hechos
-
-    def _ver_expedientes(self) -> None:
-        from facturas_excel.dialogo_expedientes import DialogoExpedientes
-        DialogoExpedientes(archivo.carpeta_escaneos(), self).exec()
-
-    def _ver_escaneos(self):
-        """Los PDF que va generando el escaneo: abrirlos, recolocarlos o
-        volver a pasarlos por el programa."""
-        dialogo = DialogoEscaneos(self)
-        if dialogo.exec() == QDialog.Accepted and dialogo.rutas_elegidas:
-            self.procesar_rutas(dialogo.rutas_elegidas)
-
-    def _on_escaneo_hecho(self, ruta):
-        self.progreso.setRange(0, 100)
-        self.btn_escanear.setEnabled(True)
-        self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
-        self._avisar_hojas_perdidas(ruta)
-        # Directo al lote: es el flujo que se pidio, sin pasar por abrir archivo.
-        self.procesar_rutas([ruta], desde_escaner=True)
-
-    def _avisar_hojas_perdidas(self, ruta):
-        """El alimentador arrastra a veces dos hojas pegadas: salen menos
-        páginas de las que se pusieron y esa factura no se registra."""
-        puestas = getattr(self, "_hojas_puestas", 0)
-        if not puestas:
-            return
-        try:
-            import fitz
-            with fitz.open(ruta) as doc:
-                leidas = doc.page_count
-        except Exception:
-            return
-        if leidas >= puestas:
-            return
-        QMessageBox.warning(
-            self, "Faltan hojas",
-            f"Puso {puestas} hojas y solo se han escaneado {leidas}.\n\n"
-            f"El alimentador suele arrastrar dos hojas pegadas. Compruebe qué "
-            f"factura falta (el programa avisa también si ve un salto en la "
-            f"numeración) y escanee esas hojas aparte: se añadirán al lote.")
-
-    def _on_escaneo_fallo(self, mensaje):
-        self.progreso.setRange(0, 100)
-        self.progreso.setVisible(False)
-        self.btn_escanear.setEnabled(True)
-        self.btn_cargar.setEnabled(True)
-        self._escaneo_reciente = False
-        self._escaneo_sin_identificar = False
-        self.lbl_estado.setText("No se pudo escanear.")
-        QMessageBox.critical(self, "Error al escanear", mensaje)
-
-    # ---------- carga ----------
-    def _cargar(self):
-        rutas, _ = QFileDialog.getOpenFileNames(
-            self, "Elige facturas (PDF o imágenes)", ESCRITORIO,
-            "Facturas (*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp)")
-        if rutas:
-            self.procesar_rutas(rutas)
-
-    def procesar_rutas(self, rutas, desde_escaner: bool = False):
-        """Añade documentos a la cola, dividiendo los PDF largos en bloques."""
-        rutas = [os.path.abspath(r) for r in rutas
-                 if os.path.isfile(r) and os.path.splitext(r)[1].lower() in EXT_FACTURA]
-        if not rutas:
-            QMessageBox.warning(self, "Archivos no compatibles",
-                                "No se encontraron PDFs o imágenes válidas.")
-            return
-        sin_identificar = (len(rutas) == 1 and archivo.sin_identificar(rutas[0]))
-        # Si lo que se ha soltado es el listado de Aplifisa, NO se manda a
-        # Gemini: aqui se lee gratis y lo que se quiere es contrastarlo.
-        listados = [r for r in rutas if r.lower().endswith(".pdf")
-                    and parece_listado(r)]
-        if listados:
-            self._ofrecer_contraste(listados[0])
-            rutas = [r for r in rutas if r not in listados]
-            if not rutas:
-                return
-        muestras = {ruta: self._capturar_original(ruta) for ruta in rutas}
-        api_key = leer_api_key()
-        if not api_key:
-            QMessageBox.warning(self, "Falta la API key",
-                                "Configura primero tu API key de Gemini.")
-            return
-        elementos = []
-        try:
-            for ruta in rutas:
-                if ruta.lower().endswith(".pdf"):
-                    partes = dividir_pdf(ruta, PAGINAS_POR_BLOQUE)
-                    for numero, parte in enumerate(partes, 1):
-                        mover_original = bool(desde_escaner or sin_identificar)
-                        elementos.append({
-                            "rutas": [parte],
-                            "original": ruta, "muestra_id": muestras.get(ruta),
-                            "etiqueta": os.path.splitext(os.path.basename(parte))[0],
-                            "parte": numero,
-                            "partes": len(partes),
-                            # Todo PDF termina en el archivo documental. Los
-                            # externos se COPIAN; solo se mueve el provisional
-                            # creado por el escáner de la propia aplicación.
-                            "archivar": True,
-                            "mover_original": mover_original,
-                            "desde_escaner": bool(desde_escaner),
-                            "sin_identificar": bool(sin_identificar),
-                            "tipo_escaneo": self._tipo_escaneo,
-                        })
-                else:
-                    elementos.append({
-                        "rutas": [ruta], "original": ruta, "muestra_id": muestras.get(ruta),
-                        "etiqueta": os.path.splitext(os.path.basename(ruta))[0],
-                        "parte": 1, "partes": 1,
-                        "archivar": False,
-                        "mover_original": False,
-                        "desde_escaner": bool(desde_escaner),
-                        "sin_identificar": bool(sin_identificar),
-                        "tipo_escaneo": self._tipo_escaneo,
-                    })
-        except Exception as e:
-            QMessageBox.critical(
-                self, "No se pudo preparar el PDF",
-                f"No se ha añadido a la cola:\n\n{e}")
-            return
-
-        en_curso = bool(getattr(self, "worker", None) and self.worker.isRunning())
-        if not en_curso and not self._cola:
-            self._cola_total = 0
-            self._cola_completados = 0
-        self._cola.extend(elementos)
-        self._cola_total += len(elementos)
-        self.btn_gastos.setEnabled(False)
-        self.btn_ventas.setEnabled(False)
-        self.progreso.setVisible(True)
-        self.progreso.setValue(0)
-        if en_curso:
-            self.lbl_estado.setText(
-                f"Añadidos {len(elementos)} bloque(s). Cola total: "
-                f"{self._cola_completados + 1}/{self._cola_total} en curso.")
-            return
-        self._iniciar_siguiente_cola(api_key)
-
-    def _iniciar_siguiente_cola(self, api_key=None):
-        if not self._cola:
-            self._elemento_cola_actual = None
-            self.progreso.setVisible(False)
-            self.btn_cargar.setEnabled(True)
-            hay_datos = self.tabla.rowCount() > 0
-            self.btn_gastos.setEnabled(hay_datos)
-            self.btn_registro.setEnabled(hay_datos)
-            self.lbl_estado.setText(
-                f"Cola terminada: {self._cola_completados} bloque(s) procesado(s).")
-            return
-        api_key = api_key or leer_api_key()
-        if not api_key:
-            self.lbl_estado.setText("Cola pendiente: falta la API key de Gemini.")
-            return
-        elemento = self._cola.pop(0)
-        self._elemento_cola_actual = elemento
-        self._rutas_actuales = list(elemento["rutas"])
-        self._tipo_escaneo = elemento["tipo_escaneo"]
-        self._escaneo_reciente = elemento["desde_escaner"]
-        self._escaneo_sin_identificar = elemento["sin_identificar"]
-        self.lbl_origen.setText(elemento["etiqueta"])
-        actual = self._cola_completados + 1
-        self.lbl_estado.setText(
-            f"Cola {actual}/{self._cola_total}: leyendo {elemento['etiqueta']}…")
-        self.worker = Worker(self._rutas_actuales, api_key)
-        self.worker.progreso.connect(self._on_progreso)
-        self.worker.gasto.connect(self._on_gasto)
-        self.worker.terminado.connect(self._on_terminado)
-        self.worker.fallo.connect(self._on_fallo)
-        self.worker.start()
-
-    def _on_progreso(self, actual, total):
-        self.progreso.setMaximum(total)
-        self.progreso.setValue(actual)
-        bloque = self._cola_completados + 1
-        self.lbl_estado.setText(
-            f"Cola {bloque}/{self._cola_total} · páginas {actual}/{total}")
-
-    def _on_fallo(self, msg):
-        self._limpiar_parte_interna(self._elemento_cola_actual or {})
-        self._cola_completados += 1
-        self._escaneo_reciente = False
-        QMessageBox.critical(
-            self, "Error en un bloque",
-            f"Este bloque no se pudo procesar, pero la cola continuará:\n\n{msg}")
-        self._iniciar_siguiente_cola()
-
-    def _on_terminado(self, procesadas, nombre, nif, crudos=None):
-        elemento = self._elemento_cola_actual or {}
-        rutas_parte = list(self._rutas_actuales)
-        if (elemento.get("parte", 1) > 1 and self._bloques
-                and self._bloques[-1].get("original") == elemento.get("original")
-                and self._bloques[-1].get("nif")):
-            # La segunda parte puede empezar solo con importes y no aportar
-            # candidato a cliente. Mantener el cliente del mismo PDF completo.
-            anterior = self._bloques[-1]
-            nombre, nif = anterior["cliente"], anterior["nif"]
-            procesadas = preparar_lote(crudos or [], nombre, nif)
-        # Si el escaneo salió sin saber de quién era, ahora ya se sabe: el PDF
-        # se muda solo a la carpeta del cliente antes de nombrar el bloque.
-        if elemento.get("archivar"):
-            original_anterior = elemento.get("original", "")
-            self._rutas_actuales = [original_anterior]
-            self._recolocar_escaneo(
-                nombre, procesadas,
-                copiar=not elemento.get("mover_original", False), nif=nif)
-            original_nuevo = self._rutas_actuales[0]
-            elemento["original"] = original_nuevo
-            for pendiente in self._cola:
-                if pendiente.get("original") == original_anterior:
-                    pendiente["original"] = original_nuevo
-                    pendiente["archivar"] = False
-                    pendiente["mover_original"] = False
-                    pendiente["desde_escaner"] = False
-                    pendiente["sin_identificar"] = False
-        elif not elemento:
-            # También conserva el contrato de llamadas directas (pruebas y
-            # pequeñas integraciones que entregan un bloque ya procesado).
-            self._recolocar_escaneo(nombre, procesadas, nif=nif)
-        if elemento:
-            self._rutas_actuales = rutas_parte
-            # Una parte interna no es documentación. Las filas y los datos
-            # crudos deben apuntar siempre al PDF completo archivado y conservar
-            # el número de página global para poder borrar la parte temporal.
-            origen_documento = elemento.get("original", "")
-            desplazamiento = ((elemento.get("parte", 1) - 1)
-                              * PAGINAS_POR_BLOQUE)
-            if origen_documento:
-                for _, pr in procesadas:
-                    pr.origen = origen_documento
-                    pr.pagina += desplazamiento
-                    for factura in pr.facturas:
-                        factura.origen_imagen = origen_documento
-                        factura.pagina_origen += desplazamiento
-                        factura.ultima_pagina_origen += desplazamiento
-                crudos = [
-                    (imagen, origen_documento, pagina + desplazamiento, datos)
-                    for imagen, _origen, pagina, datos in (crudos or [])
-                ]
-        referencias = {}
-        for _, origen, _, _ in (crudos or []):
-            if origen not in referencias:
-                identificador = elemento.get("muestra_id")
-                if not identificador and os.path.isfile(origen):
-                    identificador = self._capturar_original(origen)
-                if identificador:
-                    referencias[origen] = identificador
-        for _, pr in procesadas:
-            for f in pr.facturas:
-                f.original_id = referencias.get(f.origen_imagen, "")
-        try:
-            muestras_revision.guardar_lecturas(crudos or [], referencias)
-        except (OSError, ValueError) as error:
-            self._avisar_error_muestras(error)
-        # Cada carga entra como un BLOQUE mas: asi se pueden juntar varios PDF
-        # de escaner (25-30 hojas cada uno) en un unico Excel para Aplifisa.
-        self._bloques.append({
-            "nombre": self._nombre_bloque(elemento.get("etiqueta")),
-            "original": elemento.get("original", ""),
-            "procesadas": procesadas,
-            # Lo leido por Gemini, tal cual: permite rehacer el lote con otro
-            # cliente sin gastar otra lectura.
-            "crudos": list(crudos or []),
-            "cliente": nombre,
-            "nif": nif,
-            # Lo que dijo el usuario al escanear ("gastos" o "ingresos"): sirve
-            # para cazar una factura que sale del reves.
-            "tipo_declarado": (self._tipo_escaneo
-                               if self._escaneo_reciente else ""),
-        })
-        unir_ultimo_bloque(self._bloques)
-        self._escaneo_reciente = False
-        self._avisar_si_otro_cliente(nombre, nif)
-        # El nombre del cliente se guarda para proponerlo al escanear el
-        # proximo taco suyo, sin tener que escribirlo otra vez.
-        recordar_nombre(nif, nombre)
-        self._cliente_nif, self._cliente_nombre = nif, nombre
-        self._pintar_cliente()
-        # Primero se confirma quién es el cliente; solo después tiene sentido
-        # decidir si la otra parte contradice un NIF guardado de proveedor.
-        if self._analisis_del_lote().dudoso:
-            self._cambiar_cliente(automatico=True)
-        self._resolver_conflictos_nif()
-        self._preparar_recargo()
-        self._actualizar_combo_bloques()
-        self._rellenar_tabla()
-        self._revalidar_todo()
-        hay_datos = self.tabla.rowCount() > 0
-        self.btn_gastos.setEnabled(hay_datos)
-        self.btn_ventas.setEnabled(hay_datos)
-        self.btn_registro.setEnabled(hay_datos)
-        self.btn_cliente.setEnabled(bool(self._bloques))
-        if hay_datos and len(self._bloques) == 1:
-            self.tabla.selectRow(0)
-        self._guardar_muestra_revision()
-        self._avisar_paginas_no_leidas()
-        self._limpiar_parte_interna(elemento)
-        self._cola_completados += 1
-        self._iniciar_siguiente_cola()
-
-    @staticmethod
-    def _quitar_aviso_conflicto(pr, mensaje: str) -> None:
-        """Retira únicamente el aviso que acaba de quedar resuelto."""
-        if pr.aviso == mensaje:
-            pr.aviso = ""
-        else:
-            pr.aviso = " ".join(pr.aviso.replace(mensaje, "").split())
-
-    def _decidir_conflicto_nif(self, nombre: str, guardado: str,
-                               leido: str, cantidad: int) -> str:
-        """Pregunta una vez cuando varias facturas contradicen la memoria."""
-        cuadro = QMessageBox(self)
-        cuadro.setWindowTitle("Confirmar CIF/NIF del proveedor")
-        cuadro.setIcon(QMessageBox.Warning)
-        cuadro.setText(
-            f"Para {nombre} está guardado <b>{guardado}</b>, pero "
-            f"{cantidad} facturas de este lote muestran <b>{leido}</b>.")
-        cuadro.setInformativeText(
-            "El programa no cambiará lo aprendido sin que usted lo confirme.")
-        mantener = cuadro.addButton("Mantener el guardado", QMessageBox.AcceptRole)
-        sustituir = cuadro.addButton("Usar el nuevo y recordarlo", QMessageBox.ActionRole)
-        revisar = cuadro.addButton("Dejar pendiente", QMessageBox.RejectRole)
-        cuadro.setDefaultButton(revisar)
-        cuadro.exec()
-        pulsado = cuadro.clickedButton()
-        if pulsado is mantener:
-            return "guardado"
-        if pulsado is sustituir:
-            return "nuevo"
-        return "revisar"
-
-    def _resolver_conflictos_nif(self) -> None:
-        """Contrasta la memoria con la evidencia acumulada de todo el lote."""
-        grupos = {}
-        for bloque in self._bloques:
-            for _imagen, pr in bloque.get("procesadas", []):
-                conflicto = getattr(pr, "conflicto_nif", None)
-                if not conflicto:
-                    continue
-                clave = (clave_proveedor(conflicto["nombre"]),
-                         conflicto["guardado"], conflicto["leido"])
-                grupos.setdefault(clave, []).append(pr)
-
-        for clave_grupo, procesadas in grupos.items():
-            _clave, guardado, leido = clave_grupo
-            decision = self._decisiones_conflicto_nif.get(clave_grupo)
-            if decision:
-                self._aplicar_decision_conflicto_nif(
-                    procesadas, decision, guardado, leido)
-                continue
-            # Una discrepancia aislada se ve en amarillo. Con evidencia
-            # repetida se pregunta una sola vez por todo el grupo.
-            if len(procesadas) < 3:
-                continue
-            if any(pr.conflicto_nif.get("consultado") for pr in procesadas):
-                for pr in procesadas:
-                    pr.conflicto_nif["consultado"] = True
-                continue
-            nombre = procesadas[0].conflicto_nif["nombre"]
-            decision = self._decidir_conflicto_nif(
-                nombre, guardado, leido, len(procesadas))
-            self._decisiones_conflicto_nif[clave_grupo] = decision
-            self._aplicar_decision_conflicto_nif(
-                procesadas, decision, guardado, leido)
-
-    def _aplicar_decision_conflicto_nif(self, procesadas, decision: str,
-                                        guardado: str, leido: str) -> None:
-        """Aplica la decisión a este grupo y a sus partes posteriores."""
-        nombre = procesadas[0].conflicto_nif["nombre"]
-        if decision == "guardado":
-            recordar_nif(nombre, guardado, manual=True)
-            for pr in procesadas:
-                for factura in pr.facturas:
-                    factura.nif = guardado
-        elif decision == "nuevo":
-            recordar_nif(nombre, leido, manual=True)
-        for pr in procesadas:
-            conflicto = pr.conflicto_nif
-            if decision != "revisar":
-                self._quitar_aviso_conflicto(pr, conflicto["mensaje"])
-                pr.conflicto_nif = None
-            else:
-                conflicto["consultado"] = True
-
-    def _avisar_paginas_no_leidas(self):
-        """Detalla las páginas agotadas o ilegibles sin detener la cola."""
-        fallos = getattr(getattr(self, "worker", None), "fallos", None)
-        if not fallos:
-            return
-        salto = chr(10)
-        detalle = salto.join(
-            f"· {os.path.basename(ruta) or 'documento'}, página {pagina}: {motivo}"
-            for ruta, pagina, motivo in fallos[:10])
-        if len(fallos) > 10:
-            detalle += f"{salto}· … y {len(fallos) - 10} más"
-        QMessageBox.warning(
-            self, "Páginas sin leer",
-            f"{len(fallos)} página(s) no se han podido leer y están en rojo "
-            f"en la tabla:{salto}{salto}{detalle}{salto}{salto}"
-            "La cola continúa. Puede volver a cargar solo esas páginas.")
-
-    def _limpiar_parte_interna(self, elemento: dict) -> None:
-        """Borra una parte ya procesada, nunca el PDF original del usuario."""
-        if int(elemento.get("partes", 1) or 1) <= 1:
-            return
-        raiz = os.path.abspath(os.path.join(dir_datos(), "cola_pdf"))
-        for ruta in elemento.get("rutas", []):
-            ruta_abs = os.path.abspath(ruta)
-            if not os.path.normcase(ruta_abs).startswith(
-                    os.path.normcase(raiz) + os.sep):
-                continue
-            try:
-                os.remove(ruta_abs)
-                carpeta = os.path.dirname(ruta_abs)
-                if os.path.isdir(carpeta) and not os.listdir(carpeta):
-                    os.rmdir(carpeta)
-            except OSError:
-                pass
-
-    def _recolocar_escaneo(self, cliente, procesadas, copiar: bool = False, nif=""):
-        """Archiva el PDF original por cliente, ejercicio y tipo.
-
-        Al escanear no hace falta decir de quién son las facturas: el programa
-        lo averigua por el NIF que se repite y coloca el archivo despues. Si no
-        lo averigua, el PDF se queda en «Sin identificar» y se puede colocar a
-        mano desde «Escaneos guardados».
-        """
-        if (not copiar and not self._escaneo_reciente
-                and not self._escaneo_sin_identificar) \
-                or len(self._rutas_actuales) != 1:
-            return
-        ruta = self._rutas_actuales[0]
-        if not cliente:
-            return
-        ventas = sum(1 for _, pr in procesadas if pr.tipo == "venta")
-        tipo = "ingresos" if ventas > len(procesadas) / 2 else "gastos"
-        ejercicios = []
-        for _, pr in procesadas:
-            if not pr.facturas:
-                continue
-            fecha = fecha_de(pr.facturas[0].fecha)
-            if fecha:
-                ejercicios.append(fecha.year)
-        ejercicio = Counter(ejercicios).most_common(1)[0][0] if ejercicios else None
-        try:
-            if copiar:
-                nueva = archivo.copiar_a_cliente(
-                    ruta, cliente, tipo, ejercicio=ejercicio, nif=nif)
-            else:
-                nueva = archivo.mover_a_cliente(
-                    ruta, cliente, tipo, ejercicio=ejercicio, nif=nif)
-        except (OSError, ValueError) as e:
-            QMessageBox.warning(self, "Archivo documental",
-                f"No se pudo archivar el PDF: {e}\nEl original sigue en {ruta}.")
-            return
-        if nueva == ruta:
-            return
-        self._escaneo_sin_identificar = False
-        self._rutas_actuales = [nueva]
-        for _, pr in procesadas:     # que la miniatura siga apuntando al PDF
-            pr.origen = nueva
-            for f in pr.facturas:
-                f.origen_imagen = nueva
-        self.lbl_estado.setText(
-            f"Documento archivado en {cliente} / {ejercicio or 'ejercicio actual'} / "
-            f"{'Ingresos' if tipo == 'ingresos' else 'Gastos'}")
-
-    def _analisis_del_lote(self):
-        """Las partes que salen en TODO el lote (todos los bloques)."""
-        datos = [d for bloque in self._bloques for *_, d in bloque.get("crudos", [])]
-        return analizar_cliente(datos)
-
-    def _cambiar_cliente(self, automatico: bool = False):
-        """Quien es el cliente de la asesoria en este lote.
-
-        Al cambiarlo se rehace todo desde lo que ya leyo Gemini: no se vuelve a
-        pagar ninguna lectura.
-        """
-        analisis = self._analisis_del_lote()
-        if len(analisis.candidatos) < 2:
-            if not automatico:
-                self._avisar(
-                    "En estas facturas solo se ha identificado una parte con "
-                    "NIF, así que no hay entre quién elegir.", INFO)
-            return
-        dialogo = DialogoCliente(analisis.candidatos, self,
-                                 elegido=getattr(self, "_cliente_nif", ""))
-        if dialogo.exec() != QDialog.Accepted:
-            return
-        elegido = dialogo.elegido()
-        if not elegido or not elegido.nif:
-            return
-        # Lo que dice una persona manda y se recuerda; y a los demas del lote
-        # se les apunta como proveedores, que es lo que son.
-        marcar_cliente(elegido.nif, elegido.nombre)
-        for otro in analisis.candidatos:
-            if otro.nif != elegido.nif and otro.nombre and otro.nif:
-                recordar_nif(otro.nombre, otro.nif, manual=True)
-        self._rehacer_con_cliente(elegido.nombre, elegido.nif)
-
-    def _rehacer_con_cliente(self, nombre, nif):
-        """Vuelve a montar todos los bloques con otro cliente, sin Gemini."""
-        for bloque in self._bloques:
-            if bloque.get("crudos"):
-                bloque["procesadas"] = preparar_lote(bloque["crudos"], nombre, nif)
-                bloque["cliente"], bloque["nif"] = nombre, nif
-        self._cliente_nif, self._cliente_nombre = nif, nombre
-        self._pintar_cliente()
-        self._preparar_recargo()
-        self._rellenar_tabla()
-        self._revalidar_todo()
-        self.lbl_estado.setText(f"Lote rehecho con {nombre or nif} como cliente.")
-        self._avisar(f"Lote rehecho con {nombre or nif} como cliente, sin "
-                     "volver a pagar la lectura.", INFO)
-
-    def _nombre_bloque(self, base_preferido: str = "") -> str:
-        """Nombre corto del bloque: el del PDF cargado, sin repetirse."""
-        rutas = self._rutas_actuales
-        if base_preferido:
-            base = base_preferido
-        elif not rutas:
-            base = f"Bloque {len(self._bloques) + 1}"
-        elif len(rutas) == 1:
-            base = os.path.splitext(os.path.basename(rutas[0]))[0]
-        else:
-            base = f"{os.path.splitext(os.path.basename(rutas[0]))[0]} +{len(rutas) - 1}"
-        usados = {b["nombre"] for b in self._bloques}   # aun no se ha añadido
-        nombre, n = base, 2
-        while nombre in usados:
-            nombre, n = f"{base} ({n})", n + 1
-        return nombre
-
-    def _avisar_si_otro_cliente(self, nombre, nif):
-        """Mezclar clientes en un mismo Excel es un lio gordo: hay que verlo."""
-        anteriores = {b["nif"] for b in self._bloques[:-1] if b["nif"]}
-        if not anteriores or not nif or nif in anteriores:
-            return
-        previo = next(b for b in self._bloques[:-1] if b["nif"])
-        QMessageBox.warning(
-            self, "¿Facturas de otro cliente?",
-            f"Este bloque parece de OTRO cliente:\n\n"
-            f"  · Bloques anteriores: {previo['cliente'] or '?'} "
-            f"({previo['nif']})\n"
-            f"  · Bloque nuevo: {nombre or '?'} ({nif})\n\n"
-            "Se ha añadido igualmente, pero el Excel saldría con facturas de "
-            "los dos. Si es un error, use «Quitar este bloque».")
-
     def _pintar_cliente(self):
         """Cliente del lote. Si hay bloques de varios, se dice claramente."""
         nifs = {b["nif"] for b in self._bloques if b["nif"]}
@@ -2606,23 +1355,23 @@ class VentanaPrincipal(QMainWindow):
 
     def _rellenar_tabla(self):
         self._invalidar_contraste_registro()
-        recargo = self._por_el_total()
+        self._poner_filas(filas_de_bloques(
+            self._bloques, self._por_el_total(), a_total_factura))
+
+    def _poner_filas(self, filas) -> None:
+        """Sustituye las filas del lote y las pinta de nuevo."""
         self.tabla.blockSignals(True)
         self.tabla.setRowCount(0)
         self.filas = []
-        for bloque in self._bloques:
-            for png, pr in bloque["procesadas"]:
-                fuentes = [f for f in pr.facturas if not f.eliminada]
-                if not fuentes:
-                    continue
-                vista = a_total_factura(replace(pr, facturas=fuentes)) if recargo else pr
-                visibles = vista.facturas if recargo else fuentes
-                for f in visibles:
-                    origenes = fuentes if recargo else [f]
-                    self._anadir_fila(
-                        png, f, f.tipo_revision or vista.tipo, f.concepto,
-                        f.subclave, vista.aviso, bloque["nombre"], origenes)
+        for fila in filas:
+            self._insertar_fila(fila)
         self.tabla.blockSignals(False)
+
+    def _insertar_fila(self, fila: Fila, posicion: int | None = None) -> None:
+        r = len(self.filas) if posicion is None else posicion
+        self.filas.insert(r, fila)
+        self.tabla.insertar(r, fila, self._on_tipo_cambiado)
+        self._actualizar_columnas()
 
     def _on_recargo(self):
         """Cambiar el régimen rehace la tabla: cambia como se registra el gasto."""
@@ -2666,67 +1415,11 @@ class VentanaPrincipal(QMainWindow):
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
                      fuentes=None):
-        senales_bloqueadas = self.tabla.signalsBlocked()
-        self.tabla.blockSignals(True)
-        r = self.tabla.rowCount()
-        self.tabla.insertRow(r)
-        self.filas.append({"png": png, "factura": f, "aviso": aviso,
-                           "bloque": bloque, "fuentes": list(fuentes or [f])})
-
-        est = QTableWidgetItem("")
-        est.setFlags(Qt.ItemIsEnabled)
-        est.setTextAlignment(Qt.AlignCenter)
-        self.tabla.setItem(r, C_ESTADO, est)
-
-        combo = ComboSinRueda()
-        combo.addItem("Gasto", "gasto")
-        combo.addItem("Ingreso", "venta")
-        combo.setCurrentIndex(max(0, combo.findData(f.tipo_revision or tipo)))
-        combo.setToolTip(
-            "Clasificación dudosa: compruebe si corresponde a Gasto o Ingreso."
-            if aviso and ("dudoso" in aviso.lower() or "confirma" in aviso.lower())
-            else "Clasificación automática según el NIF y el papel del cliente en la factura.")
-        combo.currentIndexChanged.connect(
-            lambda _i, control=combo: self._on_tipo_cambiado(control))
-        self.tabla.setCellWidget(r, C_TIPO, combo)
-
-        valores = {
-            C_CUENTA: cuenta, C_GXX: gxx or "", C_FECHA: f.fecha, C_NUM: f.num_factura,
-            C_NOMBRE: f.nombre, C_NIF: f.nif, C_BASE: fmt(f.base_iva),
-            C_PCT: fmt(f.pct_iva), C_CUOTA: fmt(f.cuota_iva),
-            C_BASE_RE: fmt(f.base_requiv), C_PCT_RE: fmt(f.pct_requiv),
-            C_CUOTA_RE: fmt(f.cuota_requiv),
-            C_BASE_IRPF: fmt(f.base_irpf), C_PCT_IRPF: fmt(f.pct_irpf),
-            C_CUOTA_IRPF: fmt(f.cuota_irpf),
-            C_TOTAL: fmt(f.total_impreso),
-            C_BLOQUE: bloque,
-        }
-        for col, val in valores.items():
-            item = QTableWidgetItem("" if val is None else str(val))
-            if col in (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE,
-                       C_CUOTA_RE, C_BASE_IRPF, C_PCT_IRPF,
-                       C_CUOTA_IRPF, C_TOTAL):
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if col == C_GXX:
-                item.setToolTip(
-                    "Subclave del suministro. En Aplifisa la 628 NO puede ir "
-                    "sin ella:\n"
-                    + "\n".join(f"  {g} = {d}"
-                                for g, d in SUBCLAVES_628.items()))
-            if col == C_BASE and getattr(f, "es_suplido", False):
-                item.setToolTip(
-                    "SUPLIDO: se registra como una línea de base más del mismo "
-                    "apunte, sin IVA (así lo pide Aplifisa).")
-            if col == C_BLOQUE:
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                item.setToolTip("Escaneo o PDF del que salió esta factura.")
-            self.tabla.setItem(r, col, item)
-        self.tabla.setRowHeight(r, 34)
-        if any(getattr(f, campo) is not None
-               for campo in ("base_requiv", "pct_requiv", "cuota_requiv")):
-            for columna in COLUMNAS_RECARGO:
-                self.tabla.setColumnHidden(columna, False)
-        self.tabla.blockSignals(senales_bloqueadas)
+        """Añade una línea al final (sesiones guardadas, deshacer, pruebas)."""
+        f.concepto = cuenta if cuenta not in ("", None) else None
+        f.subclave = gxx or None
+        self._insertar_fila(Fila(png, f, f.tipo_revision or tipo, aviso or "",
+                                 bloque or "", list(fuentes or [f])))
 
     # ---------- edicion / validacion ----------
     def _invalidar_revision_documento(self, fila):
@@ -2746,9 +1439,13 @@ class VentanaPrincipal(QMainWindow):
         con el que se le llama, su NIF y la cuenta que le toca.
         """
         self._invalidar_contraste_registro()
-        if item.row() < len(self.filas):
-            self._invalidar_revision_documento(item.row())
         columna = item.column()
+        if item.row() < len(self.filas):
+            # Lo escrito pasa a la factura en el momento: la tabla solo enseña.
+            campo, valor = valor_de_celda(columna, item.text())
+            if campo:
+                setattr(self.filas[item.row()].factura, campo, valor)
+            self._invalidar_revision_documento(item.row())
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
         elif columna == C_NOMBRE:
@@ -2766,6 +1463,7 @@ class VentanaPrincipal(QMainWindow):
         fila = self._fila_del_control_tipo(control)
         if 0 <= fila < len(self.filas):
             self._invalidar_revision_documento(fila)
+            self.filas[fila].tipo = control.currentData()
             self.filas[fila]["factura"].tipo_revision = control.currentData()
             for fuente in self.filas[fila].get("fuentes", []):
                 fuente.tipo_revision = control.currentData()
@@ -2802,8 +1500,8 @@ class VentanaPrincipal(QMainWindow):
         if self._tipo_fila(r) != "gasto":
             return ""
         f = self._leer_fila(r)
-        cuenta = (self.tabla.item(r, C_CUENTA).text() or "").strip()
-        gxx = (self.tabla.item(r, C_GXX).text() or "").strip().upper() or None
+        cuenta = (f.concepto or "").strip()
+        gxx = (f.subclave or "").strip().upper() or None
         if not f.nombre or not es_valido(cuenta, gxx):
             return ""
         if not recordar_cuenta_proveedor(normaliza_nif(f.nif), f.nombre,
@@ -2815,16 +1513,16 @@ class VentanaPrincipal(QMainWindow):
 
     def _poner_en_las_del_mismo_nif(self, r, nif, columna, valor) -> int:
         """Aplica un valor al resto de facturas del mismo proveedor del lote."""
+        campo = CAMPO_DE_COLUMNA[columna]
         puestas = 0
-        self.tabla.blockSignals(True)
-        for otra in range(self.tabla.rowCount()):
-            if otra == r or normaliza_nif(self._leer_fila(otra).nif) != nif:
+        for otra, registro in enumerate(self.filas):
+            if otra == r or normaliza_nif(registro.factura.nif) != nif:
                 continue
-            if self.tabla.item(otra, columna).text() != valor:
+            if getattr(registro.factura, campo) != valor:
                 self._invalidar_revision_documento(otra)
-                self.tabla.item(otra, columna).setText(valor)
+                setattr(registro.factura, campo, valor)
+                self.tabla.pintar(otra, registro, (columna,))
                 puestas += 1
-        self.tabla.blockSignals(False)
         return puestas
 
     def _nif_escrito_a_mano(self, r) -> str:
@@ -2841,21 +1539,19 @@ class VentanaPrincipal(QMainWindow):
             return ""
         clave = clave_proveedor(f.nombre)
         aplicadas = []
-        self.tabla.blockSignals(True)
-        for otra in range(self.tabla.rowCount()):
+        for otra, registro in enumerate(self.filas):
             if otra == r:
                 continue
-            g = self._leer_fila(otra)
+            g = registro.factura
             if clave_proveedor(g.nombre) != clave or validar_nif(normaliza_nif(g.nif)):
                 continue
             self._invalidar_revision_documento(otra)
             g.nif = nif
-            self.tabla.item(otra, C_NIF).setText(nif)
-            self.filas[otra]["aviso"] = (
-                f"{self.filas[otra]['aviso']} NIF puesto a mano ({nif}) desde "
+            self.tabla.pintar(otra, registro, (C_NIF,))
+            registro.aviso = (
+                f"{registro.aviso} NIF puesto a mano ({nif}) desde "
                 f"otra factura de {f.nombre}.").strip()
             aplicadas.append(otra + 1)
-        self.tabla.blockSignals(False)
         aviso = f"NIF {nif} guardado para {f.nombre}: ya no habrá que escribirlo más."
         if aplicadas:
             aviso += ("  Puesto también en la línea "
@@ -2863,29 +1559,11 @@ class VentanaPrincipal(QMainWindow):
         return aviso
 
     def _leer_fila(self, r):
-        """Actualiza la Factura de la fila con lo que hay en las celdas."""
-        d = self.filas[r]
-        f = d["factura"]
-        f.concepto = self.tabla.item(r, C_CUENTA).text() or None
-        f.subclave = (self.tabla.item(r, C_GXX).text() or "").strip().upper() or None
-        f.fecha = self.tabla.item(r, C_FECHA).text() or None
-        f.num_factura = self.tabla.item(r, C_NUM).text() or None
-        f.nombre = self.tabla.item(r, C_NOMBRE).text() or None
-        f.nif = self.tabla.item(r, C_NIF).text() or None
-        f.base_iva = parse_numero(self.tabla.item(r, C_BASE).text())
-        f.pct_iva = parse_numero(self.tabla.item(r, C_PCT).text())
-        f.cuota_iva = parse_numero(self.tabla.item(r, C_CUOTA).text())
-        f.base_requiv = parse_numero(self.tabla.item(r, C_BASE_RE).text())
-        f.pct_requiv = parse_numero(self.tabla.item(r, C_PCT_RE).text())
-        f.cuota_requiv = parse_numero(self.tabla.item(r, C_CUOTA_RE).text())
-        f.base_irpf = parse_numero(self.tabla.item(r, C_BASE_IRPF).text())
-        f.pct_irpf = parse_numero(self.tabla.item(r, C_PCT_IRPF).text())
-        f.cuota_irpf = parse_numero(self.tabla.item(r, C_CUOTA_IRPF).text())
-        f.total_impreso = parse_numero(self.tabla.item(r, C_TOTAL).text())
-        return f
+        """La factura de la fila (lo que vale es la factura, no la celda)."""
+        return self.filas[r].factura
 
     def _ordenar_tabla_por(self, columna: int) -> None:
-        """Ordena la tabla sin desalinear las filas internas ni los combos."""
+        """Ordena el lote por una columna; las filas se mueven con su factura."""
         if self.tabla.rowCount() < 2 or columna == C_BLOQUE:
             return
         self._invalidar_contraste_registro()
@@ -2893,66 +1571,12 @@ class VentanaPrincipal(QMainWindow):
             ascendente = not self._orden_ascendente
         else:
             # En retenciones interesa ver primero las facturas que sí tienen.
-            ascendente = columna not in (
-                C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF)
+            ascendente = columna not in COLUMNAS_IRPF
         self._columna_orden = columna
         self._orden_ascendente = ascendente
-
-        registros = []
-        for fila in range(self.tabla.rowCount()):
-            f = self._leer_fila(fila)
-            registros.append({
-                "png": self.filas[fila]["png"], "factura": f,
-                "tipo": self._tipo_fila(fila),
-                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
-                "gxx": self.tabla.item(fila, C_GXX).text(),
-                "aviso": self.filas[fila].get("aviso", ""),
-                "bloque": self.filas[fila].get("bloque", ""),
-                "fuentes": self.filas[fila].get("fuentes", [f]),
-                "estado": self.filas[fila].get("estado", OK),
-            })
-
-        def valor(registro):
-            f = registro["factura"]
-            if columna == C_ESTADO:
-                return {ERROR: 0, REVISAR: 1, OK: 2}.get(registro["estado"], 3)
-            if columna == C_TIPO:
-                return registro["tipo"]
-            if columna == C_CUENTA:
-                return registro["cuenta"]
-            if columna == C_GXX:
-                return registro["gxx"]
-            if columna == C_FECHA:
-                fecha = fecha_de(f.fecha)
-                return fecha.toordinal() if fecha else None
-            atributos = {
-                C_NUM: "num_factura", C_NOMBRE: "nombre", C_NIF: "nif",
-                C_BASE: "base_iva", C_PCT: "pct_iva", C_CUOTA: "cuota_iva",
-                C_BASE_RE: "base_requiv", C_PCT_RE: "pct_requiv",
-                C_CUOTA_RE: "cuota_requiv",
-                C_BASE_IRPF: "base_irpf", C_PCT_IRPF: "pct_irpf",
-                C_CUOTA_IRPF: "cuota_irpf",
-                C_TOTAL: "total_impreso",
-            }
-            dato = getattr(f, atributos.get(columna, "num_factura"), None)
-            return dato.casefold() if isinstance(dato, str) else dato
-
-        con_valor = [registro for registro in registros
-                     if valor(registro) not in (None, "")]
-        sin_valor = [registro for registro in registros
-                     if valor(registro) in (None, "")]
-        con_valor.sort(key=valor, reverse=not ascendente)
-        ordenados = con_valor + sin_valor
-
-        self.tabla.blockSignals(True)
-        self.tabla.setRowCount(0)
-        self.filas = []
-        for registro in ordenados:
-            self._anadir_fila(
-                registro["png"], registro["factura"], registro["tipo"],
-                registro["cuenta"], registro["gxx"], registro["aviso"],
-                registro["bloque"], registro["fuentes"])
-        self.tabla.blockSignals(False)
+        campo = {C_ESTADO: "estado", C_TIPO: "tipo"}.get(
+            columna, CAMPO_DE_COLUMNA.get(columna, "num_factura"))
+        self._poner_filas(ordenar_filas(self.filas, campo, ascendente))
         orden_qt = (Qt.AscendingOrder if ascendente else Qt.DescendingOrder)
         self.tabla.horizontalHeader().setSortIndicator(columna, orden_qt)
         self.tabla.horizontalHeader().setSortIndicatorShown(True)
@@ -2961,19 +1585,11 @@ class VentanaPrincipal(QMainWindow):
             self.tabla.selectRow(0)
 
     def _tipo_fila(self, r):
-        w = self.tabla.cellWidget(r, C_TIPO)
-        return w.currentData() if w else "gasto"
+        return self.filas[r].tipo if 0 <= r < len(self.filas) else "gasto"
 
     def _fila_del_control_tipo(self, control) -> int:
         """Localiza la fila actual del desplegable incluso después de borrar filas."""
-        for fila in range(self.tabla.rowCount()):
-            if self.tabla.cellWidget(fila, C_TIPO) is control:
-                return fila
-        return -1
-
-    def _estado_fila(self, fila: int) -> str:
-        celda = self.tabla.item(fila, C_ESTADO)
-        return celda.text() if celda else ""
+        return self.tabla.fila_del_combo(control)
 
     def _aplicar_filtro(self) -> None:
         opcion = self.combo_filtro_estado.currentIndex()
@@ -2987,12 +1603,12 @@ class VentanaPrincipal(QMainWindow):
             "todos": "Proveedor o cliente, NIF, nº de factura o importe…",
         }[tipo])
         for fila in range(self.tabla.rowCount()):
-            estado = self._estado_fila(fila)
+            estado = self.filas[fila].presentacion
             visible = (
                 opcion == 0
-                or (opcion == 1 and estado == ICONO_ESTADO[REVISAR])
-                or (opcion == 2 and estado == ICONO_ESTADO[ERROR])
-                or (opcion == 3 and estado in {ICONO_ESTADO[OK], ICONO_REVISADO})
+                or (opcion == 1 and estado == POR_REVISAR)
+                or (opcion == 2 and estado == CON_ERROR)
+                or (opcion == 3 and estado in {VERIFICADA, SIN_VERIFICAR, REVISADA})
                 or (opcion == 4 and self._periodo_lote.es_trimestre
                     and not self._periodo_lote.contiene(self.filas[fila]["factura"]))
             )
@@ -3105,26 +1721,6 @@ class VentanaPrincipal(QMainWindow):
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
                 "corrigen y las operaciones manuales no se exportan.", AVISO)
 
-    def _olvidar_exportacion(self) -> None:
-        filas = [f for f in self._filas_seleccionadas()
-                 if self.filas[f].get("ya_exportada")]
-        if not filas:
-            self._avisar("Seleccione filas marcadas como «ya exportada».", AVISO)
-            return
-        por_tipo = {"gasto": [], "venta": []}
-        for fila in filas:
-            por_tipo[self._tipo_fila(fila)].append(self._leer_fila(fila))
-        cliente = getattr(self, "_cliente_nif", "")
-        nombre = getattr(self, "_cliente_nombre", "")
-        cuantas = historial.olvidar(cliente, por_tipo, nombre)
-        self._revalidar_todo()
-
-        def deshacer():
-            historial.registrar(cliente, por_tipo, {}, nombre)
-            self._revalidar_todo()
-        self._avisar(f"{cuantas} factura(s) quitadas del historial de "
-                     "exportadas.", INFO, deshacer=deshacer)
-
     def _alternar_gestion_manual(self) -> None:
         """Aparta la factura completa, aunque tenga varias líneas de IVA."""
         seleccionadas = self._filas_seleccionadas()
@@ -3156,107 +1752,6 @@ class VentanaPrincipal(QMainWindow):
             + ("devueltas al flujo automático." if quitar_marca
                else "apartadas para gestión manual."))
 
-    @staticmethod
-    def _mismo_archivo(a: str, b: str) -> bool:
-        return os.path.normcase(os.path.abspath(a or "")) == \
-            os.path.normcase(os.path.abspath(b or ""))
-
-    def _crudos_de_filas(self, filas: list[int]) -> list[tuple]:
-        """Localiza las páginas originales de las filas, también en sesiones viejas."""
-        encontrados = []
-        usados = set()
-        for fila in filas:
-            registro_tabla = self.filas[fila]
-            f = self._leer_fila(fila)
-            pagina = int(getattr(f, "pagina_origen", 0) or 0)
-            for ib, bloque in enumerate(self._bloques):
-                for ir, crudo in enumerate(bloque.get("crudos", [])):
-                    clave = (ib, ir)
-                    if clave in usados:
-                        continue
-                    imagen, origen, pag, _datos = crudo
-                    ultima = max(pagina, int(f.ultima_pagina_origen or pagina))
-                    coincide_pagina = (pagina and pagina <= int(pag) <= ultima and
-                                       self._mismo_archivo(origen, f.origen_imagen))
-                    # Las sesiones creadas antes de guardar pagina_origen aún
-                    # pueden localizarse por la miniatura y el archivo.
-                    coincide_imagen = (not pagina and imagen == registro_tabla["png"] and
-                                       self._mismo_archivo(origen, f.origen_imagen))
-                    if coincide_pagina or coincide_imagen:
-                        encontrados.append((ib, ir, crudo))
-                        usados.add(clave)
-        return sorted(encontrados, key=lambda r: (r[0], r[1]))
-
-    def _unir_hojas_seleccionadas(self) -> None:
-        filas = self._filas_seleccionadas()
-        crudos = self._crudos_de_filas(filas)
-        if len(crudos) < 2:
-            self._avisar(
-                "Para unir hojas, seleccione filas de al menos dos hojas "
-                "distintas. Si una factura tiene varias líneas de IVA en la "
-                "misma hoja, cuentan como una sola hoja.", AVISO)
-            return
-        referencias = []
-        for _ib, _ir, (_img, _origen, pagina, datos) in crudos:
-            referencias.append(
-                f"página {pagina}: {datos.get('num_factura') or 'sin nº'}")
-        pregunta = (
-            "Se unirán estas hojas como UNA sola factura:\n\n· "
-            + "\n· ".join(referencias)
-            + "\n\nLa primera aporta número, fecha y cliente; el resumen fiscal "
-              "completo de la última sustituye los subtotales intermedios."
-        )
-        if QMessageBox.question(
-                self, "Confirmar unión de hojas", pregunta,
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-            return
-
-        self._guardar_muestra_revision()
-        fuentes = [fuente for fila in filas
-                   for fuente in self.filas[fila].get("fuentes", [self.filas[fila]["factura"]])]
-        documentos = {clave_documento(f) for f in fuentes}
-        primero_bloque, primero_indice, _ = crudos[0]
-        destino = self._bloques[primero_bloque]
-        seleccion = {(ib, ir) for ib, ir, _ in crudos}
-        posicion = sum(1 for ir in range(primero_indice)
-                       if (primero_bloque, ir) not in seleccion)
-        fusionado = fusionar_paginas_manual([crudo for _, _, crudo in crudos])
-        nueva = preparar_lote([fusionado], destino.get("cliente", ""), destino.get("nif", ""))[0]
-        original_id = next((f.original_id for f in fuentes if f.original_id), "")
-        for f in nueva[1].facturas:
-            f.original_id = original_id
-            f.edicion_manual = True
-        insertada = False
-        for ib, bloque in enumerate(self._bloques):
-            restantes = []
-            for imagen, pr in bloque["procesadas"]:
-                if any(clave_documento(f) in documentos for f in pr.facturas):
-                    if bloque is destino and not insertada:
-                        restantes.append(nueva)
-                        insertada = True
-                else:
-                    restantes.append((imagen, pr))
-            bloque["procesadas"] = restantes
-            bloque["crudos"] = [crudo for ir, crudo in enumerate(bloque.get("crudos", []))
-                                if (ib, ir) not in seleccion]
-        if not insertada:
-            destino["procesadas"].append(nueva)
-        destino["crudos"].insert(posicion, fusionado)
-        self._bloques = [bloque for bloque in self._bloques
-                         if bloque.get("procesadas") or bloque is destino]
-        try:
-            muestras_revision.guardar_lecturas(
-                [fusionado], {fusionado[1]: original_id} if original_id else {})
-        except (OSError, ValueError) as error:
-            self._avisar_error_muestras(error)
-        self._actualizar_combo_bloques()
-        self._rellenar_tabla()
-        self._revalidar_todo()
-        self._guardar_sesion()
-        numero = fusionado[3].get("num_factura") or "sin nº"
-        self.lbl_estado.setText(
-            f"{len(crudos)} hojas unidas como una sola factura ({numero}).")
-
     def _eliminar_seleccion(self) -> None:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},
                        reverse=True)
@@ -3272,11 +1767,7 @@ class VentanaPrincipal(QMainWindow):
             for fuente in registro.get("fuentes", [registro["factura"]]):
                 fuente.eliminada = True
             self._ultimo_borrado.append({
-                "registro": registro,
-                "tipo": self._tipo_fila(fila),
-                "cuenta": self.tabla.item(fila, C_CUENTA).text(),
-                "gxx": self.tabla.item(fila, C_GXX).text(),
-            })
+                "registro": registro, "tipo": registro.tipo, "posicion": fila})
             self.tabla.removeRow(fila)
             self.filas.pop(fila)
         self._ultimo_borrado.reverse()
@@ -3298,10 +1789,9 @@ class VentanaPrincipal(QMainWindow):
             registro = borrada["registro"]
             for fuente in registro.get("fuentes", [registro["factura"]]):
                 fuente.eliminada = False
-            self._anadir_fila(
-                registro["png"], registro["factura"], borrada["tipo"],
-                borrada["cuenta"], borrada["gxx"], registro["aviso"],
-                registro.get("bloque", ""), registro.get("fuentes"))
+            # Vuelve a su sitio, no al final del lote.
+            self._insertar_fila(registro, min(borrada.get("posicion", len(self.filas)),
+                                              len(self.filas)))
         cantidad = len(self._ultimo_borrado)
         self._ultimo_borrado = []
         self.btn_deshacer_borrado.setEnabled(False)
@@ -3311,837 +1801,6 @@ class VentanaPrincipal(QMainWindow):
         self._aplicar_filtro()
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
         self._avisar(f"{cantidad} línea(s) restaurada(s).", EXITO)
-
-    def _abrir_ficha(self, fila, columna):
-        """Al pulsar el semáforo se abre la ficha con lo que le pasa a la fila.
-
-        En el globo de ayuda se leia mal y desaparecia al mover el raton; asi
-        se queda abierta, se puede leer con calma y se puede copiar.
-        """
-        if columna != C_ESTADO or fila >= len(self.filas):
-            return
-        registro = self.filas[fila]
-        mensajes = registro.get("mensajes") or []
-        if registro.get("estado", OK) == OK or not mensajes:
-            return          # una fila correcta no tiene nada que contar
-        f = registro["factura"]
-        ficha = FichaIncidencias(
-            registro["estado"], mensajes, self,
-            referencia=f"Línea {fila + 1} · {f.num_factura or 'sin nº'} · "
-                       f"{f.nombre or 'sin nombre'}")
-        ficha.mostrar_junto_a(self.tabla.viewport(),
-                              self.tabla.visualItemRect(
-                                  self.tabla.item(fila, C_ESTADO)))
-
-    def _revalidar_fila(self, r):
-        if r < 0 or r >= len(self.filas):
-            return
-        pasada = getattr(self, "_pasada", None) or self._preparar_pasada()
-        f = pasada["facturas"][r]
-        registro = self.filas[r]
-        res = validar(f)
-        estado = res.estado
-        msgs = list(res.mensajes)
-
-        def anadir(texto, *campos, gravedad=REVISAR):
-            nonlocal estado
-            msgs.append(Incidencia(texto, campos, gravedad))
-            if gravedad == ERROR:
-                estado = ERROR
-            elif estado == OK:
-                estado = REVISAR
-
-        # Las sesiones de versiones anteriores guardaron un aviso de ejercicio
-        # en TODAS las filas. Se limpia al abrirlas; ahora se señala únicamente
-        # la factura cuya fecha no pertenece al ejercicio predominante.
-        aviso_guardado = sin_cuadre_antiguo(_sin_aviso_ejercicios_antiguo(
-            registro["aviso"]))
-        registro["aviso"] = aviso_guardado
-        if aviso_guardado:
-            msgs.append(aviso_guardado)
-            if estado == OK:
-                estado = REVISAR
-        aviso_tipo = self._aviso_tipo(r)
-        if aviso_tipo:
-            anadir(aviso_tipo)
-        aviso_irpf = self._aviso_irpf_transportista(r, f)
-        if aviso_irpf:
-            anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
-        for texto in pasada["errores_documento"].get(r, []):
-            anadir(texto, gravedad=ERROR)
-        lado = "gasto" if pasada["tipos"][r] == "gasto" else "ingreso"
-        if f.concepto and not any(
-                c == str(f.concepto).strip() and (not f.subclave or g == f.subclave)
-                for c, g in pasada["catalogo"][lado]):
-            anadir(f"La cuenta {f.concepto} ({f.subclave or 'sin subclave'}) "
-                   f"no corresponde a {lado}. Compruebe cuenta y contraparte.",
-                   "concepto", "subclave", gravedad=ERROR)
-        if r in self._duplicados:
-            # Rojo, no ambar: importar dos veces la misma factura la paga dos
-            # veces. Que obligue a decidir, no que se quede en "ya lo miraré".
-            anadir(f"FACTURA DUPLICADA: es la misma que la línea "
-                   f"{self._duplicados[r] + 1} del lote (mismo nº, NIF, "
-                   f"base y tipo de IVA). Bórrala o quedará registrada dos veces.",
-                   "num_factura", gravedad=ERROR)
-        aviso_periodo = self._aviso_periodo(f)
-        if aviso_periodo:
-            anadir(aviso_periodo, "fecha")
-        aviso_ejercicio = self._aviso_ejercicio(f)
-        if aviso_ejercicio:
-            # Igual que un duplicado: no se puede confirmar para ocultarlo,
-            # porque exportarlo llevaría el apunte al ejercicio equivocado.
-            anadir(aviso_ejercicio, "fecha", gravedad=ERROR)
-        # Se guarda el estado SIN el aviso de «ya exportada»: la exportación
-        # trata esas filas aparte y pregunta qué hacer con ellas.
-        registro["estado_base"] = estado
-        ya = pasada["exportadas"].get(r)
-        registro["ya_exportada"] = ya
-        if ya:
-            anadir(historial.texto_aviso(ya), "num_factura")
-        confirmada = (estado == REVISAR and f.revision_confirmada
-                      and not f.tratamiento_manual)
-        if confirmada:
-            msgs.append("Revisada y confirmada manualmente")
-        registro["estado"] = estado
-        registro["mensajes"] = msgs
-        celda = self.tabla.item(r, C_ESTADO)
-        self.tabla.blockSignals(True)
-        texto, color, fondo = self._presentacion_estado(estado, f, confirmada)
-        celda.setText(texto)
-        celda.setForeground(color)
-        celda.setBackground(QColor(fondo))
-        fuente_estado = celda.font()
-        fuente_estado.setBold(True)
-        celda.setFont(fuente_estado)
-        celda.setToolTip(_ayuda_estado(estado, msgs) if msgs else
-                         ("Verificada: las dos lecturas coinciden y todo cuadra"
-                          if texto == ICONO_ESTADO[OK] else
-                          "Todo cuadra, pero solo la ha leído un modelo"))
-        self._resaltar_campos_incidencia(r, estado, msgs)
-        self.tabla.blockSignals(False)
-        if not getattr(self, "_pasada", None):
-            self._resumen()
-
-    @staticmethod
-    def _presentacion_estado(estado, f: Factura, confirmada: bool):
-        """(texto, color, fondo) de la casilla de estado."""
-        if f.tratamiento_manual:
-            return ICONO_MANUAL, COLOR_MANUAL, FONDO_ESTADO["manual"]
-        if confirmada:
-            return ICONO_REVISADO, COLOR_REVISADO, FONDO_ESTADO["revisada"]
-        if estado == OK and getattr(f, "verificacion", "") != "doble":
-            return (ICONO_SIN_VERIFICAR, COLOR_SIN_VERIFICAR,
-                    FONDO_ESTADO["sin_verificar"])
-        return ICONO_ESTADO[estado], COLOR_ESTADO[estado], FONDO_ESTADO[estado]
-
-    def _preparar_pasada(self) -> dict:
-        """Lo que comparten todas las filas en una revalidación.
-
-        Antes cada fila volvía a recorrer el lote entero (su bloque, los
-        datos leídos, el catálogo) y rehacía el resumen: con 300 líneas cada
-        corrección tardaba 6 segundos. Ahora se calcula una sola vez.
-        """
-        n = self.tabla.rowCount()
-        facturas = [self._leer_fila(r) for r in range(n)]
-        tipos = [self._tipo_fila(r) for r in range(n)]
-        por_bloque = {}
-        for r in range(n):
-            bloque = self.filas[r]["bloque"]
-            por_bloque.setdefault(bloque, Counter())[tipos[r]] += 1
-        cliente_nif = getattr(self, "_cliente_nif", "")
-        cliente_nombre = getattr(self, "_cliente_nombre", "")
-        exportadas = {}
-        for r in range(n):
-            info = historial.buscar(cliente_nif, facturas[r], tipos[r],
-                                    cliente_nombre)
-            if info:
-                exportadas[r] = info
-        return {
-            "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
-            "transportista": self._cliente_es_transportista(),
-            "catalogo": {lado: {(c, g) for c, g, _ in catalogo(lado)}
-                         for lado in ("gasto", "ingreso")},
-            "errores_documento": getattr(self, "_errores_documento", {}),
-            "exportadas": exportadas,
-        }
-
-    @staticmethod
-    def _clave_factura_para_ejercicio(f: Factura, fila: int) -> tuple:
-        """Una factura con varias líneas de IVA cuenta una sola vez."""
-        numero = re.sub(r"\s+", "", str(f.num_factura or "")).upper()
-        nif = normaliza_nif(f.nif)
-        fecha = fecha_de(f.fecha)
-        if numero:
-            return (str(f.origen_imagen or ""), numero, nif,
-                    fecha.isoformat() if fecha else str(f.fecha or ""))
-        # Sin número no es seguro unir dos documentos distintos.
-        return ("fila", fila)
-
-    def _calcular_ejercicio_lote(self):
-        """Ejercicio de trabajo: el más frecuente, contando facturas únicas."""
-        ejercicios = []
-        vistas = set()
-        for r in range(self.tabla.rowCount()):
-            f = self._leer_fila(r)
-            clave = self._clave_factura_para_ejercicio(f, r)
-            if clave in vistas:
-                continue
-            vistas.add(clave)
-            fecha = fecha_de(f.fecha)
-            if fecha:
-                ejercicios.append(fecha.year)
-        return (Counter(ejercicios).most_common(1)[0][0]
-                if ejercicios else None)
-
-    def _aviso_ejercicio(self, f: Factura) -> str:
-        fecha = fecha_de(f.fecha)
-        ejercicio = getattr(self, "_ejercicio_lote", None)
-        if not fecha or not ejercicio or fecha.year == ejercicio:
-            return ""
-        return (f"AÑO DISTINTO: la fecha leída es {f.fecha} (año {fecha.year}), "
-                f"pero el ejercicio del lote es {ejercicio}. Corrija la fecha "
-                "o compruebe si esta factura pertenece al lote.")
-
-    def _aviso_periodo(self, f: Factura) -> str:
-        periodo = getattr(self, "_periodo_lote", PeriodoLote())
-        fecha = fecha_de(f.fecha)
-        if not fecha or not periodo.es_trimestre \
-                or fecha.year != periodo.ejercicio or periodo.contiene(f):
-            return ""
-        return (
-            f"FUERA DEL TRIMESTRE: la fecha {f.fecha} no pertenece a "
-            f"{periodo.etiqueta}. Se puede registrar después de comprobarla, "
-            "pero queda fuera del total de ese periodo."
-        )
-
-    def _resaltar_campos_incidencia(self, fila: int, estado: str,
-                                    mensajes) -> None:
-        """Colorea el dato concreto que explica el semáforo de la fila."""
-        columnas = (C_CUENTA, C_GXX, C_FECHA, C_NUM, C_NOMBRE, C_NIF,
-                    C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE,
-                    C_CUOTA_RE, C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF,
-                    C_TOTAL)
-        for columna in columnas:
-            item = self.tabla.item(fila, columna)
-            if not item:
-                continue
-            # QColor() se veía negro en algunos estilos de Windows. El rol
-            # vacío permite que Qt vuelva a pintar el fondo normal/alterno y
-            # el color de texto definido por el tema.
-            item.setData(Qt.BackgroundRole, None)
-            item.setData(Qt.ForegroundRole, None)
-            fuente = item.font()
-            fuente.setBold(False)
-            item.setFont(fuente)
-            # Se conservan las ayudas permanentes de cuenta, GXX y suplido.
-            if columna not in (C_CUENTA, C_GXX) and not (
-                    columna == C_BASE and getattr(
-                        self.filas[fila]["factura"], "es_suplido", False)):
-                item.setToolTip("")
-
-        por_columna = {}
-        graves = set()
-
-        def marcar(columna, mensaje, gravedad=None):
-            por_columna.setdefault(columna, []).append(mensaje)
-            if (gravedad or estado) == ERROR:
-                graves.add(columna)
-
-        for mensaje in mensajes:
-            campos = getattr(mensaje, "campos", None)
-            if campos is not None:
-                # Aviso con su dato: se colorea exactamente esa celda.
-                for campo in campos:
-                    columna = COLUMNA_DE_CAMPO.get(campo)
-                    if columna is not None:
-                        marcar(columna, str(mensaje), mensaje.gravedad)
-                continue
-            # Avisos guardados como texto (lecturas y sesiones anteriores).
-            texto = str(mensaje)
-            bajo = texto.lower()
-            if "año distinto" in bajo or "fuera del trimestre" in bajo:
-                marcar(C_FECHA, texto)
-            if "factura duplicada" in bajo:
-                marcar(C_NUM, texto)
-            if "nif" in bajo and ("copiado" in bajo or "memoria" in bajo
-                                  or "guardado" in bajo):
-                marcar(C_NIF, texto, REVISAR)
-            if "cuenta " in bajo and ("propuesta" in bajo or "descarte" in bajo
-                                      or "subclave" in bajo):
-                marcar(C_CUENTA, texto, REVISAR)
-            if "el total no cuadra" in bajo or "el signo no cuadra" in bajo:
-                marcar(C_TOTAL, texto)
-
-        for columna, detalles in por_columna.items():
-            item = self.tabla.item(fila, columna)
-            if not item:
-                continue
-            grave = columna in graves
-            item.setBackground(QColor("#ffcdd2" if grave else "#fff3cd"))
-            item.setForeground(QColor("#7f0000" if grave else "#6b4f00"))
-            fuente = item.font()
-            fuente.setBold(True)
-            item.setFont(fuente)
-            ayuda_anterior = item.toolTip().strip()
-            ayuda = "\n".join(dict.fromkeys(detalles))
-            item.setToolTip(
-                f"{ayuda_anterior}\n\n{ayuda}" if ayuda_anterior else ayuda)
-
-    def _aviso_tipo(self, r) -> str:
-        """Comprueba por dos vias que la fila esta bien clasificada.
-
-        Gasto o ingreso se decide por el NIF del cliente, que es lo fiable,
-        pero si el NIF viene mal leido la factura se va al lado contrario sin
-        que nadie se entere. Se contrasta con lo que dijo el usuario al
-        escanear el taco y con lo que hace el resto de su bloque.
-        """
-        if r >= len(self.filas):
-            return ""
-        tipo = self._tipo_fila(r)
-        bloque = self.filas[r]["bloque"]
-        declarado = next((b.get("tipo_declarado", "") for b in self._bloques
-                          if b["nombre"] == bloque), "")
-        esperado = {"gastos": "gasto", "ingresos": "venta"}.get(declarado)
-        if esperado and tipo != esperado:
-            return (f"Dijo que este taco era de "
-                    f"{'GASTOS' if esperado == 'gasto' else 'INGRESOS'} y esta "
-                    f"factura sale como {'gasto' if tipo == 'gasto' else 'ingreso'}: "
-                    f"compruebe si está bien")
-        # Sin taco declarado: la que se sale de lo que hace todo su bloque.
-        pasada = getattr(self, "_pasada", None)
-        if pasada:
-            cuenta = pasada["por_bloque"].get(bloque, Counter())
-        else:
-            cuenta = Counter(self._tipo_fila(i) for i in range(len(self.filas))
-                             if self.filas[i]["bloque"] == bloque)
-        if sum(cuenta.values()) >= 5 and cuenta[tipo] == 1:
-            return ("Es la única factura de su bloque que sale como "
-                    f"{'gasto' if tipo == 'gasto' else 'ingreso'}: compruébela")
-        return ""
-
-    def _cliente_es_transportista(self) -> bool:
-        """Detecta la actividad en el nombre fiscal o comercial del emisor."""
-        nombres = [getattr(self, "_cliente_nombre", "")]
-        cliente_nif = normaliza_nif(getattr(self, "_cliente_nif", ""))
-        for bloque in self._bloques:
-            for registro in bloque.get("crudos", []):
-                if not registro or not isinstance(registro[-1], dict):
-                    continue
-                datos = registro[-1]
-                if normaliza_nif(datos.get("emisor_nif")) == cliente_nif:
-                    nombres.append(datos.get("emisor_nombre") or "")
-        return any("TRANSPORT" in str(nombre).upper() for nombre in nombres)
-
-    def _aviso_irpf_transportista(self, r: int, f: Factura) -> str:
-        """Control visible del 1% en los ingresos de transportistas."""
-        pasada = getattr(self, "_pasada", None)
-        transportista = (pasada["transportista"] if pasada
-                         else self._cliente_es_transportista())
-        if self._tipo_fila(r) != "venta" or not transportista:
-            return ""
-        if f.base_irpf is None and f.pct_irpf is None and f.cuota_irpf is None:
-            return ("INGRESO DE TRANSPORTISTA SIN IRPF: compruebe si esta "
-                    "factura debe llevar la retención del 1%.")
-        if f.pct_irpf is not None and abs(f.pct_irpf - 1.0) > 0.01:
-            return (f"IRPF DE TRANSPORTISTA: figura un {f.pct_irpf:g}% en vez "
-                    "del 1%; compruébelo.")
-        return ""
-
-    def _actualizar_columnas_recargo(self) -> None:
-        """El recargo ocupa sitio solo cuando existe en el lote visible."""
-        visible = any(
-            any(getattr(registro["factura"], campo) is not None
-                for campo in ("base_requiv", "pct_requiv", "cuota_requiv"))
-            for registro in self.filas
-        )
-        for columna in COLUMNAS_RECARGO:
-            self.tabla.setColumnHidden(columna, not visible)
-
-    def _revalidar_todo(self):
-        self._ejercicio_lote = self._calcular_ejercicio_lote()
-        self._actualizar_selector_periodo()
-        self._pasada = None
-        pasada = self._preparar_pasada()
-        self._errores_documento, self._duplicados = controles_documentos(
-            pasada["facturas"], pasada["tipos"])
-        pasada["errores_documento"] = self._errores_documento
-        self._pasada = pasada
-        try:
-            for r in range(self.tabla.rowCount()):
-                self._revalidar_fila(r)
-        finally:
-            self._pasada = None
-        self._actualizar_columnas_recargo()
-        # El resumen se rehace SIEMPRE, tambien con la tabla vacia: si no, al
-        # vaciar el lote se quedaban abajo los totales del lote anterior y
-        # parecia que no se habia borrado nada.
-        self._resumen()
-        self._pintar_alerta()
-        if hasattr(self, "combo_filtro_estado"):
-            self._aplicar_filtro()
-        self._refrescar_ficha()
-        self._pintar_lista_bloques()
-        self._timer_muestras.start()
-
-    def _pintar_alerta(self):
-        """Banner rojo arriba con las duplicadas y las sustituidas: las dos
-        acaban registrando dos veces el mismo gasto si se cuelan."""
-        avisos = []
-        for r, original in sorted(self._duplicados.items()):
-            f = self.filas[r]["factura"]
-            avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
-                          f"{f.nombre or '?'} — repetida de la línea {original + 1}.")
-        ejercicios_vistos = set()
-        for r in range(len(self.filas)):
-            f = self.filas[r]["factura"]
-            aviso = self._aviso_ejercicio(f)
-            if not aviso:
-                continue
-            clave = self._clave_factura_para_ejercicio(f, r)
-            if clave in ejercicios_vistos:
-                continue
-            ejercicios_vistos.add(clave)
-            fecha = fecha_de(f.fecha)
-            avisos.append(
-                f"Línea {r + 1}: factura {f.num_factura or '?'} de "
-                f"{f.nombre or '?'} — fecha {f.fecha} (año {fecha.year}); "
-                f"el lote es de {self._ejercicio_lote}.")
-        periodos_vistos = set()
-        for r in range(len(self.filas)):
-            f = self.filas[r]["factura"]
-            if not self._aviso_periodo(f):
-                continue
-            clave = self._clave_factura_para_ejercicio(f, r)
-            if clave in periodos_vistos:
-                continue
-            periodos_vistos.add(clave)
-            avisos.append(
-                f"Línea {r + 1}: factura {f.num_factura or '?'} de "
-                f"{f.nombre or '?'} — {f.fecha}, fuera de "
-                f"{self._periodo_lote.etiqueta}.")
-        # Una hoja que se quedo pegada en el alimentador no da ningun error:
-        # simplemente esa factura no esta. El salto de numeracion la delata.
-        avisos += huecos_de_numeracion(
-            [d["factura"] for d in self.filas],
-            [self._tipo_fila(r) for r in range(len(self.filas))],
-            getattr(self, "_cliente_nombre", ""))
-        sustituidas = [r for r in range(len(self.filas))
-                       if "SUSTITUIDA" in (self.filas[r]["aviso"] or "")]
-        for r in sustituidas:
-            f = self.filas[r]["factura"]
-            avisos.append(f"Línea {r + 1}: factura {f.num_factura or '?'} de "
-                          f"{f.nombre or '?'} — sustituida por otra del lote.")
-        if not avisos:
-            self.alerta.setVisible(False)
-            return
-        n = len(avisos)
-        self.lbl_alerta_titulo.setText(
-            f"Atención: {n} aviso{'s' if n > 1 else ''} que revisar "
-            f"antes de exportar")
-        self.lbl_alerta_texto.setText(
-            "\n".join(avisos[:2])
-            + (f"\n… y {n - 2} avisos más. Use «Ver incidencias»." if n > 2 else ""))
-        self.lbl_alerta_texto.setToolTip("\n".join(avisos))
-        self.alerta.setVisible(True)
-
-    def _resumen(self):
-        facturas = [fila["factura"] for fila in self.filas]
-        self.lbl_lote.setText(
-            f"Lote completo · {facturas_unicas(facturas)} facturas · "
-            f"{len(facturas)} líneas fiscales")
-        estados = []
-        for r in range(self.tabla.rowCount()):
-            f = self.filas[r]["factura"]
-            e = self.filas[r].get("estado", validar(f).estado)
-            estados.append(e)
-        n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
-        self._pintar_contadores()
-        self.lbl_estado.setText(
-            "Lote vacío. Cargue o escanee facturas para empezar." if not estados else
-            f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
-            f"Correctas: {estados.count(OK)} · Revisar: {estados.count(REVISAR)} · "
-            f"Errores: {estados.count(ERROR)}")
-        self._pintar_resumen()
-
-    def _pintar_contadores(self) -> None:
-        """Recuento de estados en la barra inferior, con los colores de la tabla."""
-        if not hasattr(self, "lbl_contadores"):
-            return
-        c = Counter()
-        for r, registro in enumerate(self.filas):
-            item = self.tabla.item(r, C_ESTADO)
-            if item is not None:
-                c[item.text()] += 1
-        partes = []
-        for texto, color in ((ICONO_ESTADO[OK], SUCCESS),
-                             (ICONO_SIN_VERIFICAR, "#3F5F7F"),
-                             (ICONO_REVISADO, ACCENT),
-                             (ICONO_ESTADO[REVISAR], WARNING),
-                             (ICONO_ESTADO[ERROR], DANGER),
-                             (ICONO_MANUAL, MUTED)):
-            if c[texto]:
-                partes.append(f"<span style='color:{color}; font-weight:600'>"
-                              f"{html.escape(texto)}: {c[texto]}</span>")
-        self.lbl_contadores.setText(" &nbsp;·&nbsp; ".join(partes))
-
-    def _pintar_resumen(self):
-        """Totales del taco, del periodo y de la búsqueda actualmente visible."""
-        filas_por_tipo = {"gasto": [], "venta": []}
-        for r in range(self.tabla.rowCount()):
-            filas_por_tipo[self._tipo_fila(r)].append(
-                (self.filas[r]["bloque"] or "—", self.filas[r]["factura"]))
-        # En recargo el gasto no tiene desglose de IVA: solo el total factura.
-        recargo = self._por_el_total()
-        periodo = getattr(self, "_periodo_lote", PeriodoLote())
-        filtro_activo = self._hay_filtro_activo()
-        self.lbl_resumen_titulo.setText(
-            "Comprobación de totales"
-            + (f"  ·  {periodo.etiqueta}" if periodo.ejercicio else "")
-            + ("  ·  filtro activo" if filtro_activo else "")
-            + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
-
-        lineas = []   # (bloque, tipo, Totales, es_total)
-        for tipo, etiqueta in (("gasto", "Gastos"), ("venta", "Ingresos")):
-            pares = filas_por_tipo[tipo]
-            if not pares:
-                continue
-            por_bloque = resumir_por_bloque(pares)
-            if self.accion_detalle_bloques.isChecked():
-                for nombre, t in por_bloque.items():
-                    lineas.append((nombre, etiqueta, t, False))
-            fuera_periodo = ([f for _, f in pares if not periodo.contiene(f)]
-                             if periodo.es_trimestre else [])
-            lineas.append(("TOTAL LOTE", etiqueta,
-                           resumir([f for _, f in pares]), True))
-            if fuera_periodo:
-                dentro = [f for _, f in pares if periodo.contiene(f)]
-                lineas.append((f"DENTRO {periodo.etiqueta}", etiqueta,
-                               resumir(dentro), True))
-                lineas.append((f"FUERA {periodo.etiqueta}", etiqueta,
-                               resumir(fuera_periodo), True))
-            if filtro_activo:
-                visibles = [self.filas[r]["factura"]
-                            for r in range(self.tabla.rowCount())
-                            if not self.tabla.isRowHidden(r)
-                            and self._tipo_fila(r) == tipo]
-                lineas.append(("FILTRO ACTUAL", etiqueta,
-                               resumir(visibles), True))
-        self._volcar_resumen(lineas, recargo)
-
-    def _volcar_resumen(self, lineas, recargo):
-        # Un IVA por columna, con su porcentaje en la cabecera: asi se leen los
-        # totales de cada tipo de un vistazo, en vez de todos en una celda.
-        tipos_iva = sorted({tipo for _, _, t, _ in lineas
-                            for tipo in t.iva_por_tipo})
-        self._tipos_iva_resumen = tipos_iva
-        cabeceras = _cabeceras_resumen(tipos_iva)
-        self.tabla_resumen.setColumnCount(len(cabeceras))
-        self.tabla_resumen.setHorizontalHeaderLabels(cabeceras)
-        self.tabla_resumen.setRowCount(len(lineas))
-        for r, (bloque, tipo, t, es_total) in enumerate(lineas):
-            # En recargo el gasto va por el total factura: el desglose de IVA
-            # no existe y ponerlo a 0,00 despistaria.
-            solo_total = recargo and tipo == "Gastos"
-            cuotas = ["" if solo_total or p not in t.iva_por_tipo
-                      else eur(t.iva_por_tipo[p]) for p in tipos_iva]
-            if not tipos_iva:
-                cuotas = ["" if solo_total else eur(t.iva)]
-            valores = [
-                bloque, tipo, str(t.facturas), str(t.lineas),
-                "" if solo_total else eur(t.base),
-                *cuotas,
-                eur(t.requiv) if t.tiene_requiv and not solo_total else "",
-                f"−{eur(t.irpf)}" if t.tiene_irpf else "",
-                eur(t.suplidos) if t.tiene_suplidos and not solo_total else "",
-                eur(t.total),
-            ]
-            for c, texto in enumerate(valores):
-                item = QTableWidgetItem(texto)
-                if c >= 2:
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                if es_total:
-                    fuente = item.font()
-                    fuente.setBold(True)
-                    item.setFont(fuente)
-                if bloque == "FILTRO ACTUAL":
-                    item.setBackground(QColor(ACCENT_FAINT))
-                    item.setForeground(QColor(INK))
-                self.tabla_resumen.setItem(r, c, item)
-        # Con un lote vacío no se reserva una gran tabla en blanco.
-        self._ajustar_altura_resumen()
-
-    def _copiar_resumen(self):
-        """El resumen al portapapeles, para pegarlo al comprobar los totales."""
-        filas = ["\t".join(
-            _cabeceras_resumen(getattr(self, "_tipos_iva_resumen", [])))]
-        for r in range(self.tabla_resumen.rowCount()):
-            filas.append("\t".join(
-                (self.tabla_resumen.item(r, c).text() if self.tabla_resumen.item(r, c)
-                 else "")
-                for c in range(self.tabla_resumen.columnCount())))
-        QApplication.clipboard().setText("\n".join(filas))
-        self.lbl_estado.setText("Resumen copiado al portapapeles.")
-
-    def _html_listado_totales(self) -> str:
-        """Listado fiscal legible e imprimible del lote y del filtro actual."""
-        escapar = lambda valor: html.escape(str(valor or ""))
-        cabeceras_resumen = _cabeceras_resumen(
-            getattr(self, "_tipos_iva_resumen", []))
-        filas_resumen = []
-        for r in range(self.tabla_resumen.rowCount()):
-            celdas = [
-                self.tabla_resumen.item(r, c).text()
-                if self.tabla_resumen.item(r, c) else ""
-                for c in range(self.tabla_resumen.columnCount())
-            ]
-            filas_resumen.append("<tr>" + "".join(
-                f"<td>{escapar(valor)}</td>" for valor in celdas) + "</tr>")
-
-        columnas_detalle = [
-            ("Factura", C_NUM), ("Fecha", C_FECHA), ("Nombre", C_NOMBRE),
-            ("NIF", C_NIF), ("Tipo", C_TIPO), ("Cuenta", C_CUENTA),
-            ("GXX", C_GXX), ("Base", C_BASE), ("% IVA", C_PCT),
-            ("Cuota", C_CUOTA),
-        ]
-        if not self.tabla.isColumnHidden(C_BASE_RE):
-            columnas_detalle.extend([
-                ("Base RE", C_BASE_RE), ("% RE", C_PCT_RE),
-                ("Cuota RE", C_CUOTA_RE),
-            ])
-        columnas_detalle.extend([
-            ("Base IRPF", C_BASE_IRPF), ("% IRPF", C_PCT_IRPF),
-            ("Retención", C_CUOTA_IRPF), ("Total", C_TOTAL),
-        ])
-        filas_visibles = [r for r in range(self.tabla.rowCount())
-                          if not self.tabla.isRowHidden(r)]
-        detalle = []
-        for r in filas_visibles:
-            valores = []
-            for _titulo, columna in columnas_detalle:
-                if columna == C_TIPO:
-                    valor = "Ingreso" if self._tipo_fila(r) == "venta" else "Gasto"
-                else:
-                    item = self.tabla.item(r, columna)
-                    valor = item.text() if item else ""
-                valores.append(valor)
-            detalle.append("<tr>" + "".join(
-                f"<td>{escapar(valor)}</td>" for valor in valores) + "</tr>")
-
-        cliente = escapar(getattr(self, "_cliente_nombre", "") or
-                           self.lbl_cliente.text())
-        nif = escapar(getattr(self, "_cliente_nif", ""))
-        periodo = escapar(getattr(self, "_periodo_lote", PeriodoLote()).etiqueta)
-        estilo = """
-        <style>
-          body { font-family: 'Segoe UI', Arial, sans-serif; color: #24384D; }
-          h1 { color: #326FA6; font-size: 18pt; margin-bottom: 4px; }
-          h2 { font-size: 11pt; margin: 16px 0 6px; }
-          p.meta { color: #5D7084; margin: 2px 0; }
-          table { border-collapse: collapse; width: 100%; font-size: 7.5pt; }
-          th { background: #EAF3FC; color: #24384D; font-weight: 600; }
-          th, td { border: 1px solid #DCE5F0; padding: 4px; }
-          td:not(:nth-child(1)):not(:nth-child(2)):not(:nth-child(3)) {
-            text-align: right;
-          }
-        </style>
-        """
-        return f"""<!doctype html><html><head>{estilo}</head><body>
-        <h1>Comprobación de totales</h1>
-        <p class="meta"><b>Cliente:</b> {cliente} {(' · ' + nif) if nif else ''}</p>
-        <p class="meta"><b>Periodo:</b> {periodo or 'Sin periodo detectado'} ·
-        <b>Fecha:</b> {date.today().strftime('%d/%m/%Y')}</p>
-        <h2>Resumen del lote y del filtro</h2>
-        <table><thead><tr>{''.join(f'<th>{escapar(c)}</th>' for c in cabeceras_resumen)}</tr></thead>
-        <tbody>{''.join(filas_resumen)}</tbody></table>
-        <h2>Facturas mostradas ({len(filas_visibles)})</h2>
-        <table><thead><tr>{''.join(f'<th>{escapar(t)}</th>' for t, _ in columnas_detalle)}</tr></thead>
-        <tbody>{''.join(detalle)}</tbody></table>
-        </body></html>"""
-
-    def _guardar_listado_totales(self) -> None:
-        if not self.tabla.rowCount():
-            self._avisar("No hay facturas para incluir en el listado.", AVISO)
-            return
-        cliente = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", (
-            getattr(self, "_cliente_nombre", "") or "CLIENTE")).strip()
-        sugerido = os.path.join(
-            ESCRITORIO, f"COMPROBACION TOTALES {cliente or 'CLIENTE'}.pdf")
-        ruta, _ = QFileDialog.getSaveFileName(
-            self, "Guardar listado de comprobación", sugerido,
-            "Documento PDF (*.pdf)")
-        if not ruta:
-            return
-        if not ruta.lower().endswith(".pdf"):
-            ruta += ".pdf"
-        documento = QTextDocument(self)
-        documento.setHtml(self._html_listado_totales())
-        escritor = QPdfWriter(ruta)
-        escritor.setResolution(150)
-        escritor.setPageSize(QPageSize(QPageSize.A4))
-        escritor.setPageOrientation(QPageLayout.Landscape)
-        documento.print_(escritor)
-        self.lbl_estado.setText(f"Listado de comprobación guardado: {ruta}")
-
-    # ---------- miniatura ----------
-    def _limpiar_visor(self) -> None:
-        self._pixmap_documento = QPixmap()
-        self._zoom_visor = 1.0
-        self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
-        self.lbl_pagina.clear()
-        self.lbl_img.clear()
-        self.lbl_img.setMinimumSize(250, 180)
-        self.lbl_img.setText(
-            "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
-
-    def _pintar_pixmap_visor(self) -> None:
-        if self._pixmap_documento.isNull():
-            return
-        viewport = self.visor_scroll.viewport().size()
-        ancho = max(250, int(viewport.width() * self._zoom_visor))
-        alto = max(180, int(viewport.height() * self._zoom_visor))
-        self.lbl_img.setMinimumSize(ancho, alto)
-        self.lbl_img.setPixmap(self._pixmap_documento.scaled(
-            ancho, alto, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-    def _cambiar_zoom_visor(self, incremento: float) -> None:
-        if self._pixmap_documento.isNull():
-            return
-        self._zoom_visor = min(2.5, max(0.7, self._zoom_visor + incremento))
-        self._pintar_pixmap_visor()
-
-    def _mostrar_miniatura(self):
-        r = self.tabla.currentRow()
-        self._refrescar_ficha()
-        if r < 0 or r >= len(self.filas):
-            self._limpiar_visor()
-            return
-        png = self.filas[r]["png"]
-        factura = self.filas[r]["factura"]
-        origen = os.path.basename(factura.origen_imagen or "")
-        self.lbl_origen.setText(origen or "Documento cargado")
-        self.lbl_pagina.setText("1 / 1")
-        pix = QPixmap()
-        pix.loadFromData(png)
-        if not pix.isNull():
-            self._pixmap_documento = pix
-            self._pintar_pixmap_visor()
-        else:
-            self._limpiar_visor()
-            self.lbl_origen.setText(origen or "Documento cargado")
-            self.lbl_img.setText("Vista previa no disponible para esta factura")
-
-    # ---------- ficha de la factura ----------
-    def _filas_del_documento(self, fila: int) -> list[int]:
-        clave = clave_documento(self.filas[fila]["factura"])
-        return [r for r in range(len(self.filas))
-                if clave_documento(self.filas[r]["factura"]) == clave]
-
-    def _datos_ficha(self, fila: int) -> dict:
-        """Lo que enseña la ficha, a partir de la fila y de sus avisos."""
-        from facturas_excel.doble_lectura import _fmt as fmt_lectura
-        registro = self.filas[fila]
-        f = registro["factura"]
-        tipo = self._tipo_fila(fila)
-        estado = registro.get("estado", OK)
-        confirmada = (estado == REVISAR and f.revision_confirmada
-                      and not f.tratamiento_manual)
-        de_linea = {"base_iva", "pct_iva", "cuota_iva", "base_requiv",
-                    "pct_requiv", "cuota_requiv"}
-
-        def repartir(mensajes):
-            marcas, linea, otros = {}, [], []
-            for m in mensajes:
-                campos = getattr(m, "campos", None) or ()
-                gravedad = getattr(m, "gravedad", REVISAR)
-                texto = str(m)
-                if texto == "Revisada y confirmada manualmente":
-                    continue
-                destino = [c for c in campos if c not in ("total_impreso",)]
-                if not destino:
-                    otros.append((gravedad, texto))
-                    continue
-                for campo in destino:
-                    if campo in de_linea:
-                        linea.append((gravedad, texto))
-                    else:
-                        clave = "concepto" if campo == "subclave" else campo
-                        marcas.setdefault(clave, []).append((gravedad, texto))
-            return marcas, linea, otros
-
-        marcas, _linea, otros = repartir(registro.get("mensajes") or [])
-        filas_doc = self._filas_del_documento(fila)
-        lineas = []
-        vistos = set()
-        for r in filas_doc:
-            g = self.filas[r]["factura"]
-            _m, marcas_linea, _o = repartir(self.filas[r].get("mensajes") or [])
-            marcas_linea = [x for x in marcas_linea if x not in vistos]
-            vistos.update(marcas_linea)
-            lineas.append({"base": g.base_iva, "pct": g.pct_iva,
-                           "cuota": g.cuota_iva, "pct_re": g.pct_requiv,
-                           "cuota_re": g.cuota_requiv,
-                           "suplido": getattr(g, "es_suplido", False),
-                           "marcas": marcas_linea})
-        docs = [self.filas[r]["factura"] for r in filas_doc]
-        irpf = next((g.cuota_irpf for g in docs if g.cuota_irpf is not None), None)
-        partes = []
-        calculado = 0.0
-        for g in docs:
-            for valor in (g.base_iva, g.cuota_iva, g.cuota_requiv, g.suplidos):
-                if valor is not None:
-                    calculado += valor
-                    partes.append(eur(valor).replace(" €", ""))
-        if irpf:
-            calculado -= irpf
-        formula = " + ".join(partes) + (f" − {eur(irpf).replace(' €', '')}"
-                                         if irpf else "")
-        impreso = f.total_impreso
-        cuadre = {"formula": formula or "—", "calculado": round(calculado, 2),
-                  "impreso": impreso,
-                  "ok": impreso is not None and abs(round(calculado, 2) - impreso) <= 0.02
-                  } if partes else None
-        # Las diferencias de la doble lectura tienen su propio recuadro.
-        otros = [x for x in otros if not x[1].startswith("Doble lectura")]
-        if impreso is not None and cuadre and not cuadre["ok"]:
-            otros = [x for x in otros if "total no cuadra" not in x[1].lower()]
-        discrepancias = []
-        for d in getattr(f, "discrepancias", ()) or ():
-            aplicable = d.get("campo_factura") in COLUMNA_DE_CAMPO
-            if d.get("campo") == "lineas_iva":
-                l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
-                aplicable = len(l2) == 1 and len(filas_doc) == 1
-            discrepancias.append(dict(d, aplicable=aplicable, textos=(
-                fmt_lectura(d.get("valor_1")), fmt_lectura(d.get("valor_2")))))
-        verificacion = getattr(f, "verificacion", "")
-        if verificacion == "doble":
-            lectura = ("Leída por dos modelos: coinciden en todo."
-                       if not discrepancias else
-                       f"Leída por dos modelos: {len(discrepancias)} dato(s) no "
-                       "coinciden. Elija el bueno mirando el documento.")
-        elif verificacion == "simple":
-            lectura = "Leída por un solo modelo: sin contrastar con otra lectura."
-        else:
-            lectura = "Lectura anterior a la doble lectura (sin contrastar)."
-        cuenta = f.concepto or ""
-        if f.subclave:
-            cuenta += f" ({f.subclave})"
-        descripcion = descripcion_de(f.concepto, f.subclave) if f.concepto else ""
-        if descripcion:
-            cuenta += f" · {descripcion}"
-        return {
-            "fila": fila,
-            "estado": self._presentacion_estado(estado, f, confirmada),
-            "titulo": f"Línea {fila + 1} · {f.num_factura or 'sin nº'}",
-            "rol": "Proveedor" if tipo == "gasto" else "Cliente",
-            "nombre": f.nombre or "", "nif": f.nif or "",
-            "num": f.num_factura or "", "fecha": f.fecha or "",
-            "lineas": lineas, "irpf": irpf, "cuadre": cuadre,
-            "tipo": "Gasto (factura recibida)" if tipo == "gasto"
-                    else "Ingreso (factura emitida)",
-            "cuenta": cuenta, "marcas": marcas, "otros_motivos": otros,
-            "lectura": lectura, "doble": verificacion == "doble",
-            "discrepancias": discrepancias,
-        }
 
     def _pintar_lista_bloques(self) -> None:
         """Cada bloque con sus facturas y lo que queda por revisar."""
@@ -4204,91 +1863,6 @@ class VentanaPrincipal(QMainWindow):
         if indice >= 0 and indice != self.combo_filtro_bloque.currentIndex():
             self.combo_filtro_bloque.setCurrentIndex(indice)
 
-    def _refrescar_ficha(self) -> None:
-        if not hasattr(self, "ficha"):
-            return
-        r = self.tabla.currentRow()
-        if r < 0 or r >= len(self.filas) or self.tabla.isRowHidden(r):
-            self.ficha.vacio()
-            return
-        self.ficha.mostrar(self._datos_ficha(r))
-
-    def _resolver_discrepancia(self, fila: int, indice: int, lectura: int) -> None:
-        """Se queda con una de las dos lecturas de un dato en disputa."""
-        if fila >= len(self.filas):
-            return
-        f = self.filas[fila]["factura"]
-        discrepancias = list(getattr(f, "discrepancias", ()) or ())
-        if indice >= len(discrepancias):
-            return
-        d = discrepancias[indice]
-        filas_doc = self._filas_del_documento(fila)
-        if lectura == 2:
-            self.tabla.blockSignals(True)
-            try:
-                if d.get("campo") == "lineas_iva":
-                    linea = next(x for x in d.get("lineas_2") or []
-                                 if isinstance(x, dict))
-                    from facturas_excel.extraccion import _num
-                    for columna, clave in ((C_BASE, "base"), (C_PCT, "tipo_iva"),
-                                           (C_CUOTA, "cuota_iva"),
-                                           (C_PCT_RE, "pct_requiv"),
-                                           (C_CUOTA_RE, "cuota_requiv")):
-                        self.tabla.item(fila, columna).setText(
-                            fmt(_num(linea.get(clave))))
-                else:
-                    columna = COLUMNA_DE_CAMPO[d["campo_factura"]]
-                    valor = d.get("valor_2")
-                    if columna in (C_TOTAL, C_CUOTA_IRPF):
-                        from facturas_excel.extraccion import _num
-                        texto = fmt(_num(valor))
-                    elif columna == C_NIF:
-                        texto = normaliza_nif(valor)
-                    else:
-                        texto = "" if valor is None else str(valor)
-                    for r in filas_doc:
-                        self.tabla.item(r, columna).setText(texto)
-            finally:
-                self.tabla.blockSignals(False)
-            self._invalidar_contraste_registro()
-            self._invalidar_revision_documento(fila)
-            if d.get("campo_factura") == "nif":
-                self._nif_escrito_a_mano(fila)
-        campo = d.get("campo")
-        for r in filas_doc:
-            registro = self.filas[r]
-            for factura in [registro["factura"], *registro.get("fuentes", [])]:
-                factura.discrepancias = tuple(
-                    x for x in (getattr(factura, "discrepancias", ()) or ())
-                    if x.get("campo") != campo)
-        self._revalidar_todo()
-        elegido = (d.get(f"modelo_{lectura}") or f"lectura {lectura}")
-        self._avisar(f"{d.get('etiqueta')}: se queda el valor de {elegido}.",
-                     EXITO)
-
-    def _abrir_vista_previa(self):
-        """Muestra la página seleccionada grande y con barras de desplazamiento."""
-        if self._pixmap_documento.isNull():
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle(self.lbl_origen.text() or "Documento original")
-        dlg.setModal(True)
-        layout = QVBoxLayout(dlg)
-        scroll = QScrollArea(dlg)
-        scroll.setWidgetResizable(False)
-        imagen = QLabel()
-        imagen.setAlignment(Qt.AlignCenter)
-        imagen.setPixmap(self._pixmap_documento)
-        imagen.resize(self._pixmap_documento.size())
-        scroll.setWidget(imagen)
-        layout.addWidget(scroll, 1)
-        cerrar = QPushButton("Cerrar")
-        cerrar.clicked.connect(dlg.accept)
-        layout.addWidget(cerrar, 0, Qt.AlignRight)
-        pantalla = QApplication.primaryScreen().availableGeometry()
-        dlg.resize(int(pantalla.width() * 0.9), int(pantalla.height() * 0.9))
-        dlg.exec()
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         ancho = event.size().width()
@@ -4302,309 +1876,6 @@ class VentanaPrincipal(QMainWindow):
             self._mostrar_miniatura()
 
     # ---------- exportar ----------
-    def _para_aplifisa(self, facturas):
-        """Traduce el concepto al texto que Aplifisa tiene parametrizado.
-
-        Con el texto, el apunte entra con su cuenta Y su subclave puestas, que
-        es lo unico que evita tener que elegir el GXX a mano en cada proveedor
-        nuevo. Si no esta configurado, se exporta el codigo de siempre.
-        """
-        if not ajustes.leer("concepto_texto", False):
-            return facturas
-        traducidas = []
-        for f in facturas:
-            texto = texto_para(f.concepto, f.subclave)
-            traducidas.append(replace(f, concepto=texto) if texto else f)
-        return traducidas
-
-    def _clasificar_exportacion(self):
-        """Separa lo exportable, lo manual y lo que todavía bloquea el lote."""
-        por_tipo = {"gasto": [], "venta": []}
-        excluidas = []
-        errores = []
-        pendientes_revision = []
-        self._ya_exportadas_export = []
-        for fila in range(self.tabla.rowCount()):
-            f = self._leer_fila(fila)
-            registro = self.filas[fila]
-            # El aviso de «ya exportada» no cuenta aquí: se decide aparte.
-            estado = registro.get("estado_base", registro.get("estado"))
-            if getattr(self, "_errores_documento", {}).get(fila) and not f.tratamiento_manual:
-                errores.append(fila)
-            elif fila in self._duplicados:
-                excluidas.append((fila, "duplicada"))
-            elif f.tratamiento_manual:
-                excluidas.append((fila, f.tratamiento_manual))
-            elif estado == ERROR:
-                errores.append(fila)
-            elif estado == REVISAR and not f.revision_confirmada:
-                pendientes_revision.append(fila)
-            else:
-                if registro.get("ya_exportada"):
-                    self._ya_exportadas_export.append((fila, f))
-                por_tipo[self._tipo_fila(fila)].append(f)
-        return por_tipo, excluidas, errores, pendientes_revision
-
-    def _archivar_exportacion(self, exportadas, rutas_por_tipo,
-                              apartadas=None) -> str:
-        """Copia el Excel al archivo del cliente y pone al día su expediente.
-
-        Así el expediente de cada cliente y ejercicio se mantiene solo, sin
-        tener que acordarse. Si algo falla, la exportación sigue siendo buena:
-        solo se avisa.
-        """
-        from facturas_excel import expediente
-        nif = getattr(self, "_cliente_nif", "")
-        nombre = getattr(self, "_cliente_nombre", "")
-        if not nombre:
-            return ""
-        from facturas_excel import separar
-        base = archivo.carpeta_escaneos()
-        afectados = set()
-        avisos = []
-        # Una factura, un PDF: el taco escaneado se parte ahora que cada
-        # factura está revisada, y el original se aparta intacto.
-        try:
-            documentos = {t: list(exportadas.get(t, [])) + list((apartadas or {}).get(t, []))
-                          for t in set(exportadas) | set(apartadas or {})}
-            partido = separar.separar(documentos, base, nombre, nif)
-        except Exception as error:  # nunca debe estropear la exportación
-            partido = None
-            avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
-        if partido:
-            for viejo, nuevo in partido["tacos"].items():
-                self._cambiar_origen(viejo, nuevo)
-            afectados.update((nombre, nif, e) for e in partido["afectados"])
-            if partido["creados"]:
-                avisos.append(f"{len(partido['creados'])} factura(s) guardadas "
-                              "en su propio PDF en el archivo del cliente.")
-            if partido["sin_paginas"]:
-                avisos.append(
-                    f"{len(partido['sin_paginas'])} factura(s) sin PDF propio "
-                    "(no se encontró su documento original): siguen dentro "
-                    "del taco.")
-        try:
-            for tipo, facturas in exportadas.items():
-                ejercicio = self._ejercicio_exportacion(facturas)
-                expediente.guardar_excel_exportado(
-                    base, rutas_por_tipo[tipo], nombre, nif, ejercicio, tipo)
-                afectados.add((nombre, nif, ejercicio))
-        except (OSError, ValueError) as error:
-            avisos.append(f"No se pudo guardar la copia del Excel en el archivo: {error}")
-        hechos = self._actualizar_expedientes(sorted(afectados))
-        if hechos:
-            avisos.append(f"Expediente del cliente actualizado ({hechos}).")
-        return "".join(f"\n{a}" for a in avisos)
-
-    def _cambiar_origen(self, viejo: str, nuevo: str) -> None:
-        """El taco se ha apartado en «Tacos escaneados»: que todo lo sepa."""
-        def mismo(ruta):
-            return ruta and os.path.normcase(os.path.abspath(ruta)) == \
-                os.path.normcase(os.path.abspath(viejo))
-
-        def cambiar(f):
-            if mismo(f.origen_imagen):
-                f.origen_imagen = nuevo
-            if getattr(f, "paginas_documento", ()):
-                f.paginas_documento = tuple(
-                    (nuevo if mismo(o) else o, p) for o, p in f.paginas_documento)
-
-        for bloque in self._bloques:
-            if mismo(bloque.get("original")):
-                bloque["original"] = nuevo
-            bloque["crudos"] = [(img, nuevo if mismo(o) else o, p, d)
-                                for img, o, p, d in bloque.get("crudos", [])]
-            for _img, pr in bloque.get("procesadas", []):
-                if mismo(pr.origen):
-                    pr.origen = nuevo
-                for f in pr.facturas:
-                    cambiar(f)
-        for registro in self.filas:
-            cambiar(registro["factura"])
-            for f in registro.get("fuentes", []):
-                cambiar(f)
-
-    def _decidir_ya_exportadas(self, por_tipo) -> bool:
-        """Pregunta qué hacer con las facturas que ya salieron en otro lote.
-
-        Devuelve False si se cancela la exportación. Por defecto se QUITAN:
-        volver a importarlas las registraría dos veces.
-        """
-        ya = getattr(self, "_ya_exportadas_export", [])
-        if not ya:
-            return True
-        lineas = "\n".join(
-            f"  · Línea {fila + 1}: {f.num_factura or 's/n'} de "
-            f"{f.nombre or '?'} — exportada el "
-            f"{self.filas[fila]['ya_exportada'].get('exportada', '?')}"
-            for fila, f in ya[:8])
-        if len(ya) > 8:
-            lineas += f"\n  · … y {len(ya) - 8} más"
-        caja = QMessageBox(self)
-        caja.setIcon(QMessageBox.Warning)
-        caja.setWindowTitle("Facturas ya exportadas")
-        caja.setText(f"{len(ya)} línea(s) ya salieron hacia Aplifisa en otro "
-                     "lote. Si se vuelven a importar, quedarán registradas "
-                     "dos veces.")
-        caja.setInformativeText(lineas)
-        quitar = caja.addButton("Exportar sin ellas", QMessageBox.AcceptRole)
-        incluir = caja.addButton("Incluirlas otra vez", QMessageBox.DestructiveRole)
-        caja.addButton("Cancelar", QMessageBox.RejectRole)
-        caja.setDefaultButton(quitar)
-        caja.exec()
-        pulsado = caja.clickedButton()
-        if pulsado is quitar:
-            fuera = {id(f) for _fila, f in ya}
-            for tipo in por_tipo:
-                por_tipo[tipo] = [f for f in por_tipo[tipo] if id(f) not in fuera]
-            return True
-        return pulsado is incluir
-
-    def _nombre_cliente_archivo(self) -> str:
-        nombre = (getattr(self, "_cliente_nombre", "") or
-                  next((b.get("cliente", "") for b in self._bloques
-                        if b.get("cliente")), "") or "Cliente")
-        return escaner.sanear(nombre)
-
-    @staticmethod
-    def _ejercicio_exportacion(facturas) -> int:
-        """Ejercicio predominante del lote para ordenar su documentación."""
-        ejercicios = []
-        for factura in facturas:
-            fecha = fecha_de(factura.fecha)
-            if fecha:
-                ejercicios.append(fecha.year)
-        return (Counter(ejercicios).most_common(1)[0][0]
-                if ejercicios else date.today().year)
-
-    def _exportar_todo(self):
-        """Genera en una sola operación los Excel de gastos e ingresos."""
-        self._revalidar_todo()
-        self._guardar_muestra_revision()
-        clientes = {b.get("nif") or b.get("cliente") for b in self._bloques
-                    if b.get("nif") or b.get("cliente")}
-        if len(clientes) > 1:
-            QMessageBox.critical(
-                self, "Hay varios clientes",
-                "No se puede crear un Excel con bloques de clientes distintos. "
-                "Quite el bloque incorrecto o pulse «Vaciar todo» para empezar "
-                "con otro cliente.")
-            return
-        por_tipo, excluidas, errores, pendientes_revision = \
-            self._clasificar_exportacion()
-
-        if errores or pendientes_revision:
-            partes = []
-            if errores:
-                partes.append(f"{len(errores)} línea(s) roja(s) con errores")
-            if pendientes_revision:
-                partes.append(
-                    f"{len(pendientes_revision)} línea(s) ámbar sin confirmar")
-            QMessageBox.warning(
-                self, "Revisión pendiente",
-                "No se ha exportado nada. Corrija los errores y marque como "
-                "revisados los avisos comprobados:\n\n  · "
-                + "\n  · ".join(partes))
-            self._siguiente_incidencia()
-            return
-        if not self._decidir_ya_exportadas(por_tipo):
-            return
-        if not any(por_tipo.values()):
-            self._avisar(
-                "No hay facturas para exportar automáticamente. "
-                f"Se han apartado {len(excluidas)} línea(s) para gestión "
-                "manual o ya exportadas.", INFO)
-            return
-
-        # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
-        # asi que este orden es el que tendran en el registro.
-        dialogo_orden = DialogoOrden(self)
-        if dialogo_orden.exec() != QDialog.Accepted:
-            return
-        dialogo_orden.recordar()
-        orden = dialogo_orden.orden()
-        for tipo in por_tipo:
-            por_tipo[tipo] = ordenar_para_exportar(por_tipo[tipo], orden)
-        problemas_export = []      # lo que no cuadre entre archivo y pantalla
-        resumen_archivos = []      # (ruta, lineas, totales) para enseñarlo
-        tipos_exportados = []      # los parciales se borran solo tras verificar
-        rutas_por_tipo = {}
-        cliente_archivo = self._nombre_cliente_archivo()
-        for tipo, xml in (
-            ("gasto", "gastos.xml"),
-            ("venta", "ingresos.xml"),
-        ):
-            if not por_tipo[tipo]:
-                continue
-            ejercicio = self._ejercicio_exportacion(por_tipo[tipo])
-            ruta = archivo.ruta_excel_consolidado(
-                cliente_archivo, ejercicio, tipo)
-            nombre = os.path.basename(ruta)
-            config = leer_config(ruta_config(xml))
-            listas = self._para_aplifisa(por_tipo[tipo])
-            exportar_excel(listas, config, ruta)
-            # DOBLE CONTRASTE: se vuelve a leer el archivo escrito y se compara
-            # con lo que hay en pantalla. Es el ultimo paso antes de que los
-            # apuntes entren en la contabilidad, y era el unico sin comprobar.
-            fallos = verificar_excel(listas, config, ruta)
-            problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
-            resumen_archivos.append(
-                (ruta, len(listas), totales_del_excel(config, ruta)))
-            tipos_exportados.append(tipo)
-            rutas_por_tipo[tipo] = ruta
-
-        if problemas_export:
-            QMessageBox.critical(
-                self, "El archivo NO coincide con la pantalla",
-                "Al volver a leer lo escrito, esto no cuadra:\n\n  · "
-                + "\n  · ".join(problemas_export)
-                + "\n\nNO importe estos archivos en Aplifisa sin revisarlos.")
-            return
-
-        temporales_eliminados = sum(
-            len(archivo.eliminar_excel_temporales(cliente_archivo, tipo))
-            for tipo in tipos_exportados
-        )
-        # Solo con el Excel ya verificado: se recuerda lo exportado (para
-        # avisar si vuelve a aparecer) y se aprenden sus NIF, ya revisados.
-        exportadas = {t: por_tipo[t] for t in tipos_exportados}
-        historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
-                            rutas_por_tipo, getattr(self, "_cliente_nombre", ""))
-        # Las apartadas para gestión manual (bien de inversión, suplidos…)
-        # no van al Excel, pero son documentación del cliente: también tienen
-        # su PDF. Los duplicados y las sustituidas, no.
-        apartadas = {"gasto": [], "venta": []}
-        for fila, motivo in excluidas:
-            if motivo == "duplicada" or str(motivo).startswith("Sustituida"):
-                continue
-            apartadas[self._tipo_fila(fila)].append(self.filas[fila]["factura"])
-        texto_expediente = self._archivar_exportacion(
-            exportadas, rutas_por_tipo, apartadas)
-        aprender_nifs_exportados(
-            [f for t in tipos_exportados for f in por_tipo[t]])
-        self._revalidar_todo()
-        detalle = "\n".join(
-            f"  · {os.path.basename(ruta)}: {lineas} línea(s), "
-            f"base {eur(t['base_iva'])}, "
-            f"IVA {eur(t['cuota_iva'])}"
-            for ruta, lineas, t in resumen_archivos)
-        carpetas = "\n".join(
-            f"  · {carpeta}" for carpeta in sorted({
-                os.path.dirname(ruta) for ruta, _lineas, _totales in resumen_archivos
-            }))
-        self._avisar(
-            f"Exportación terminada y comprobada. Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
-            f"Guardados en el Escritorio:\n{carpetas}\n\n"
-            + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
-               else "Por fecha de factura.\n")
-            + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
-               if excluidas else "")
-            + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
-               if temporales_eliminados else "")
-            + "Comprobado: lo escrito en los archivos coincide con lo que ve "
-              "en pantalla, línea por línea. No se han creado Excel parciales."
-            + texto_expediente,
-            EXITO, segundos=0)
 
 
 def _argumentos(argv):

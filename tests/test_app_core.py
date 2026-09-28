@@ -372,9 +372,10 @@ def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():
         v._anadir_fila(b"", f, "venta", "705", "I01", "")
     v._revalidar_todo()
 
-    assert v.tabla.item(1, C_BASE_IRPF).text() == "100"
+    # Todos los importes con dos decimales, vengan como vengan.
+    assert v.tabla.item(1, C_BASE_IRPF).text() == "100,00"
     assert v.tabla.item(1, C_PCT_IRPF).text() == "1,00"
-    assert v.tabla.item(1, C_CUOTA_IRPF).text() == "1"
+    assert v.tabla.item(1, C_CUOTA_IRPF).text() == "1,00"
     assert "SIN IRPF" in v.tabla.item(0, C_PCT_IRPF).toolTip()
 
     v._ordenar_tabla_por(C_FECHA)
