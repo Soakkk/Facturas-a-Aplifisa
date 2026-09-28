@@ -815,6 +815,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                          self._configurar_carpeta_escaneos)
         config.addAction("Modelos de lectura y doble lectura…",
                          self._configurar_modelos)
+        config.addAction("Examen de precisión de la lectura…",
+                         self._examen_precision)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
 
@@ -827,6 +829,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                        lambda: self._mostrar_notas_version(forzar=True))
         menu.addAction("Diagnóstico y sugerencias…",
                        lambda: self._mostrar_pendientes(al_arrancar=False))
+        menu.addAction("Examen de precisión de la lectura…", self._examen_precision)
         menu.addAction("Abrir carpeta de ejemplos para revisión", self._abrir_muestras)
         menu.addAction("Preparar ZIP de ejemplos para revisión…", self._exportar_muestras)
         menu.addAction("Acerca de", self._acerca_de)
@@ -1159,6 +1162,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if dialogo.exec() == QDialog.Accepted:
             self._avisar(dialogo.guardar(), EXITO)
             self._pintar_gasto()
+
+    def _examen_precision(self):
+        from facturas_excel.dialogo_examen import DialogoExamen
+        DialogoExamen(leer_api_key() or "", self).exec()
+        self._pintar_gasto()
 
     def _configurar_tope(self):
         euros, ok = QInputDialog.getDouble(
