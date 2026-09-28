@@ -469,13 +469,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_zoom_mas.clicked.connect(lambda: self._cambiar_zoom_visor(0.15))
         barra_documento.addWidget(self.btn_zoom_mas)
         self.btn_senalar = QPushButton("¿De dónde sale?")
-        self.btn_senalar.setObjectName("botonVisor")
+        self.btn_senalar.setObjectName("botonSenalar")
         self.btn_senalar.setIcon(QIcon(ruta_recurso("search.svg")))
         self.btn_senalar.setToolTip(
             "Señala con recuadros en el documento dónde está escrito cada dato "
             "de la factura. Pulse después una celda de la tabla para ver solo "
             "ese dato. Las facturas en ámbar o rojo se señalan solas.")
         self.btn_senalar.clicked.connect(self._localizar_actual)
+        self.lbl_origen.setMinimumWidth(40)
         barra_documento.addWidget(self.btn_senalar)
         self.btn_opciones_visor = QPushButton("⋮")
         self.btn_opciones_visor.setObjectName("botonVisor")
@@ -627,6 +628,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """Muestra todas las acciones habituales sin estirarlas ni ocultarlas."""
         if not hasattr(self, "tabla"):
             return
+        if hasattr(self, "btn_senalar"):
+            # En un visor estrecho el botón se abrevia en vez de cortarse.
+            texto = ("¿De dónde sale?" if self.split_visor.width() >= 390
+                     else "¿Dónde?")
+            if self.btn_senalar.text() != texto:
+                self.btn_senalar.setText(texto)
+            self.btn_senalar.setMinimumWidth(self.btn_senalar.sizeHint().width())
         elementos = (
             self.lbl_mostrar, self.combo_filtro_bloque, self.combo_filtro_registro,
             self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,

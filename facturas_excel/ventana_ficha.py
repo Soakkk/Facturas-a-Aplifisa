@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout,
@@ -27,6 +27,7 @@ from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_
 from facturas_excel.validacion import ERROR, OK, REVISAR
 from facturas_excel.visor import Recuadro
 
+ZOOM_MAXIMO = 4.0
 ETIQUETA_DATO = {
     "nif": "NIF", "nombre": "Nombre", "num_factura": "Nº", "fecha": "Fecha",
     "base_iva": "Base", "cuota_iva": "IVA", "pct_iva": "% IVA",
@@ -80,7 +81,7 @@ class FichaMixin:
     def _cambiar_zoom_visor(self, incremento: float) -> None:
         if self._pixmap_documento.isNull():
             return
-        self._zoom_visor = min(2.5, max(0.7, self._zoom_visor + incremento))
+        self._zoom_visor = min(ZOOM_MAXIMO, max(0.7, self._zoom_visor + incremento))
         self._pintar_pixmap_visor()
 
     def _mostrar_miniatura(self):
@@ -181,12 +182,19 @@ class FichaMixin:
         if impreso is not None and cuadre and not cuadre["ok"]:
             otros = [x for x in otros if "total no cuadra" not in x[1].lower()]
         discrepancias = []
+        cajas = self._localizaciones.get(localizar.clave_imagen(registro.png))
         for d in getattr(f, "discrepancias", ()) or ():
             aplicable = d.get("campo_factura") in COLUMNA_DE_CAMPO
             if d.get("campo") == "lineas_iva":
                 l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
                 aplicable = len(l2) == 1 and len(filas_doc) == 1
-            discrepancias.append(dict(d, aplicable=aplicable, textos=(
+            # Si ya se sabe dónde está cada dato: ¿aparece cada valor en la hoja?
+            en_hoja = (None, None)
+            campo_hoja = localizar.DE_DOBLE_LECTURA.get(d.get("campo"))
+            if cajas is not None and campo_hoja:
+                en_hoja = tuple(bool(localizar.cajas_de(cajas, campo_hoja, d.get(v)))
+                                for v in ("valor_1", "valor_2"))
+            discrepancias.append(dict(d, aplicable=aplicable, en_hoja=en_hoja, textos=(
                 fmt_lectura(d.get("valor_1")), fmt_lectura(d.get("valor_2")))))
         verificacion = getattr(f, "verificacion", "")
         if verificacion == "doble":
@@ -371,13 +379,26 @@ class FichaMixin:
         r = self.tabla.currentRow()
         columna = self._columna_senalada if isinstance(self._columna_senalada, int) else None
         recuadros = self._recuadros_de_fila(r, columna)
+        if self._columna_senalada == "todo" and self._zoom_visor != 1.0:
+            # Todos los datos: la hoja entera a la vista.
+            self._zoom_visor = 1.0
+            self._pintar_pixmap_visor()
         self.lbl_img.poner_recuadros(recuadros)
         destacado = next((x for x in recuadros if x.destacado), None)
-        if destacado and self._zoom_visor > 1.0:
-            rect = self.lbl_img.rect_de(destacado)
-            if rect is not None:
-                self.visor_scroll.ensureVisible(int(rect.center().x()),
-                                                int(rect.center().y()), 80, 80)
+        if not destacado:
+            return
+        # Si en el tamaño actual el dato no se leería, se acerca la hoja.
+        rect = self.lbl_img.rect_de(destacado)
+        if rect is not None and rect.height() < 22:
+            self._zoom_visor = min(ZOOM_MAXIMO, self._zoom_visor * 26 / max(rect.height(), 1))
+            self._pintar_pixmap_visor()
+
+        def centrar():
+            caja = self.lbl_img.rect_de(destacado)
+            if caja is not None:
+                self.visor_scroll.ensureVisible(int(caja.center().x()),
+                                                int(caja.center().y()), 120, 90)
+        QTimer.singleShot(0, centrar)
 
     def _senalar_celda(self, fila: int, columna: int) -> None:
         """Al pulsar una celda, el visor señala de dónde sale ese dato."""
@@ -469,6 +490,7 @@ class FichaMixin:
         r = self.tabla.currentRow()
         if 0 <= r < len(self.filas) and \
                 localizar.clave_imagen(self.filas[r].png) == clave:
+            self._refrescar_ficha()      # «está / no aparece en la hoja»
             self._pintar_recuadros()
 
     def _on_localizacion_terminada(self, bien: int, mal: int, en_silencio: bool) -> None:

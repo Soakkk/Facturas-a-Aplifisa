@@ -28,7 +28,7 @@ class DialogoRegistroFacturas(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Registro de facturas")
-        self.resize(1180, 640)
+        self.resize(1240, 640)
         self.filas = []
         capa = QVBoxLayout(self)
         explicacion = QLabel(
@@ -58,9 +58,15 @@ class DialogoRegistroFacturas(QDialog):
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setSortingEnabled(True)
+        self.tabla.setWordWrap(False)
+        self.tabla.setTextElideMode(Qt.ElideRight)
         cabecera = self.tabla.horizontalHeader()
-        cabecera.setSectionResizeMode(QHeaderView.ResizeToContents)
+        cabecera.setSectionResizeMode(QHeaderView.Interactive)
         cabecera.setSectionResizeMode(6, QHeaderView.Stretch)
+        cabecera.setMinimumSectionSize(60)
+        for columna, ancho in {0: 82, 1: 150, 2: 64, 3: 58, 4: 84, 5: 96,
+                               7: 92, 8: 78, 9: 130, 10: 130}.items():
+            self.tabla.setColumnWidth(columna, ancho)
         self.tabla.doubleClicked.connect(lambda *_: self._abrir_pdf())
         capa.addWidget(self.tabla, 1)
 
@@ -110,6 +116,8 @@ class DialogoRegistroFacturas(QDialog):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if c == 10 and f.get("pdf"):
                     item.setToolTip(f["pdf"])
+                elif c in (1, 6, 9):
+                    item.setToolTip(str(texto))
                 self.tabla.setItem(r, c, item)
         self.tabla.setSortingEnabled(True)
         partes = [f"{n} {e.lower()}" for e, n in sorted(cuenta.items())]

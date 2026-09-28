@@ -144,9 +144,15 @@ class PanelFicha(QScrollArea):
             for lectura, clave in ((1, "valor_1"), (2, "valor_2")):
                 modelo = disc.get(f"modelo_{lectura}") or f"Lectura {lectura}"
                 linea = QHBoxLayout()
+                en_hoja = (disc.get("en_hoja") or (None, None))[lectura - 1]
+                pista = ("" if en_hoja is None else
+                         f" <span style='color:{VERDE}'>· está en la hoja</span>"
+                         if en_hoja else
+                         f" <span style='color:{ROJO}'>· no aparece en la hoja</span>")
                 linea.addWidget(self._etiqueta(
                     f"<span style='color:{MUTED}'>{html.escape(modelo)}:</span> "
-                    f"<b>{html.escape(disc['textos'][lectura - 1])}</b>", rico=True), 1)
+                    f"<b>{html.escape(disc['textos'][lectura - 1])}</b>{pista}",
+                    rico=True), 1)
                 boton = QPushButton("Usar este" if lectura == 2 else "Es correcto")
                 boton.setObjectName("fichaBoton")
                 boton.setStyleSheet(

@@ -18,6 +18,11 @@ def _pct(valor) -> str:
     return "—" if valor is None else f"{valor:.1f} %".replace(".", ",")
 
 
+def _corto(modelo: str) -> str:
+    """«gemini-3.8-flash» -> «3.8-flash»: cabe en la tabla."""
+    return str(modelo).replace("gemini-", "")
+
+
 def _color(valor) -> str:
     if valor is None:
         return "#5D7084"
@@ -28,7 +33,7 @@ class DialogoExamen(QDialog):
     def __init__(self, api_key: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Examen de precisión de la lectura")
-        self.resize(820, 640)
+        self.resize(880, 780)
         self.api_key = api_key
         self.modelos = modelos_configurados()
         self.ppp = int(ajustes.leer("lectura_ppp", 150) or 150)
@@ -66,7 +71,9 @@ class DialogoExamen(QDialog):
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        capa.addWidget(self.tabla, 2)
+        self.tabla.verticalHeader().setDefaultSectionSize(28)
+        self.tabla.setMinimumHeight(8 * 28 + 34)
+        capa.addWidget(self.tabla, 3)
         self.lbl_resumen = QLabel()
         self.lbl_resumen.setWordWrap(True)
         self.lbl_resumen.setTextFormat(Qt.RichText)
@@ -81,13 +88,16 @@ class DialogoExamen(QDialog):
              "Verificadas con error"])
         self.historia.verticalHeader().setVisible(False)
         self.historia.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.historia.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        cabecera = self.historia.horizontalHeader()
+        cabecera.setSectionResizeMode(QHeaderView.ResizeToContents)
+        cabecera.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.historia.setMinimumHeight(110)
         capa.addWidget(self.historia, 1)
 
         self.detalle = QPlainTextEdit()
         self.detalle.setReadOnly(True)
         self.detalle.setPlaceholderText("Aquí saldrá cada dato mal leído.")
-        self.detalle.setMaximumHeight(110)
+        self.detalle.setMaximumHeight(90)
         capa.addWidget(self.detalle)
         cerrar = QPushButton("Cerrar")
         cerrar.clicked.connect(self.accept)
@@ -172,7 +182,7 @@ class DialogoExamen(QDialog):
         self.historia.setRowCount(len(pasados))
         for i, e in enumerate(pasados):
             aciertos = " · ".join(
-                f"{m}: {_pct(examen.porcentaje_guardado(e, m))}"
+                f"{_corto(m)}: {_pct(examen.porcentaje_guardado(e, m))}"
                 for m in e.get("modelos", []))
             valores = [str(e.get("fecha", "")).replace("T", " ")[:16],
                        e.get("version", ""), str(e.get("casos", 0)), aciertos,
