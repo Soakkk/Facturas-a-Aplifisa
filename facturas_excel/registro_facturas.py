@@ -415,3 +415,16 @@ def cambiar_ruta(vieja: str, nueva: str) -> None:
             con.execute("UPDATE facturas SET pdf = ? WHERE pdf = ?", (nueva, vieja))
     except sqlite3.Error:
         pass
+
+
+def usa_retenciones(cliente_nif: str, cliente_nombre: str = "") -> bool:
+    """Si alguna factura exportada de este cliente llevaba retención."""
+    if not (cliente_nif or cliente_nombre):
+        return False
+    try:
+        with _con() as con:
+            return con.execute(
+                "SELECT 1 FROM facturas WHERE cliente = ? AND COALESCE(cuota_irpf, 0) != 0 "
+                "LIMIT 1", (cliente_de(cliente_nif, cliente_nombre),)).fetchone() is not None
+    except sqlite3.Error:
+        return False

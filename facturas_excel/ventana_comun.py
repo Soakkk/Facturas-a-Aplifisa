@@ -6,11 +6,9 @@ import os
 import re
 import sys
 
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel
-
 
 from facturas_excel.estilo import ACCENT, MUTED, SUCCESS, WARNING, DANGER
 from facturas_excel.ficha_incidencias import TITULOS as TITULOS_ESTADO

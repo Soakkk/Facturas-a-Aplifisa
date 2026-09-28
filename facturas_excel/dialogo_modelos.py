@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QRadioButton, QVBoxLayout,
 )
 
@@ -63,6 +63,15 @@ class DialogoModelos(QDialog):
             explicacion.setStyleSheet("color: #5D7084; padding-left: 22px;")
             capa_grupo.addWidget(explicacion)
         capa.addWidget(grupo)
+
+        self.chk_localizar = QCheckBox(
+            "Señalar en el documento los datos de las facturas en ámbar o rojo")
+        self.chk_localizar.setChecked(bool(ajustes.leer("localizar_dudosas", True)))
+        self.chk_localizar.setToolTip(
+            "Al terminar de leer, se pregunta a Gemini dónde está escrito cada "
+            "dato de las facturas dudosas, para verlo con un recuadro. Es una "
+            "consulta aparte, más corta que la lectura, y solo para esas.")
+        capa.addWidget(self.chk_localizar)
 
         tarifas = QGroupBox("Tarifas (dólares por millón de tokens)")
         capa_tarifas = QFormLayout(tarifas)
@@ -128,6 +137,7 @@ class DialogoModelos(QDialog):
         ajustes.guardar("modelo_principal", principal)
         ajustes.guardar("modelo_respaldo", respaldo)
         ajustes.guardar("doble_lectura", self.modo())
+        ajustes.guardar("localizar_dudosas", self.chk_localizar.isChecked())
         precios = {m: [e.value(), s.value()] for m, (e, s) in self.tarifas.items()
                    if e.value() or s.value()}
         ajustes.guardar("precios_modelos", precios)

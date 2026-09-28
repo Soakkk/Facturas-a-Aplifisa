@@ -12,7 +12,6 @@ from collections import Counter
 
 from PySide6.QtWidgets import QDialog, QMessageBox
 
-
 from facturas_excel import archivo, escaner, registro_facturas
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.claves import leer_api_key

@@ -8,24 +8,30 @@ from __future__ import annotations
 
 import os
 
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout,
 )
 
-
-from facturas_excel.banda_avisos import EXITO
+from facturas_excel import ajustes, localizar
+from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.conceptos import descripcion_de
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
 from facturas_excel.lote import CAMPOS_NUMERO
-from facturas_excel.tabla_facturas import COLUMNA_DE_CAMPO, C_ESTADO
-from facturas_excel.validacion import OK, REVISAR
+from facturas_excel.estilo import ACCENT, DANGER, WARNING
+from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
+from facturas_excel.validacion import ERROR, OK, REVISAR
+from facturas_excel.visor import Recuadro
 
+ETIQUETA_DATO = {
+    "nif": "NIF", "nombre": "Nombre", "num_factura": "Nº", "fecha": "Fecha",
+    "base_iva": "Base", "cuota_iva": "IVA", "pct_iva": "% IVA",
+    "cuota_requiv": "Recargo", "cuota_irpf": "Retención", "total_impreso": "Total",
+}
 
 
 class FichaMixin:
@@ -51,6 +57,7 @@ class FichaMixin:
                                   self.tabla.item(fila, C_ESTADO)))
 
     def _limpiar_visor(self) -> None:
+        self.lbl_img.poner_recuadros([])
         self._pixmap_documento = QPixmap()
         self._zoom_visor = 1.0
         self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
@@ -92,6 +99,7 @@ class FichaMixin:
         if not pix.isNull():
             self._pixmap_documento = pix
             self._pintar_pixmap_visor()
+            self._pintar_recuadros()
         else:
             self._limpiar_visor()
             self.lbl_origen.setText(origen or "Documento cargado")
@@ -293,3 +301,184 @@ class FichaMixin:
         pantalla = QApplication.primaryScreen().availableGeometry()
         dlg.resize(int(pantalla.width() * 0.9), int(pantalla.height() * 0.9))
         dlg.exec()
+
+    # ---------- dónde está cada dato en la hoja ----------
+    def _recuadros_de_fila(self, r: int, columna=None) -> list:
+        """Recuadros para el visor: el dato pulsado, o lo que tiene avisos."""
+        if not (0 <= r < len(self.filas)):
+            return []
+        fila = self.filas[r]
+        cajas = self._localizaciones.get(localizar.clave_imagen(fila.png))
+        if not cajas:
+            return []
+        f = fila.factura
+        salida = []
+
+        def poner(campo, valor, color, texto, destacado=False, discontinuo=False,
+                  sin_valor=False):
+            encontradas = localizar.cajas_de(cajas, campo, valor)
+            if not encontradas and sin_valor:
+                encontradas = localizar.cajas_de(cajas, campo)
+            for c in encontradas:
+                salida.append(Recuadro(c.x0, c.y0, c.x1, c.y1, color, texto,
+                                       destacado, discontinuo))
+
+        disputas = {}
+        for d in getattr(f, "discrepancias", ()) or ():
+            campo = localizar.DE_DOBLE_LECTURA.get(d.get("campo"))
+            if campo:
+                disputas[campo] = d
+        campo_pulsado = CAMPO_DE_COLUMNA.get(columna) if columna is not None else None
+        if campo_pulsado in localizar.CAMPOS:
+            etiqueta = ETIQUETA_DATO.get(campo_pulsado, campo_pulsado)
+            d = disputas.get(campo_pulsado)
+            if d:
+                poner(campo_pulsado, d.get("valor_1"), WARNING, f"{etiqueta} · lectura 1",
+                      destacado=True)
+                poner(campo_pulsado, d.get("valor_2"), WARNING, f"{etiqueta} · lectura 2",
+                      destacado=True, discontinuo=True)
+            else:
+                poner(campo_pulsado, getattr(f, campo_pulsado), ACCENT, etiqueta,
+                      destacado=True, sin_valor=True)
+            return salida
+        if self._columna_senalada == "todo":
+            # «¿De dónde sale?»: todos los datos de la factura.
+            for campo in localizar.CAMPOS:
+                if campo not in disputas:
+                    poner(campo, getattr(f, campo), ACCENT,
+                          ETIQUETA_DATO.get(campo, campo))
+        # Los datos con aviso, en su color, y las disputas.
+        graves = {}
+        for m in fila.mensajes or ():
+            for campo in getattr(m, "campos", None) or ():
+                if campo in localizar.CAMPOS:
+                    grave = getattr(m, "gravedad", REVISAR) == ERROR
+                    graves[campo] = graves.get(campo, False) or grave
+        for campo, grave in graves.items():
+            if campo in disputas:
+                continue
+            salida[:] = [x for x in salida
+                         if x.texto != ETIQUETA_DATO.get(campo, campo)]
+            poner(campo, getattr(f, campo), DANGER if grave else WARNING,
+                  ETIQUETA_DATO.get(campo, campo), sin_valor=True)
+        for campo, d in disputas.items():
+            etiqueta = ETIQUETA_DATO.get(campo, campo)
+            poner(campo, d.get("valor_1"), WARNING, f"{etiqueta} · 1")
+            poner(campo, d.get("valor_2"), WARNING, f"{etiqueta} · 2", discontinuo=True)
+        return salida
+
+    def _pintar_recuadros(self) -> None:
+        r = self.tabla.currentRow()
+        columna = self._columna_senalada if isinstance(self._columna_senalada, int) else None
+        recuadros = self._recuadros_de_fila(r, columna)
+        self.lbl_img.poner_recuadros(recuadros)
+        destacado = next((x for x in recuadros if x.destacado), None)
+        if destacado and self._zoom_visor > 1.0:
+            rect = self.lbl_img.rect_de(destacado)
+            if rect is not None:
+                self.visor_scroll.ensureVisible(int(rect.center().x()),
+                                                int(rect.center().y()), 80, 80)
+
+    def _senalar_celda(self, fila: int, columna: int) -> None:
+        """Al pulsar una celda, el visor señala de dónde sale ese dato."""
+        self._columna_senalada = columna if columna in CAMPO_DE_COLUMNA else None
+        if fila == self.tabla.currentRow():
+            self._pintar_recuadros()
+
+    def _peticiones_de_imagen(self, png: bytes) -> list:
+        """Lo que hay que buscar en esa hoja: todas sus líneas y sus disputas."""
+        filas = [x for x in self.filas if x.png == png]
+        return localizar.peticiones(
+            [x.factura for x in filas],
+            [d for x in filas for d in (getattr(x.factura, "discrepancias", ()) or ())])
+
+    def _localizar(self, trabajos: list, en_silencio: bool) -> bool:
+        from facturas_excel.claves import leer_api_key
+        from facturas_excel.hilos import HiloLocalizar
+        if not trabajos:
+            return False
+        if self._hilo_localizar and self._hilo_localizar.isRunning():
+            if not en_silencio:
+                self._avisar("Ya se están señalando datos en el documento; "
+                             "espere un momento.", INFO)
+            return False
+        try:
+            api_key = leer_api_key() or ""
+        except Exception:
+            api_key = ""
+        modelo = localizar.principal()
+        if not api_key or not modelo:
+            if not en_silencio:
+                self._avisar("Falta la API key de Gemini.", AVISO)
+            return False
+        self._localizando.update(clave for clave, *_ in trabajos)
+        hilo = HiloLocalizar(api_key, modelo, trabajos)
+        hilo.hecho.connect(self._on_localizado)
+        hilo.gasto.connect(self._on_gasto)
+        hilo.terminado.connect(
+            lambda bien, mal: self._on_localizacion_terminada(bien, mal, en_silencio))
+        self._hilo_localizar = hilo
+        hilo.start()
+        return True
+
+    def _localizar_dudosas(self) -> None:
+        """Señala solas las facturas en ámbar o rojo (se puede desactivar)."""
+        if not ajustes.leer("localizar_dudosas", True):
+            return
+        trabajos = {}
+        for fila in self.filas:
+            f = fila.factura
+            if fila.estado not in (REVISAR, ERROR) or f.tratamiento_manual:
+                continue
+            if fila.estado == REVISAR and f.revision_confirmada:
+                continue
+            if not fila.png:
+                continue
+            clave = localizar.clave_imagen(fila.png)
+            if clave in self._localizaciones or clave in self._localizando \
+                    or clave in trabajos:
+                continue
+            lista = self._peticiones_de_imagen(fila.png)
+            if lista:
+                trabajos[clave] = (clave, fila.png, lista)
+        if self._localizar(list(trabajos.values()), en_silencio=True):
+            self.lbl_estado.setText(
+                f"Señalando en el documento los datos de {len(trabajos)} "
+                "hoja(s) dudosa(s)…")
+
+    def _localizar_actual(self) -> None:
+        r = self.tabla.currentRow()
+        if not (0 <= r < len(self.filas)) or not self.filas[r].png:
+            self._avisar("Elija primero una factura de la tabla.", AVISO)
+            return
+        fila = self.filas[r]
+        clave = localizar.clave_imagen(fila.png)
+        if clave in self._localizaciones:
+            # Ya se sabe: se enseñan todos sus datos.
+            self._columna_senalada = "todo"
+            self._pintar_recuadros()
+            return
+        if self._localizar([(clave, fila.png, self._peticiones_de_imagen(fila.png))],
+                           en_silencio=False):
+            self._columna_senalada = "todo"
+            self.lbl_estado.setText("Buscando en el documento dónde está cada dato…")
+
+    def _on_localizado(self, clave: str, cajas) -> None:
+        self._localizando.discard(clave)
+        self._localizaciones[clave] = list(cajas or [])
+        r = self.tabla.currentRow()
+        if 0 <= r < len(self.filas) and \
+                localizar.clave_imagen(self.filas[r].png) == clave:
+            self._pintar_recuadros()
+
+    def _on_localizacion_terminada(self, bien: int, mal: int, en_silencio: bool) -> None:
+        self._localizando.clear()
+        if bien:
+            texto = (f"Datos señalados en el documento ({bien} hoja(s)). Pulse "
+                     "una celda para ver de dónde sale.")
+            self.lbl_estado.setText(texto)
+            if not en_silencio:
+                self._avisar(texto, EXITO)
+        elif mal and not en_silencio:
+            self._avisar("No se ha podido señalar nada en el documento.", AVISO)
+

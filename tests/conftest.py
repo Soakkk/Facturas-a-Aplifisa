@@ -12,8 +12,13 @@ def perfil_aislado(tmp_path, monkeypatch):
     # Tampoco el Escritorio real: ahí van los Excel y el archivo documental.
     monkeypatch.setenv('HOME', str(tmp_path / 'casa'))
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'casa'))
-    from facturas_excel import __version__, notas_version
+    from facturas_excel import __version__, localizar, notas_version
     notas_version.marcar_vistas(__version__)
+
+    # Ninguna prueba llama de verdad a Gemini para señalar datos.
+    def sin_red(*_a, **_k):
+        raise RuntimeError("sin red en las pruebas")
+    monkeypatch.setattr(localizar, "pedir", sin_red)
     yield
     # Las ventanas de tests que no se mostraron también tienen QTimers.
     # Destruirlas antes de quitar el perfil evita diálogos en el siguiente test.

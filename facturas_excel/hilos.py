@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-
-
 from PySide6.QtCore import QThread, Signal
-
 
 from facturas_excel import ajustes, costes, escaner, updater
 from facturas_excel.extraccion import Extractor, SinCredito
@@ -159,3 +156,40 @@ class HiloDescargaActualizacion(QThread):
             self.terminado.emit(ruta)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class HiloLocalizar(QThread):
+    """Pide a Gemini dónde está cada dato en varias hojas, sin parar la mesa."""
+    hecho = Signal(str, object)     # clave de la imagen, [Caja]
+    gasto = Signal(str, float)      # modelo, coste de todas las consultas
+    terminado = Signal(int, int)    # hojas señaladas, hojas que fallaron
+
+    def __init__(self, api_key, modelo, trabajos):
+        super().__init__()
+        self.api_key = api_key
+        self.modelo = modelo
+        self.trabajos = list(trabajos)   # [(clave, imagen, peticiones)]
+
+    def run(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from facturas_excel import localizar
+        consumo, bien, mal = [], 0, 0
+
+        def tarea(trabajo):
+            clave, img, lista = trabajo
+            return clave, localizar.pedir(self.api_key, self.modelo, img, lista)
+
+        with ThreadPoolExecutor(max_workers=min(4, hilos_lectura())) as ex:
+            for futuro in [ex.submit(tarea, t) for t in self.trabajos]:
+                try:
+                    clave, (cajas, consumos) = futuro.result()
+                except Exception:   # una hoja que no se localiza no importa
+                    mal += 1
+                    continue
+                consumo.extend(consumos)
+                bien += 1
+                self.hecho.emit(clave, cajas)
+        coste = sum(costes.registrar(m, e, s, facturas=0) for m, e, s in consumo)
+        if consumo:
+            self.gasto.emit(consumo[0][0], round(coste, 6))
+        self.terminado.emit(bien, mal)

@@ -14,7 +14,6 @@ from datetime import date
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-
 from facturas_excel import ajustes, archivo, escaner, historial
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.dialogo_orden import (
@@ -375,6 +374,7 @@ class AplifisaMixin:
             exportadas, rutas_por_tipo, apartadas)
         aprender_nifs_exportados(
             [f for t in tipos_exportados for f in por_tipo[t]])
+        self._perfil_columnas = (None,)      # el registro ha cambiado
         self._revalidar_todo()
         detalle = "\n".join(
             f"  · {os.path.basename(ruta)}: {lineas} línea(s), "

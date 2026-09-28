@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import os
 
-
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
-
 
 from facturas_excel import almacen, archivo, costes, muestras_revision
 from facturas_excel.banda_avisos import AVISO, INFO
@@ -129,6 +127,8 @@ class LecturaMixin:
             self.btn_registro.setEnabled(hay_datos)
             self.lbl_estado.setText(
                 f"Cola terminada: {self._cola_completados} bloque(s) procesado(s).")
+            # Lo dudoso se señala en el documento mientras se revisa lo demás.
+            self._localizar_dudosas()
             return
         api_key = api_key or leer_api_key()
         if not api_key:

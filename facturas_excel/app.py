@@ -77,6 +77,8 @@ from facturas_excel.hilos import (  # noqa: F401
     HILOS, HiloActualizacion, HiloDescargaActualizacion, Worker, hilos_lectura,
 )
 from facturas_excel.cinta import crear_cinta
+from facturas_excel import localizar
+from facturas_excel.visor import VisorDocumento
 from facturas_excel.ventana_aplifisa import AplifisaMixin
 from facturas_excel.ventana_archivo import ArchivoMixin
 from facturas_excel.ventana_ficha import FichaMixin
@@ -119,6 +121,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola_completados = 0
         self._elemento_cola_actual = None
         self._decisiones_conflicto_nif = {}
+        # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
+        self._localizaciones = {}
+        self._localizando = set()
+        self._hilo_localizar = None
+        self._columna_senalada = None
         self._error_muestras = ""
         self._timer_muestras = QTimer(self)
         self._timer_muestras.setSingleShot(True)
@@ -407,6 +414,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         cabecera_tabla.customContextMenuRequested.connect(self._menu_columnas)
         self.tabla.itemChanged.connect(self._on_celda)
         self.tabla.cellClicked.connect(self._abrir_ficha)
+        self.tabla.cellClicked.connect(self._senalar_celda)
+        self.tabla.currentCellChanged.connect(
+            lambda fila, columna, *_: self._senalar_celda(fila, columna))
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
         lt.addWidget(self.tabla, 1)
 
@@ -458,13 +468,22 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_zoom_mas.setToolTip("Acercar documento")
         self.btn_zoom_mas.clicked.connect(lambda: self._cambiar_zoom_visor(0.15))
         barra_documento.addWidget(self.btn_zoom_mas)
+        self.btn_senalar = QPushButton("¿De dónde sale?")
+        self.btn_senalar.setObjectName("botonVisor")
+        self.btn_senalar.setIcon(QIcon(ruta_recurso("search.svg")))
+        self.btn_senalar.setToolTip(
+            "Señala con recuadros en el documento dónde está escrito cada dato "
+            "de la factura. Pulse después una celda de la tabla para ver solo "
+            "ese dato. Las facturas en ámbar o rojo se señalan solas.")
+        self.btn_senalar.clicked.connect(self._localizar_actual)
+        barra_documento.addWidget(self.btn_senalar)
         self.btn_opciones_visor = QPushButton("⋮")
         self.btn_opciones_visor.setObjectName("botonVisor")
         menu_visor = QMenu(self.btn_opciones_visor)
         menu_visor.addAction("Abrir vista previa grande", self._abrir_vista_previa)
         self.btn_opciones_visor.setMenu(menu_visor)
         barra_documento.addWidget(self.btn_opciones_visor)
-        self.lbl_img = VisorClicable(
+        self.lbl_img = VisorDocumento(
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
         self.lbl_img.setObjectName("visor")
         self.lbl_img.setAlignment(Qt.AlignCenter)
@@ -743,6 +762,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             getattr(self, "_hilo_descarga_update", None),
             getattr(self, "_hilo_escaneo", None),
             getattr(self, "worker", None),
+            getattr(self, "_hilo_localizar", None),
         ):
             if hilo and hilo.isRunning():
                 hilo.wait(5000)
@@ -1029,6 +1049,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "hay_recargo": getattr(self, "_hay_recargo", False),
             "regimen_recargo": self.combo_recargo.currentData(),
             "periodo_modo": getattr(self, "_periodo_manual_valor", "auto"),
+            "localizaciones": {clave: localizar.a_guardar(cajas) for clave, cajas
+                               in self._localizaciones.items()},
         })
 
     def _restaurar_sesion(self) -> None:
@@ -1041,6 +1063,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._cliente_nombre = datos.get("cliente_nombre", "")
             self._hay_recargo = bool(datos.get("hay_recargo"))
             self._periodo_manual_valor = datos.get("periodo_modo", "auto")
+            self._localizaciones = {
+                clave: localizar.de_guardado(cajas)
+                for clave, cajas in (datos.get("localizaciones") or {}).items()}
             self.fila_recargo.setVisible(self._hay_recargo)
             self.chk_hay_recargo.setChecked(self._hay_recargo)
             regimen = datos.get("regimen_recargo", DESGLOSE)
@@ -1328,6 +1353,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._bloques = []
         self._cola = []
         self._decisiones_conflicto_nif = {}
+        self._localizaciones = {}
         self._ultimo_borrado = []
         self._rutas_actuales = []
         self._duplicados = {}
@@ -1387,6 +1413,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         guardar_regimen_recargo(getattr(self, "_cliente_nif", ""),
                                 self.combo_recargo.currentData(),
                                 getattr(self, "_cliente_nombre", ""))
+        self._perfil_columnas = (None,)
         self._rellenar_tabla()
         self._revalidar_todo()
 
@@ -1417,6 +1444,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             guardado = dialogo.elegido() if dialogo.exec() == QDialog.Accepted                 else DESGLOSE
             guardar_regimen_recargo(nif, guardado,
                                     getattr(self, "_cliente_nombre", ""))
+            self._perfil_columnas = (None,)
         self.combo_recargo.blockSignals(True)
         self.combo_recargo.setCurrentIndex(
             max(0, self.combo_recargo.findData(guardado or DESGLOSE)))

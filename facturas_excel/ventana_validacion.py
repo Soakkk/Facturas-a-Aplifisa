@@ -17,8 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPageLayout, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QTableWidgetItem
 
-
-from facturas_excel import ajustes, historial
+from facturas_excel import ajustes, historial, registro_facturas
 from facturas_excel.banda_avisos import AVISO
 from facturas_excel.clientes import regimen_recargo
 from facturas_excel.conceptos import catalogo
@@ -283,10 +282,19 @@ class ValidacionMixin:
         if not hasattr(self, "accion_todas_columnas"):
             return
         nif = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        # Lo que se sabe del cliente: su régimen de recargo y si sus facturas
+        # suelen llevar retención (transportista, o ya las tuvo antes).
+        clave = (nif, nombre)
+        if getattr(self, "_perfil_columnas", (None,))[0] != clave:
+            self._perfil_columnas = (clave, bool(nif and regimen_recargo(nif)),
+                                     registro_facturas.usa_retenciones(nif, nombre))
+        _, recargo_cliente, retenciones_cliente = self._perfil_columnas
         visibles = columnas_visibles(
             self.filas,
-            recargo_cliente=bool(nif and regimen_recargo(nif)),
-            irpf_cliente=self._cliente_es_transportista() if self._bloques else False,
+            recargo_cliente=recargo_cliente,
+            irpf_cliente=retenciones_cliente or (
+                self._cliente_es_transportista() if self._bloques else False),
             ver_todas=self.accion_todas_columnas.isChecked())
         for columna, visible in visibles.items():
             self.tabla.setColumnHidden(columna, not visible)
