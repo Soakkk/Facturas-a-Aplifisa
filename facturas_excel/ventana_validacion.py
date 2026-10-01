@@ -62,8 +62,8 @@ from facturas_excel.validacion import (
 )
 
 from facturas_excel.ventana_comun import (
-    ESCRITORIO, ESTILO_PRESENTACION, COLOR_CONTADOR, _sin_aviso_ejercicios_antiguo,
-    _ayuda_estado, _cabeceras_resumen,
+    ESCRITORIO, ESTILO_PRESENTACION, COLOR_CONTADOR, TODOS_LOS_BLOQUES,
+    _sin_aviso_ejercicios_antiguo, _ayuda_estado, _cabeceras_resumen,
 )
 
 
@@ -485,7 +485,7 @@ class ValidacionMixin:
         self.lbl_resumen_titulo.setText(
             "Comprobación de totales"
             + (f"  ·  {periodo_txt}" if periodo.ejercicio else "")
-            + ("  ·  filtro activo" if filtro_activo else "")
+            + (f"  ·  {self._texto_filtro()}" if filtro_activo else "")
             + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
 
         lineas = []   # (bloque, tipo, Totales, es_total)
@@ -559,6 +559,33 @@ class ValidacionMixin:
         # Con un lote vacío no se reserva una gran tabla en blanco.
         self._ajustar_altura_resumen()
         self._pintar_vista_totales(lineas, recargo, tipos_iva)
+        self._actualizar_su_suma(lineas)
+
+    def _actualizar_su_suma(self, lineas) -> None:
+        """«Cuadrar con su suma» compara con lo que se ve: con un filtro (un
+        mes, un proveedor…), lo filtrado; si no, todo el lote."""
+        if not hasattr(self, "caja_su_suma"):
+            return
+        elegidos = {}
+        for ambito, tipo, t, _es_total in lineas:
+            clave = "gasto" if tipo == "Gastos" else "venta"
+            if ambito == "FILTRO ACTUAL" or (
+                    ambito == "TOTAL LOTE" and clave not in elegidos):
+                elegidos[clave] = (t, f"{tipo} · {self._nombre_ambito(ambito)}")
+        self.caja_su_suma.actualizar(elegidos)
+
+    def _texto_filtro(self) -> str:
+        """Cómo se nombra el filtro en el título: el mes si es solo eso."""
+        mes = (self.combo_filtro_mes.currentData()
+               if hasattr(self, "combo_filtro_mes") else None)
+        if mes is None:
+            return "filtro activo"
+        otros = (self.combo_filtro_estado.currentIndex()
+                 or not self.botones_tipo["todos"].isChecked()
+                 or self.combo_filtro_bloque.currentText() != TODOS_LOS_BLOQUES
+                 or self.txt_buscar.text().strip())
+        nombre = self.combo_filtro_mes.currentText().lower().replace(" ", "\u00a0")
+        return f"{nombre} y otros filtros" if otros else nombre
 
     # Cómo se llama cada fila en la tarjeta de la derecha (más claro que en
     # la tabla, que se conserva tal cual para Copiar y el listado PDF).

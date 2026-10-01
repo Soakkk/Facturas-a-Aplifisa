@@ -6,6 +6,7 @@ viva en su sitio. Los métodos usan el estado de la ventana (self).
 
 from __future__ import annotations
 
+import html
 import os
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
@@ -19,7 +20,7 @@ from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
-from facturas_excel.estilo import ACCENT, DANGER, WARNING
+from facturas_excel.estilo import ACCENT, DANGER, MUTED, WARNING
 from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
 from facturas_excel.validacion import ERROR, OK, REVISAR
 from facturas_excel.ventana_validacion import MENSAJE_CORREGIDA, MENSAJE_REVISADA
@@ -431,8 +432,55 @@ class FichaMixin:
         r = self.tabla.currentRow()
         if r < 0 or r >= len(self.filas) or self.tabla.isRowHidden(r):
             self.ficha.vacio()
+            self._poner_resumen_lectura(None)
             return
-        self.ficha.mostrar(self._datos_ficha(r))
+        datos = self._datos_ficha(r)
+        self.ficha.mostrar(datos)
+        self._poner_resumen_lectura(datos)
+
+    # ---------- lo leído, plegado a una línea ----------
+    def _poner_resumen_lectura(self, d) -> None:
+        """La línea que se ve con la lectura plegada: estado y motivo."""
+        if not hasattr(self, "lbl_lectura_resumen"):
+            return
+        if d is None:
+            self.lbl_lectura_resumen.setText(
+                f"<span style='color:{MUTED}'>Seleccione una factura.</span>")
+            return
+        texto, color, fondo = d["estado"]
+        partes = [
+            f"<span style='background:{fondo}; color:{color.name()};"
+            f" font-weight:700'>&nbsp;{html.escape(texto)}&nbsp;</span>",
+            f"<b>{html.escape(d['titulo'])}</b>"]
+        if d["discrepancias"]:
+            motivo = (f"{len(d['discrepancias'])} dato(s) no coinciden entre "
+                      "las dos lecturas")
+        elif d["cuadre"] and not d["cuadre"]["ok"]:
+            motivo = "El total no cuadra"
+        else:
+            motivo = next((m for _g, m in d["otros_motivos"]), "")
+        if motivo:
+            partes.append(f"<span style='color:{MUTED}'>· {html.escape(motivo)}</span>")
+        self.lbl_lectura_resumen.setText(" ".join(partes))
+
+    def _plegar_lectura(self, plegada: bool, guardar: bool = True) -> None:
+        """Plegada: solo el estado y el motivo; la hoja se queda el alto."""
+        if plegada and self.ficha.isVisibleTo(self.panel_lectura):
+            self._tamanos_lectura = self.split_factura.sizes()
+        self.ficha.setVisible(not plegada)
+        self.lbl_lectura_resumen.setVisible(plegada)
+        self.btn_plegar_lectura.setArrowType(
+            Qt.RightArrow if plegada else Qt.DownArrow)
+        if plegada:
+            self.panel_lectura.setMaximumHeight(
+                self.panel_lectura.sizeHint().height())
+        else:
+            self.panel_lectura.setMaximumHeight(16_777_215)
+            if self._tamanos_lectura:
+                self.split_factura.setSizes(self._tamanos_lectura)
+            self._tamanos_lectura = None
+        if guardar:
+            ajustes.guardar("lectura_plegada", bool(plegada))
 
     def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
         """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.

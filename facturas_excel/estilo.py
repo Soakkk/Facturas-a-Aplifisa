@@ -99,6 +99,18 @@ QLabel#tituloSeccion {{
     color: {CHROME}; font-size: 12px; font-weight: 700;
     padding-bottom: 3px; border-bottom: 2px solid #E4EAF2;
 }}
+QToolButton#plegarSeccion {{
+    color: {MUTED}; font-size: 11px; font-weight: 700; border: none;
+    padding: 1px 2px; background: transparent;
+}}
+QToolButton#plegarSeccion:hover {{ color: {ACCENT}; }}
+QLabel#lecturaResumen {{ font-size: 12px; padding: 2px 2px 4px 2px; }}
+QLineEdit#suSuma {{ padding: 2px 6px; }}
+QPushButton#accionPrincipal {{
+    color: white; background: {ACCENT}; border: 1px solid {ACCENT};
+    border-radius: 4px; padding: 5px 12px; font-weight: 600;
+}}
+QPushButton#accionPrincipal:hover {{ background: #285E90; }}
 QLabel#tituloSubseccion {{
     color: {MUTED}; font-size: 11px; font-weight: 700; padding-top: 2px;
 }}
