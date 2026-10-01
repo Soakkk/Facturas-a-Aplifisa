@@ -519,8 +519,11 @@ class FichaMixin:
             return
         self.panel_lectura.setVisible(not plegada)
         self.lbl_lectura_resumen.setVisible(plegada)
-        self.btn_plegar_lectura.setArrowType(
-            Qt.LeftArrow if plegada else Qt.RightArrow)
+        if self.split_factura.orientation() == Qt.Horizontal:
+            flecha = Qt.LeftArrow if plegada else Qt.RightArrow
+        else:
+            flecha = Qt.RightArrow if plegada else Qt.DownArrow
+        self.btn_plegar_lectura.setArrowType(flecha)
 
     def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
         """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.
@@ -672,8 +675,9 @@ class FichaMixin:
                 poner(campo_pulsado, getattr(f, campo_pulsado), ACCENT, etiqueta,
                       destacado=True, sin_valor=True)
             return salida
-        if self._columna_senalada == "todo":
-            # «¿De dónde sale?»: todos los datos de la factura.
+        if self._columna_senalada == "todo" or getattr(self, "_datos_sobre_hoja", False):
+            # «¿De dónde sale?» (o la distribución «lectura sobre la hoja»):
+            # todos los datos de la factura que ya se sabe dónde están.
             for campo in localizar.CAMPOS:
                 if campo not in disputas:
                     poner(campo, getattr(f, campo), ACCENT,

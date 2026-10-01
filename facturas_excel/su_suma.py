@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import re
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
@@ -121,6 +121,13 @@ COLUMNAS_FIJAS = (
 SOLO_TOTAL = ("irpf", "total")
 # Antes de los importes: el ámbito («Gastos · Todo el lote») y el nº.
 PRIMERA_COLUMNA_IMPORTE = 2
+# Con los totales en columna (un concepto por fila): antes de los importes,
+# la fila del nº de facturas. Todas las filas, del mismo alto en las dos
+# tablas, para que cada casilla quede a la altura de su concepto.
+PRIMERA_FILA_IMPORTE = 1
+ALTO_FILA_COLUMNA = 28
+_AYUDA_DIFERENCIA = ("Lo que da el programa menos lo que ha escrito usted: "
+                     "«+35,55 €» es que el programa da 35,55 € más.")
 
 
 def columnas_totales(tipos_iva, sin_tipo: bool = False) -> list:
@@ -137,6 +144,14 @@ def columnas_totales(tipos_iva, sin_tipo: bool = False) -> list:
     return columnas
 
 
+def _alto_de_contenido(tabla: QTableWidget, base: QSize) -> QSize:
+    """El alto que pide la tabla es el de sus filas (su máximo, que pone
+    la ventana): así, arrimada arriba, se ve entera si cabe."""
+    if tabla.maximumHeight() < 16_777_215:
+        return QSize(base.width(), max(tabla.minimumHeight(), tabla.maximumHeight()))
+    return base
+
+
 class TablaTotales(QTableWidget):
     """Los totales como el listado de Aplifisa (la rellena la ventana).
 
@@ -146,6 +161,9 @@ class TablaTotales(QTableWidget):
 
     redimensionada = Signal()
 
+    def sizeHint(self) -> QSize:
+        return _alto_de_contenido(self, super().sizeHint())
+
     def viewportEvent(self, evento):
         if evento.type() == QEvent.Resize:
             self.redimensionada.emit()
@@ -153,23 +171,26 @@ class TablaTotales(QTableWidget):
 
 
 class TablaSuSuma(QTableWidget):
-    """«Su suma a mano»: una fila de casillas bajo la tabla de totales.
+    """«Su suma a mano»: una casilla por importe de los totales.
 
-    Cada casilla queda debajo de su columna (base, cada IVA, recargo,
-    retención, suplidos, total) y en la fila de abajo sale si cuadra o
-    cuánto da de más o de menos el programa. Compara con la fila de los
-    totales que se ve resaltada: con un filtro, lo filtrado.
+    Con los totales abajo y a lo ancho (una fila por ámbito), es una fila de
+    casillas bajo sus columnas y debajo lo que da de más o de menos el
+    programa. Con los totales en columna (un concepto por fila), va a su
+    derecha: una casilla en la fila de cada concepto y al lado la
+    diferencia. Compara con el ámbito que se ve resaltado: con un filtro,
+    lo filtrado.
     """
 
     # Se ha tecleado algo o se ha cambiado Gastos/Ingresos.
     cambiado = Signal()
+    # Ha cambiado su alto (en fila) o su ancho (en columna): sale o se va su
+    # barra de desplazamiento.
+    medida_cambiada = Signal()
 
     def __init__(self, parent=None):
         super().__init__(2, PRIMERA_COLUMNA_IMPORTE, parent)
         self.setObjectName("tablaSuSuma")
-        self.horizontalHeader().setVisible(False)
         self.verticalHeader().setVisible(False)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.NoSelection)
         self.setFocusPolicy(Qt.NoFocus)
@@ -179,33 +200,18 @@ class TablaSuSuma(QTableWidget):
         self.setTabKeyNavigation(False)
         # Se desplaza a la vez que los totales, píxel a píxel.
         self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.verticalHeader().setDefaultSectionSize(30)
-        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        # Primera columna: «Su suma» con Gastos/Ingresos; y «Programa da».
-        primera = QWidget()
-        capa = QHBoxLayout(primera)
-        capa.setContentsMargins(6, 0, 4, 0)
-        capa.setSpacing(6)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         # Corto: en una pantalla de 1024 la columna es estrecha.
-        rotulo = QLabel("Su suma")
-        rotulo.setStyleSheet("font-weight: 600;")
-        rotulo.setToolTip(
-            "Su suma a mano (o la del listado de Aplifisa), columna por "
-            "columna, para compararla con la del programa.")
-        capa.addWidget(rotulo)
+        self.rotulo = QLabel("Su suma")
+        self.rotulo.setStyleSheet("font-weight: 600;")
+        self.rotulo.setToolTip(
+            "Su suma a mano (o la del listado de Aplifisa), importe por "
+            "importe, para compararla con la del programa.")
         self.combo_tipo = QComboBox()
         for texto, tipo in TIPOS:
             self.combo_tipo.addItem(texto, tipo)
         self.combo_tipo.setToolTip("Qué totales quiere cuadrar.")
-        capa.addWidget(self.combo_tipo)
-        capa.addStretch(1)
-        self.setCellWidget(0, 0, primera)
-        diferencia = QTableWidgetItem("Programa da")
-        diferencia.setToolTip(
-            "Lo que da el programa menos lo que ha escrito usted: «+35,55 €» "
-            "es que el programa da 35,55 € más.")
-        diferencia.setForeground(QColor(MUTED))
-        self.setItem(1, 0, diferencia)
+        self._primera = None                     # «Su suma» + Gastos/Ingresos
         # Fuera de la tabla (la ventana los coloca en la cabecera).
         self.lbl_ambito = EtiquetaRecortada()
         self.lbl_ambito.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
@@ -214,24 +220,152 @@ class TablaSuSuma(QTableWidget):
         # o al cambiar las columnas de IVA, no se pierde.
         self._valores = {tipo: {} for _texto, tipo in TIPOS}
         self._columnas = []                      # [(clave, cabecera, importe)]
-        self._hueco = 0                          # ancho de la columna de relleno
+        self._hueco = 0                          # medida de la fila/columna de relleno
         self._campos = {}                        # clave -> QLineEdit
         # tipo -> (Totales, de qué son, ¿van por el total?)
         self._totales: dict = {}
         self._cargando = False
+        self._vertical = False
         self.combo_tipo.currentIndexChanged.connect(self._al_cambiar_tipo)
-        # La barra de desplazamiento (si no cabe a lo ancho) va debajo de
-        # las dos filas, sin taparlas.
+        # La barra de desplazamiento va fuera de las casillas, sin taparlas.
         self.horizontalScrollBar().rangeChanged.connect(
-            lambda *_: self._ajustar_alto())
-        self._ajustar_alto()
+            lambda *_: self._ajustar_tamano())
+        self.verticalScrollBar().rangeChanged.connect(
+            lambda *_: self._ajustar_tamano())
+        self._montar()
 
-    def _ajustar_alto(self) -> None:
-        barra = self.horizontalScrollBar()
-        extra = barra.sizeHint().height() if barra.maximum() > 0 else 0
-        alto = 2 * 30 + 2 * self.frameWidth() + extra
-        if self.height() != alto or self.minimumHeight() != alto:
-            self.setFixedHeight(alto)
+    def sizeHint(self) -> QSize:
+        return _alto_de_contenido(self, super().sizeHint())
+
+    # ------------------------------------------------------------ forma
+    @property
+    def vertical(self) -> bool:
+        return self._vertical
+
+    def poner_vertical(self, vertical: bool) -> None:
+        """En fila (bajo los totales a lo ancho) o en columna (a su lado)."""
+        vertical = bool(vertical)
+        if vertical == self._vertical:
+            return
+        columnas = self._columnas
+        self._soltar_casillas()
+        self._vertical = vertical
+        self._columnas = []
+        self._hueco = 0
+        self._montar()
+        self.configurar(columnas)
+
+    def _soltar_casillas(self) -> None:
+        """Quita las casillas y la primera celda (sin perder lo tecleado).
+
+        Se sueltan de su celda (si no, la tabla las vuelve a enseñar) y se
+        ocultan, porque Qt las borra más tarde y mientras tanto se verían
+        donde estaban."""
+        for r in range(self.rowCount()):
+            for c in range(self.columnCount()):
+                if self.cellWidget(r, c) is not None:
+                    self.removeCellWidget(r, c)
+        for campo in self._campos.values():
+            campo.hide()
+            campo.deleteLater()
+        self._campos = {}
+        if self._primera is not None:
+            # «Su suma» y Gastos/Ingresos se guardan para la nueva primera.
+            for widget in (self.rotulo, self.combo_tipo):
+                widget.setParent(None)
+            self._primera.hide()
+            self._primera.deleteLater()
+            self._primera = None
+
+    def _montar(self) -> None:
+        """La primera celda y las cabeceras de la forma actual."""
+        self.clearSpans()
+        self.clearContents()
+        self._primera = QWidget()
+        capa = QHBoxLayout(self._primera)
+        capa.setContentsMargins(6, 0, 4, 0)
+        capa.setSpacing(6)
+        capa.addWidget(self.rotulo)
+        capa.addWidget(self.combo_tipo)
+        capa.addStretch(1)
+        cabecera = self.horizontalHeader()
+        filas = self.verticalHeader()
+        # Sin medidas fijas de la otra forma.
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16_777_215, 16_777_215)
+        cabecera.setMinimumHeight(0)
+        cabecera.setMaximumHeight(16_777_215)
+        if self._vertical:
+            # Columna: «Su suma» y «Programa da» en la cabecera; la primera
+            # fila (a la altura del nº de facturas) elige Gastos o Ingresos.
+            self.rotulo.hide()
+            self.setRowCount(PRIMERA_FILA_IMPORTE)
+            self.setColumnCount(2)
+            self.setHorizontalHeaderLabels(["Su suma", "Programa da"])
+            self.horizontalHeaderItem(1).setToolTip(_AYUDA_DIFERENCIA)
+            cabecera.setVisible(True)
+            filas.setSectionResizeMode(QHeaderView.Fixed)
+            # La fila de relleno mide lo que la barra, menos que una fila.
+            filas.setMinimumSectionSize(1)
+            filas.setDefaultSectionSize(ALTO_FILA_COLUMNA)
+            self.setSpan(0, 0, 1, 2)
+            self.setCellWidget(0, 0, self._primera)
+            self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            # Lo justo: en una columna de totales estrecha cada píxel cuenta.
+            for c, muestra in enumerate(("99.999,99", "−99.999,99 €")):
+                cabecera.setSectionResizeMode(c, QHeaderView.Fixed)
+                self.setColumnWidth(c, max(
+                    self.fontMetrics().horizontalAdvance(muestra) + 18,
+                    cabecera.fontMetrics().horizontalAdvance(
+                        self.horizontalHeaderItem(c).text()) + 16))
+        else:
+            self.rotulo.show()
+            self.setRowCount(2)
+            self.setColumnCount(PRIMERA_COLUMNA_IMPORTE)
+            cabecera.setVisible(False)
+            filas.setSectionResizeMode(QHeaderView.Interactive)
+            filas.setDefaultSectionSize(30)
+            for r in range(2):
+                self.setRowHeight(r, 30)
+            cabecera.setSectionResizeMode(0, QHeaderView.Stretch)
+            self.setCellWidget(0, 0, self._primera)
+            diferencia = QTableWidgetItem("Programa da")
+            diferencia.setToolTip(_AYUDA_DIFERENCIA)
+            diferencia.setForeground(QColor(MUTED))
+            self.setItem(1, 0, diferencia)
+            self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._ajustar_tamano()
+
+    def _ajustar_tamano(self) -> None:
+        """En fila, alto fijo (dos filas y la barra si la hay); en columna,
+        ancho fijo (dos columnas y la barra si la hay)."""
+        marco = 2 * self.frameWidth()
+        if self._vertical:
+            barra = self.verticalScrollBar()
+            extra = barra.sizeHint().width() if barra.maximum() > 0 else 0
+            ancho = self.columnWidth(0) + self.columnWidth(1) + marco + extra
+            if self.minimumWidth() != ancho or self.maximumWidth() != ancho:
+                self.setFixedWidth(ancho)
+                self.medida_cambiada.emit()
+        else:
+            barra = self.horizontalScrollBar()
+            extra = barra.sizeHint().height() if barra.maximum() > 0 else 0
+            alto = 2 * 30 + marco + extra
+            if self.minimumHeight() != alto or self.maximumHeight() != alto:
+                self.setFixedHeight(alto)
+                self.medida_cambiada.emit()
+
+    def _lugar_campo(self, i: int) -> tuple[int, int]:
+        if self._vertical:
+            return PRIMERA_FILA_IMPORTE + i, 0
+        return 0, PRIMERA_COLUMNA_IMPORTE + i
+
+    def _lugar_resultado(self, i: int) -> tuple[int, int]:
+        if self._vertical:
+            return PRIMERA_FILA_IMPORTE + i, 1
+        return 1, PRIMERA_COLUMNA_IMPORTE + i
 
     # ------------------------------------------------------------ datos
     @property
@@ -239,36 +373,39 @@ class TablaSuSuma(QTableWidget):
         return self.combo_tipo.currentData()
 
     def configurar(self, columnas) -> None:
-        """Pone una casilla bajo cada columna de importe de los totales."""
+        """Pone una casilla por cada importe de los totales."""
         claves = [c[0] for c in columnas]
-        if claves == [c[0] for c in self._columnas]:
+        if claves and claves == [c[0] for c in self._columnas]:
             self._columnas = list(columnas)
             return
         self._columnas = list(columnas)
-        # Las casillas de antes, fuera ya: se sueltan de su celda (si no, la
-        # tabla las vuelve a enseñar) y se ocultan, porque Qt las borra más
-        # tarde y mientras tanto se verían donde estaban.
-        for c in range(PRIMERA_COLUMNA_IMPORTE, self.columnCount()):
-            self.removeCellWidget(0, c)
-        for campo in self._campos.values():
+        # Las casillas de antes, fuera ya (ver _soltar_casillas).
+        for i, campo in enumerate(self._campos.values()):
+            r, c = self._lugar_campo(i)
+            if self.cellWidget(r, c) is campo:
+                self.removeCellWidget(r, c)
             campo.hide()
             campo.deleteLater()
-        self.setColumnCount(PRIMERA_COLUMNA_IMPORTE + len(columnas)
-                            + (1 if self._hueco else 0))
         self._campos = {}
+        relleno = 1 if self._hueco else 0
+        if self._vertical:
+            self.setRowCount(PRIMERA_FILA_IMPORTE + len(columnas) + relleno)
+        else:
+            self.setColumnCount(PRIMERA_COLUMNA_IMPORTE + len(columnas) + relleno)
         for i, (clave, cabecera, _importe) in enumerate(columnas):
-            c = PRIMERA_COLUMNA_IMPORTE + i
             campo = QLineEdit()
             campo.setObjectName("suSuma")
             campo.setPlaceholderText("su cifra")
             campo.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             campo.setToolTip(f"{cabecera}: escriba lo que le da a usted.")
             campo.textChanged.connect(self._al_teclear)
-            self.setCellWidget(0, c, campo)
+            self.setCellWidget(*self._lugar_campo(i), campo)
             resultado = QTableWidgetItem("")
             resultado.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.setItem(1, c, resultado)
+            self.setItem(*self._lugar_resultado(i), resultado)
             self._campos[clave] = campo
+        self._poner_relleno()
+        self._ajustar_tamano()
         self._cargar_campos()
 
     def actualizar(self, totales: dict) -> None:
@@ -276,26 +413,37 @@ class TablaSuSuma(QTableWidget):
         self._totales = dict(totales)
         self._pintar()
 
-    def dejar_hueco(self, ancho: int) -> None:
-        """Una columna vacía al final del ancho de la barra de los totales
-        de encima: así las dos tablas se desplazan lo mismo a lo ancho y
-        cada casilla sigue bajo su columna también al final."""
-        ancho = max(0, int(ancho))
-        columnas = PRIMERA_COLUMNA_IMPORTE + len(self._columnas)
-        self._hueco = ancho
-        if self.columnCount() != columnas + (1 if ancho else 0):
-            self.setColumnCount(columnas + (1 if ancho else 0))
-        if ancho:
-            self.horizontalHeader().setSectionResizeMode(columnas, QHeaderView.Fixed)
-            if self.columnWidth(columnas) != ancho:
-                self.setColumnWidth(columnas, ancho)
+    def dejar_hueco(self, medida: int) -> None:
+        """Una columna (en fila) o una fila (en columna) vacía al final, de
+        la medida de la barra de desplazamiento de los totales: así las dos
+        tablas se desplazan lo mismo y cada casilla sigue con su importe
+        también al final."""
+        self._hueco = max(0, int(medida))
+        self._poner_relleno()
+
+    def _poner_relleno(self) -> None:
+        relleno = 1 if self._hueco else 0
+        if self._vertical:
+            filas = PRIMERA_FILA_IMPORTE + len(self._columnas)
+            if self.rowCount() != filas + relleno:
+                self.setRowCount(filas + relleno)
+            if relleno and self.rowHeight(filas) != self._hueco:
+                self.setRowHeight(filas, self._hueco)
+        else:
+            columnas = PRIMERA_COLUMNA_IMPORTE + len(self._columnas)
+            if self.columnCount() != columnas + relleno:
+                self.setColumnCount(columnas + relleno)
+            if relleno:
+                self.horizontalHeader().setSectionResizeMode(columnas, QHeaderView.Fixed)
+                if self.columnWidth(columnas) != self._hueco:
+                    self.setColumnWidth(columnas, self._hueco)
 
     def campo(self, clave: str) -> QLineEdit:
         return self._campos[clave]
 
     def resultado(self, clave: str) -> str:
-        c = PRIMERA_COLUMNA_IMPORTE + [k for k, *_ in self._columnas].index(clave)
-        return self.item(1, c).text()
+        i = [k for k, *_ in self._columnas].index(clave)
+        return self.item(*self._lugar_resultado(i)).text()
 
     def valores(self) -> dict:
         """Lo tecleado, para guardarlo en la sesión."""
@@ -354,8 +502,8 @@ class TablaSuSuma(QTableWidget):
         tecleadas = cuadran = 0
         signos = set()
         for i, (clave, cabecera, importe) in enumerate(self._columnas):
-            c = PRIMERA_COLUMNA_IMPORTE + i
-            campo, resultado = self._campos[clave], self.item(1, c)
+            campo = self._campos[clave]
+            resultado = self.item(*self._lugar_resultado(i))
             fuera = bool(solo_total and clave not in SOLO_TOTAL)
             campo.setEnabled(not fuera)
             campo.setPlaceholderText("—" if fuera else "su cifra")

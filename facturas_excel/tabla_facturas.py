@@ -39,6 +39,9 @@ CAMPO_DE_COLUMNA = {c: campo for campo, c in COLUMNA_DE_CAMPO.items()}
 COLUMNAS_IMPORTE = (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE,
                     C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL)
 COLUMNAS_DATO = tuple(sorted(CAMPO_DE_COLUMNA))
+# La tabla con lo justo (distribución «una a una»): cabe en una lista
+# estrecha; el resto de datos se ve en la factura, al lado.
+COLUMNAS_COMPACTAS = (C_ESTADO, C_NOMBRE, C_TOTAL)
 # Algo más estrechas desde la 1.18: la tabla comparte la pantalla con el
 # documento y la ficha (tres columnas) y así cabe sin desplazarse en 1920.
 ANCHOS = {

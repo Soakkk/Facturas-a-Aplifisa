@@ -13,9 +13,10 @@ import sys
 import traceback
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QThread, QTimer
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QActionGroup, QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QApplication, QBoxLayout, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QFrame, QHeaderView,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar, QPushButton, QProgressDialog, QScrollArea,
     QSizePolicy, QSplitter, QTableWidget, QToolButton,
@@ -49,7 +50,8 @@ from facturas_excel.estilo import (
     CHROME, CHROME_INK, aplicar_tema,
 )
 from facturas_excel.panel_ficha import PanelFicha
-from facturas_excel.su_suma import TablaSuSuma, TablaTotales
+from facturas_excel import distribucion
+from facturas_excel.su_suma import ALTO_FILA_COLUMNA, TablaSuSuma, TablaTotales
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, normaliza_nif, quitar_aviso_cuenta,
@@ -73,8 +75,6 @@ from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
 
 # Datos de la cabecera de una factura (iguales en todas sus líneas).
 CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclave")
-# Anchos de partida de las dos columnas de arriba (facturas | factura).
-TAMANOS_COLUMNAS = [900, 960]
 TODOS_LOS_MESES = "Todos los meses"
 from facturas_excel.ventana_comun import (  # noqa: F401
     COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente, EtiquetaRecortada,
@@ -611,8 +611,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.split_factura.addWidget(lectura)
         self.split_factura.setStretchFactor(0, 1)
         self.split_factura.setStretchFactor(1, 1)
-        self.split_factura.setSizes(
-            self._tamanos_divisor("split_factura_h", [480, 440]))
         self.split_factura.splitterMoved.connect(
             lambda *_: self._timer_divisores.start())
         self.btn_plegar_lectura.toggled.connect(self._plegar_lectura)
@@ -643,9 +641,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         fila_revisar.addWidget(self.btn_correcta_siguiente)
         split.addWidget(visor_card)
 
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 1)
-        split.setSizes(self._tamanos_divisor("split_revision_v5", TAMANOS_COLUMNAS))
         split.splitterMoved.connect(self._divisor_revision_movido)
 
         # Abajo, a todo lo ancho: los totales como el listado de Aplifisa
@@ -666,6 +661,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         cabecera_totales.addWidget(self.lbl_resumen_titulo)
         self.tabla_su_suma = TablaSuSuma()
         self.tabla_su_suma.cambiado.connect(self._resaltar_fila_comparada)
+        self.tabla_su_suma.medida_cambiada.connect(
+            lambda: hasattr(self, "tabla_totales") and self._ajustar_alto_totales())
         cabecera_totales.addWidget(self.tabla_su_suma.lbl_ambito, 1)
         cabecera_totales.addWidget(self.tabla_su_suma.lbl_veredicto)
         self.btn_ver_su_suma = QToolButton()
@@ -684,6 +681,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         btn_copiar.setToolTip(
             "Copia el resumen al portapapeles para pegarlo donde haga falta.")
         btn_copiar.clicked.connect(self._copiar_resumen)
+        self.btn_copiar_totales = btn_copiar
         cabecera_totales.addWidget(btn_copiar)
         self.btn_listado_totales = QPushButton("Listado PDF")
         self.btn_listado_totales.setObjectName("compacto")
@@ -699,8 +697,15 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Ocultar los totales. Es solo una comprobación: se vuelven a ver "
             "en el menú Ver.")
         btn_cerrar_resumen.clicked.connect(lambda: self._ver_resumen(False))
+        self.btn_cerrar_totales = btn_cerrar_resumen
         cabecera_totales.addWidget(btn_cerrar_resumen)
         lr.addLayout(cabecera_totales)
+        # En columna no cabe todo en la cabecera: el veredicto va debajo y
+        # los botones, al pie (como en los prototipos 1, 2 y 5).
+        self.cabecera_totales = cabecera_totales
+        self.fila_info_totales = QHBoxLayout()
+        self.fila_info_totales.setSpacing(8)
+        lr.addLayout(self.fila_info_totales)
         self.tabla_totales = TablaTotales(0, 0)
         self.tabla_totales.redimensionada.connect(
             lambda: self._anchos_totales(getattr(self, "_columnas_totales", [])))
@@ -713,23 +718,37 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla_totales.setShowGrid(False)
         # En una pantalla baja las filas se desplazan (con anchos fijos, cada
         # casilla de «Su suma» sigue bajo su columna aunque salga la barra).
-        self.tabla_totales.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tabla_totales.verticalScrollBar().rangeChanged.connect(
             lambda *_: self._ajustar_alto_totales())
         self.tabla_totales.setTabKeyNavigation(False)
-        # A lo ancho, la barra la lleva «Su suma» (debajo; si se oculta, la
-        # de los totales) y las dos se mueven juntas, píxel a píxel, se
-        # desplace la que se desplace: cada casilla sigue bajo su columna.
+        # La barra la lleva «Su suma» (debajo, o a la derecha con los totales
+        # en columna; si se oculta, la de los totales) y las dos se mueven
+        # juntas, píxel a píxel, se desplace la que se desplace: cada casilla
+        # sigue con su importe.
         self.tabla_totales.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
-        self.tabla_totales.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        barra_totales = self.tabla_totales.horizontalScrollBar()
-        barra_suma = self.tabla_su_suma.horizontalScrollBar()
-        barra_suma.valueChanged.connect(barra_totales.setValue)
-        barra_totales.valueChanged.connect(barra_suma.setValue)
-        barra_totales.rangeChanged.connect(lambda *_: self._ajustar_alto_totales())
-        lr.addWidget(self.tabla_totales)
-        lr.addWidget(self.tabla_su_suma)
+        self.tabla_totales.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
+        for vertical in (False, True):
+            barra_totales = (self.tabla_totales.verticalScrollBar() if vertical
+                             else self.tabla_totales.horizontalScrollBar())
+            barra_suma = (self.tabla_su_suma.verticalScrollBar() if vertical
+                          else self.tabla_su_suma.horizontalScrollBar())
+            barra_suma.valueChanged.connect(
+                lambda valor, b=barra_totales, v=vertical: self._mover_barra(b, valor, v))
+            barra_totales.valueChanged.connect(
+                lambda valor, b=barra_suma, v=vertical: self._mover_barra(b, valor, v))
+        self.tabla_totales.horizontalScrollBar().rangeChanged.connect(
+            lambda *_: self._ajustar_alto_totales())
+        # Una encima de otra (totales abajo) o una al lado de otra (en columna).
+        self.capa_tablas_totales = QBoxLayout(QBoxLayout.TopToBottom)
+        self.capa_tablas_totales.setSpacing(lr.spacing())
+        self.capa_tablas_totales.addWidget(self.tabla_totales, 1)
+        self.capa_tablas_totales.addWidget(self.tabla_su_suma)
+        lr.addLayout(self.capa_tablas_totales)
         lr.addStretch(1)
+        self.capa_totales = lr
+        self.fila_botones_totales = QHBoxLayout()
+        self.fila_botones_totales.setSpacing(8)
+        lr.addLayout(self.fila_botones_totales)
         # La tabla de siempre sigue siendo el dato de Copiar, el Listado PDF
         # y las pruebas; en pantalla se ve tabla_totales.
         self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
@@ -748,21 +767,20 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.split_principal.setHandleWidth(8)
         self.split_principal.addWidget(split)
         self.split_principal.addWidget(totales_card)
-        self.split_principal.setStretchFactor(0, 1)
-        self.split_principal.setStretchFactor(1, 0)
         # Mientras no se mueva el divisor a mano, los totales ocupan lo que
         # sus filas (hasta el 40 % del alto); movido, se respeta y se recuerda.
         self._alto_totales_a_mano = bool(ajustes.leer("alto_totales_a_mano", False))
-        self.split_principal.setSizes(
-            self._tamanos_divisor("split_principal", [620, 240])
-            if self._alto_totales_a_mano else [620, 240])
         self.split_principal.splitterMoved.connect(self._divisor_totales_movido)
+        # Con la tabla arriba, debajo van la factura y los totales.
+        self.split_inferior = QSplitter(Qt.Horizontal)
+        self.split_inferior.setObjectName("splitInferior")
+        self.split_inferior.setChildrenCollapsible(False)
+        self.split_inferior.setHandleWidth(8)
+        self.split_inferior.splitterMoved.connect(
+            lambda *_: self._timer_divisores.start())
         # «Ocultar» quita los totales; se vuelven a ver en el menú Ver.
         totales_card.setVisible(bool(ajustes.leer("ver_totales_lado", True)))
         cuerpo.addWidget(self.split_principal, 1)
-        # Sin lote todavía: las columnas de siempre, sin filas (y el alto
-        # justo, no una tabla en blanco).
-        self._pintar_tabla_totales([], False, [])
 
         barra_estado = QFrame()
         barra_estado.setObjectName("barraEstado")
@@ -809,6 +827,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_herramientas.start(0)
         # La tabla cambia de ancho por lo que sea: se reparte otra vez.
         tabla_card.installEventFilter(self)
+        # Cada pieza en su sitio según la distribución elegida (sin lote
+        # todavía: las columnas de siempre, sin filas, con el alto justo).
+        self._aplicar_distribucion(
+            ajustes.leer("distribucion", distribucion.POR_DEFECTO), al_arrancar=True)
 
     def _distribuir_herramientas(self, ancho: int):
         """Filtros a la izquierda y, debajo, las acciones, sin cortar textos.
@@ -826,6 +848,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             if self.btn_senalar.text() != texto:
                 self.btn_senalar.setText(texto)
             self.btn_senalar.setMinimumWidth(self.btn_senalar.sizeHint().width())
+            # Y «Lectura IA» se queda con la flecha (su nombre, en el globo).
+            estilo = (Qt.ToolButtonTextBesideIcon if self.factura_card.width() >= 470
+                      else Qt.ToolButtonIconOnly)
+            if self.btn_plegar_lectura.toolButtonStyle() != estilo:
+                self.btn_plegar_lectura.setToolButtonStyle(estilo)
         if hasattr(self, "btn_revisada_factura"):
             # Y «Revisada» se queda en solo el ✓ antes que cortar «Correcta ·
             # siguiente» (su nombre sigue en el globo). Con los anchos reales:
@@ -1023,16 +1050,210 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_divisores.start()
 
     def _guardar_divisores(self):
-        # Claves nuevas en la 1.20: los tamaños de antes eran de otras
-        # columnas (tres, con los totales a la derecha) y no deben heredarse.
-        if hasattr(self, "split_revision"):
-            ajustes.guardar("split_revision_v5", self.split_revision.sizes())
-        if hasattr(self, "split_principal") and self.totales_card.isVisible():
-            # Con los totales ocultos su alto es 0: se queda el de antes.
-            ajustes.guardar("split_principal", self.split_principal.sizes())
-        if hasattr(self, "split_factura") and not self.panel_lectura.isHidden():
-            # Con la lectura oculta su ancho es 0: se queda el de antes.
-            ajustes.guardar("split_factura_h", self.split_factura.sizes())
+        """Cada distribución recuerda sus divisores. Con algo oculto (los
+        totales, lo leído) su sitio mide 0: se queda lo de antes."""
+        if not hasattr(self, "_distribucion"):
+            return
+        for nombre, split in self._divisores():
+            if not self._divisor_en_uso(nombre):
+                continue
+            if any(split.widget(i).isHidden() for i in range(split.count())):
+                continue
+            ajustes.guardar(self._clave_divisor(nombre), split.sizes())
+
+    # ---------- distribución de la pantalla ----------
+    def _divisores(self):
+        return (("principal", self.split_principal),
+                ("revision", self.split_revision),
+                ("inferior", self.split_inferior),
+                ("factura", self.split_factura))
+
+    def _divisor_en_uso(self, nombre: str) -> bool:
+        if nombre == "principal":
+            return self.split_principal.count() > 1
+        if nombre == "revision":
+            return self.split_revision.parent() is not None
+        if nombre == "inferior":
+            return self.split_inferior.parent() is not None
+        return True
+
+    def _clave_divisor(self, nombre: str) -> str:
+        # La 4 sigue con las claves de antes.
+        if self._distribucion.clave == "cuadre":
+            return {"principal": "split_principal", "revision": "split_revision_v5",
+                    "factura": "split_factura_h"}.get(nombre, f"split_{nombre}")
+        return f"divisor_{self._distribucion.clave}_{nombre}"
+
+    def _elegir_distribucion(self, clave: str) -> None:
+        """Desde Ver → Distribución de la pantalla (se recuerda)."""
+        actual = getattr(self, "_distribucion", None)
+        if actual is not None and actual.clave == clave:
+            return
+        self._guardar_divisores()
+        ajustes.guardar("distribucion", clave)
+        self._aplicar_distribucion(clave)
+        self.lbl_estado.setText(
+            f"Distribución {self._distribucion.titulo}: {self._distribucion.descripcion}")
+
+    def _aplicar_distribucion(self, clave: str, al_arrancar: bool = False) -> None:
+        """Pone cada pieza (facturas, factura, totales) donde va en esa
+        distribución, y la factura y los totales con su forma."""
+        d = distribucion.buscar(clave)
+        self._distribucion = d
+        self._colocar_piezas(d.colocacion)
+        # La factura: la hoja arriba y lo leído debajo, o uno al lado del otro.
+        self.split_factura.setOrientation(
+            Qt.Vertical if d.factura_vertical else Qt.Horizontal)
+        self.panel_lectura.layout().setContentsMargins(
+            *((0, 4, 0, 0) if d.factura_vertical else (4, 0, 0, 0)))
+        self._datos_sobre_hoja = d.datos_sobre_hoja
+        if not al_arrancar and self.btn_plegar_lectura.isChecked() != d.lectura_plegada:
+            # Al elegirla, lo leído como en su prototipo (se puede cambiar).
+            self.btn_plegar_lectura.setChecked(d.lectura_plegada)
+        else:
+            self._aplicar_plegado(self._plegado_efectivo())
+        self._poner_totales_en_columna(d.totales_en_columna)
+        self._actualizar_columnas()
+        self._poner_tamanos_distribucion()
+        accion = self.acciones_distribucion.get(d.clave)
+        if accion is not None and not accion.isChecked():
+            accion.setChecked(True)
+        if al_arrancar:
+            self._pintar_tabla_totales([], False, [])
+            return
+        self._pintar_resumen()
+        self._distribuir_herramientas(self.width())
+        if 0 <= self.tabla.currentRow() < len(self.filas):
+            self._pintar_recuadros()
+
+    def _colocar_piezas(self, colocacion: str) -> None:
+        principal, revision = self.split_principal, self.split_revision
+        inferior = self.split_inferior
+        tabla, factura, totales = self.tabla_card, self.factura_card, self.totales_card
+        # Lo que no se usa se descuelga (sin borrarlo) para no dejar huecos.
+        if colocacion == distribucion.TABLA_ARRIBA:
+            inferior.insertWidget(0, factura)
+            inferior.insertWidget(1, totales)
+            principal.insertWidget(0, tabla)
+            principal.insertWidget(1, inferior)
+            revision.setParent(None)
+            estiramiento = {principal: (1, 1), inferior: (1, 0)}
+        else:
+            revision.insertWidget(0, tabla)
+            revision.insertWidget(1, factura)
+            if colocacion == distribucion.COLUMNAS:
+                revision.insertWidget(2, totales)
+                principal.insertWidget(0, revision)
+                estiramiento = {principal: (1,), revision: (1, 1, 0)}
+            else:
+                principal.insertWidget(0, revision)
+                principal.insertWidget(1, totales)
+                estiramiento = {principal: (1, 0), revision: (1, 1)}
+            inferior.setParent(None)
+        for split, factores in estiramiento.items():
+            for i, factor in enumerate(factores):
+                split.setStretchFactor(i, factor)
+
+    def _poner_tamanos_distribucion(self) -> None:
+        d = self._distribucion
+        for nombre, split in self._divisores():
+            if not self._divisor_en_uso(nombre):
+                continue
+            defecto = list(d.tamanos.get(nombre) or [600] * split.count())
+            if nombre == "principal" and d.colocacion == distribucion.TOTALES_ABAJO:
+                # Los totales, lo justo para sus filas (salvo si se movió).
+                defecto = [620, 240]
+                tamanos = (self._tamanos_divisor(self._clave_divisor(nombre), defecto)
+                           if self._alto_totales_a_mano else defecto)
+            else:
+                tamanos = self._tamanos_divisor(self._clave_divisor(nombre), defecto)
+            if len(tamanos) != split.count():
+                continue
+            # En proporción al sitio de ahora (Qt, si no, quita lo que sobra
+            # solo de las piezas que estiran y las deja en su mínimo).
+            actual = sum(split.sizes())
+            if actual > 0:
+                escala = actual / sum(tamanos)
+                tamanos = [max(1, round(t * escala)) for t in tamanos]
+            split.setSizes(tamanos)
+        self._encajar_totales()
+
+    def _poner_totales_en_columna(self, en_columna: bool) -> None:
+        """Los totales a lo ancho (una fila por ámbito, «Su suma» debajo) o
+        en columna (un importe por fila, «Su suma» al lado)."""
+        self.tabla_su_suma.poner_vertical(en_columna)
+        filas = self.tabla_totales.verticalHeader()
+        cabecera = self.tabla_totales.horizontalHeader()
+        if en_columna:
+            filas.setSectionResizeMode(QHeaderView.Fixed)
+            filas.setDefaultSectionSize(ALTO_FILA_COLUMNA)
+            self.capa_tablas_totales.setDirection(QBoxLayout.LeftToRight)
+            alineacion = Qt.AlignTop
+        else:
+            filas.setSectionResizeMode(QHeaderView.Interactive)
+            filas.setDefaultSectionSize(24)
+            cabecera.setMinimumHeight(0)
+            cabecera.setMaximumHeight(16_777_215)
+            self.capa_tablas_totales.setDirection(QBoxLayout.TopToBottom)
+            alineacion = Qt.Alignment()
+        for widget in (self.tabla_totales, self.tabla_su_suma):
+            self.capa_tablas_totales.setAlignment(widget, alineacion)
+        # En columna, las tablas se quedan el alto que haya (hasta el de sus
+        # filas); a lo ancho, lo justo y el resto queda debajo.
+        capa = self.capa_totales
+        indice = capa.indexOf(self.capa_tablas_totales)
+        capa.setStretch(indice, 1 if en_columna else 0)
+        capa.setStretch(indice + 1, 0 if en_columna else 1)
+        self._colocar_cabecera_totales(en_columna)
+        self._politica_barras_totales()
+
+    def _colocar_cabecera_totales(self, en_columna: bool) -> None:
+        """A lo ancho, todo en la cabecera. En columna no cabe: el veredicto
+        va debajo del título y los botones, al pie."""
+        titulo, cerrar = self.lbl_resumen_titulo, self.btn_cerrar_totales
+        ambito = self.tabla_su_suma.lbl_ambito
+        veredicto = self.tabla_su_suma.lbl_veredicto
+        ver_suma, copiar = self.btn_ver_su_suma, self.btn_copiar_totales
+        listado = self.btn_listado_totales
+        for capa in (self.cabecera_totales, self.fila_info_totales,
+                     self.fila_botones_totales):
+            while capa.count():
+                capa.takeAt(0)
+        # En columna no cabe «Su suma a mano» con Copiar y Listado PDF.
+        ver_suma.setText("Su suma" if en_columna else "Su suma a mano")
+        if en_columna:
+            self.cabecera_totales.addWidget(titulo, 1)
+            self.cabecera_totales.addWidget(cerrar)
+            self.fila_info_totales.addWidget(veredicto)
+            self.fila_info_totales.addWidget(ambito, 1)
+            self.fila_botones_totales.addWidget(ver_suma)
+            self.fila_botones_totales.addStretch(1)
+            self.fila_botones_totales.addWidget(copiar)
+            self.fila_botones_totales.addWidget(listado)
+        else:
+            for widget, estirar in ((titulo, 0), (ambito, 1), (veredicto, 0),
+                                    (ver_suma, 0), (copiar, 0), (listado, 0),
+                                    (cerrar, 0)):
+                self.cabecera_totales.addWidget(widget, estirar)
+
+    def _politica_barras_totales(self) -> None:
+        """La barra que va con «Su suma» la lleva ella; sin «Su suma», los
+        totales llevan las dos."""
+        tabla = self.tabla_totales
+        con_suma = self.btn_ver_su_suma.isChecked()
+        if self.tabla_su_suma.vertical:
+            tabla.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            tabla.setVerticalScrollBarPolicy(
+                Qt.ScrollBarAlwaysOff if con_suma else Qt.ScrollBarAsNeeded)
+        else:
+            tabla.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarAlwaysOff if con_suma else Qt.ScrollBarAsNeeded)
+            tabla.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    def _mover_barra(self, barra, valor: int, vertical: bool) -> None:
+        """Las dos tablas de los totales, juntas en el sentido de «Su suma»."""
+        if self.tabla_su_suma.vertical == vertical:
+            barra.setValue(valor)
 
     def showEvent(self, evento):
         super().showEvent(evento)
@@ -1130,6 +1351,23 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.accion_todas_columnas.setChecked(
             bool(ajustes.leer("ver_todas_columnas", False)))
         self.accion_todas_columnas.toggled.connect(self._ver_todas_columnas)
+        ver.addSeparator()
+        # Los cinco prototipos del lienzo, para elegir el que mejor vaya.
+        menu_distribucion = ver.addMenu("Distribución de la pantalla")
+        menu_distribucion.setToolTipsVisible(True)
+        self.grupo_distribucion = QActionGroup(self)
+        self.grupo_distribucion.setExclusive(True)
+        self.acciones_distribucion = {}
+        for d in distribucion.DISTRIBUCIONES:
+            accion = menu_distribucion.addAction(d.titulo)
+            accion.setCheckable(True)
+            accion.setToolTip(d.descripcion)
+            accion.setStatusTip(d.descripcion)
+            accion.setShortcut(QKeySequence(f"Ctrl+{d.numero}"))
+            accion.triggered.connect(
+                lambda _marcada=False, clave=d.clave: self._elegir_distribucion(clave))
+            self.grupo_distribucion.addAction(accion)
+            self.acciones_distribucion[d.clave] = accion
         config =self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
@@ -1534,6 +1772,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _tras_ver_resumen(self) -> None:
         """Ya colocado todo: totales con alto para leerse."""
+        if self._distribucion.colocacion != distribucion.TOTALES_ABAJO:
+            return
         if not self._alto_totales_a_mano:
             self._encajar_totales()
             return
@@ -1546,7 +1786,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _divisor_totales_movido(self, *_):
         """Movido a mano: desde ahora manda el usuario (y se recuerda)."""
-        if not self._alto_totales_a_mano:
+        if (self._distribucion.colocacion == distribucion.TOTALES_ABAJO
+                and not self._alto_totales_a_mano):
             self._alto_totales_a_mano = True
             ajustes.guardar("alto_totales_a_mano", True)
         self._timer_divisores.start()
@@ -1555,27 +1796,41 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """Los totales, con el alto de sus filas (al filtrar salen más),
         pero nunca más del 40 % del alto: en un portátil la tabla de
         facturas y la hoja necesitan sitio. Si el usuario ha movido el
-        divisor, no se toca."""
+        divisor, no se toca.
+
+        Se hace en cuanto Qt ha recolocado lo cambiado (si no, el divisor
+        se queda con el mínimo de antes) y una sola vez aunque se pida
+        varias."""
+        if not hasattr(self, "_timer_encajar"):
+            self._timer_encajar = QTimer(self)
+            self._timer_encajar.setSingleShot(True)
+            self._timer_encajar.timeout.connect(self._encajar_totales_ahora)
+        self._timer_encajar.start(0)
+
+    def _encajar_totales_ahora(self) -> None:
         if (not hasattr(self, "split_principal")
                 or getattr(self, "_alto_totales_a_mano", True)
+                or getattr(self, "_distribucion", None) is None
+                or self._distribucion.colocacion != distribucion.TOTALES_ABAJO
+                or self.tabla_su_suma.vertical
                 or not self.totales_card.isVisible()):
             return
         tamanos = self.split_principal.sizes()
         total = sum(tamanos)
         if len(tamanos) != 2 or total <= 0:
             return
-        # Lo justo para todas las filas: cabecera, tabla entera y «Su suma».
+        # Lo justo para todas las filas: cabecera, tabla entera y «Su suma»
+        # (con las medidas de ahora: el mínimo que da Qt puede ir atrasado).
         capa = self.totales_card.layout()
         margenes = capa.contentsMargins()
-        partes = [capa.itemAt(0).sizeHint().height(),
-                  self.tabla_totales.maximumHeight()]
+        partes = [capa.itemAt(0).sizeHint().height()]
         if not self.tabla_su_suma.isHidden():
             partes.append(self.tabla_su_suma.maximumHeight())
-        alto = (margenes.top() + margenes.bottom() + sum(partes)
-                + capa.spacing() * (len(partes) - 1)
-                + 2 * self.totales_card.frameWidth())
-        alto = max(self.totales_card.minimumSizeHint().height(),
-                   min(alto, int(total * 0.4)))
+        resto = (margenes.top() + margenes.bottom() + sum(partes)
+                 + capa.spacing() * len(partes)
+                 + 2 * self.totales_card.frameWidth())
+        alto = max(resto + self.tabla_totales.minimumHeight(),
+                   min(resto + self.tabla_totales.maximumHeight(), int(total * 0.4)))
         if abs(alto - tamanos[1]) > 2:
             self.split_principal.setSizes([total - alto, alto])
 
@@ -1587,9 +1842,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla_su_suma.lbl_veredicto.setVisible(bool(visible))
         self.btn_ver_su_suma.setArrowType(Qt.DownArrow if visible else Qt.RightArrow)
         if hasattr(self, "tabla_totales"):
-            # Sin «Su suma», la barra para llegar a «Total» es la de los totales.
-            self.tabla_totales.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarAlwaysOff if visible else Qt.ScrollBarAsNeeded)
+            # Sin «Su suma», las barras para llegar a todo son las de los totales.
+            self._politica_barras_totales()
             self._ajustar_alto_totales()
         self._encajar_totales()
 
