@@ -360,6 +360,9 @@ def test_en_un_portatil_caben_todas(guardado, tema_real):
         # Las tres piezas caben en su sitio (la cinta de arriba se adapta
         # sola al ancho: no cuenta).
         principal = v.split_principal
+        if principal.minimumSizeHint().width() > principal.width():
+            print(clave, principal.minimumSizeHint().width(), principal.width())
+            print(_medidas(v))                 # sale entero en el registro
         assert principal.minimumSizeHint().width() <= principal.width(), (
             clave, principal.minimumSizeHint().width(), principal.width(),
             _medidas(v))

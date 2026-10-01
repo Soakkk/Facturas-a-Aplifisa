@@ -125,9 +125,11 @@ class EtiquetaRecortada(QLabel):
 
     `text()` sigue devolviendo el texto entero."""
 
-    def __init__(self, texto: str = "", parent=None, minimo: int = 80):
+    def __init__(self, texto: str = "", parent=None, minimo: int = 80,
+                 alineacion=Qt.AlignLeft):
         super().__init__(texto, parent)
         self._minimo = minimo
+        self._alineacion = alineacion
 
     def minimumSizeHint(self) -> QSize:
         alto = super().minimumSizeHint().height()
@@ -154,7 +156,7 @@ class EtiquetaRecortada(QLabel):
         pintor = QPainter(self)
         pintor.setPen(self.palette().color(QPalette.WindowText))
         area = self.contentsRect()
-        pintor.drawText(area, Qt.AlignLeft | Qt.AlignVCenter,
+        pintor.drawText(area, self._alineacion | Qt.AlignVCenter,
                         self._visible(area.width()))
         pintor.end()
 

@@ -309,9 +309,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # alto (la de la factura lleva botones en esa línea).
         titulo_tabla.setMinimumHeight(ALTO_TITULO_TARJETA)
         fila_datos.addWidget(titulo_tabla)
-        self.lbl_resultados = QLabel("Sin facturas")
+        # Se recorta con «…» antes que ensanchar la tarjeta (en Windows esta
+        # línea pedía más ancho que toda la columna estrecha).
+        self.lbl_resultados = EtiquetaRecortada("Sin facturas", minimo=60,
+                                                alineacion=Qt.AlignRight)
         self.lbl_resultados.setObjectName("textoSuave")
-        fila_datos.addWidget(self.lbl_resultados, 1, Qt.AlignRight)
+        fila_datos.addWidget(self.lbl_resultados, 1)
         lt.addLayout(fila_datos)
 
         # En ventana ancha coincide con el prototipo: filtros y acciones en
