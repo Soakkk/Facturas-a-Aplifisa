@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel import ajustes, distribucion
@@ -35,6 +36,23 @@ def guardado(monkeypatch):
     monkeypatch.setattr(ajustes, "leer",
                         lambda clave, defecto=None: datos.get(clave, defecto))
     return datos
+
+
+@pytest.fixture
+def tema_real():
+    """Con el aspecto del programa (letra, estilo y hoja de estilo): las
+    medidas mínimas dependen de él y, sin él, los botones de Windows piden
+    mucho más que en el programa de verdad. Se deja todo como estaba."""
+    from facturas_excel.estilo import aplicar_tema
+    antes = (_app.style().name(), QFont(_app.font()), QPalette(_app.palette()),
+             _app.styleSheet())
+    aplicar_tema(_app)
+    yield
+    estilo, letra, paleta, hoja = antes
+    _app.setStyleSheet(hoja)
+    _app.setPalette(paleta)
+    _app.setFont(letra)
+    _app.setStyle(estilo)
 
 
 def _factura(**cambios):
@@ -305,9 +323,9 @@ def test_sin_su_suma_en_columna_los_totales_llevan_su_barra(guardado):
     v.close()
 
 
-def test_en_un_portatil_caben_las_que_no_ponen_la_factura_a_lo_ancho(guardado):
-    """En 1366 caben todas; la 5 (lista, factura con lo leído al lado y
-    totales) es la única que pide más ancho que un 1024."""
+def test_en_un_portatil_caben_todas(guardado, tema_real):
+    """Con el aspecto del programa, en 1366 caben todas (la 5, con la
+    factura y lo leído al lado, es la única que pide más que un 1024)."""
     v = _ventana(1366, 740)
     if v.width() < 1366:
         v.close()
@@ -348,4 +366,80 @@ def test_los_titulos_de_las_tarjetas_van_a_la_misma_altura(guardado):
         alturas.add(v.lbl_resumen_titulo.mapTo(v, v.lbl_resumen_titulo.rect().topLeft()).y()
                     if not v.panel_progreso.isVisible() else min(alturas))
         assert max(alturas) - min(alturas) <= 2, (clave, alturas)
+    v.close()
+
+
+# ------------------------------------------- lo que encontró la revisión
+def test_en_columna_una_columna_nueva_no_deja_la_casilla_del_total_aplastada(guardado):
+    """Con la barra horizontal de los totales hay una fila de relleno en «Su
+    suma»; si sale otro tipo de IVA, esa fila pasa a ser la del total y no
+    puede quedarse con el alto de la barra."""
+    from facturas_excel.su_suma import ALTO_FILA_COLUMNA
+    from facturas_excel.tabla_facturas import C_PCT
+    v = _ventana(1366, 740)
+    v._elegir_distribucion("columnas")
+    _procesar()
+    v.txt_buscar.setText("G-")                   # cuatro ámbitos: barra
+    _procesar(6)
+    suma, t = v.tabla_su_suma, v.tabla_totales
+    assert suma._hueco > 0
+    fila = next(i for i, f in enumerate(v.filas) if f.factura.num_factura == "G-3")
+    v.tabla.item(fila, C_PCT).setText("4")        # sale el IVA del 4 %
+    _procesar(6)
+    assert "iva_4" in suma._campos
+    importes = PRIMERA_FILA_IMPORTE + len(suma._columnas)
+    assert all(suma.rowHeight(r) == ALTO_FILA_COLUMNA for r in range(importes))
+    campo = suma.campo("total")
+    y_campo = campo.mapTo(v, campo.rect().center()).y()
+    y_fila = t.viewport().mapTo(v, t.viewport().rect().topLeft()).y() \
+        + t.rowViewportPosition(importes - 1) + t.rowHeight(importes - 1) // 2
+    assert abs(y_campo - y_fila) <= 2
+    v.close()
+
+
+def test_el_listado_pdf_lleva_el_recargo_aunque_la_lista_vaya_con_lo_justo(guardado):
+    v = _ventana()
+    v._anadir_fila(b"", _factura(num_factura="R-1", base_requiv=100.0,
+                                 pct_requiv=5.2, cuota_requiv=5.2,
+                                 total_impreso=126.2),
+                   "gasto", "600", "", "")
+    v._revalidar_todo()
+    for clave in ("cuadre", "una_a_una"):
+        v._elegir_distribucion(clave)
+        _procesar()
+        html = v._html_listado_totales()
+        assert "Base RE" in html and "Cuota RE" in html, clave
+    v.close()
+
+
+def test_al_abrir_los_divisores_guardados_van_en_proporcion(guardado):
+    """Guardados con la ventana maximizada, al abrirla más pequeña se
+    reparten en proporción (no se deja la factura en su mínimo)."""
+    guardado["distribucion"] = "columnas"
+    guardado["divisor_columnas_revision"] = [700, 560, 620]
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v.resize(1420, 820)
+    v.show()
+    _procesar()
+    if v.minimumSizeHint().width() > v.width():
+        v.close()
+        pytest.skip("en esta pantalla cada pieza va en su mínimo")
+    tamanos = v.split_revision.sizes()
+    total = sum(tamanos)
+    for tamano, guardado_ in zip(tamanos, [700, 560, 620]):
+        assert abs(tamano / total - guardado_ / 1880) < 0.03, tamanos
+    v.close()
+
+
+def test_la_cabecera_de_los_totales_no_arrastra_globos_de_la_otra_forma(guardado):
+    v = _ventana()
+    v._elegir_distribucion("columnas")
+    _procesar()
+    v._elegir_distribucion("cuadre")
+    _procesar()
+    t = v.tabla_totales
+    globos = {t.horizontalHeaderItem(c).text(): t.horizontalHeaderItem(c).toolTip()
+              for c in range(t.columnCount())}
+    assert globos["Nº"] == "" and globos["Base imponible"] == ""
+    assert globos["Total"].startswith("Total = base")
     v.close()

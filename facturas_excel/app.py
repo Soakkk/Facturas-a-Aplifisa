@@ -1157,6 +1157,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if accion is not None and not accion.isChecked():
             accion.setChecked(True)
         if al_arrancar:
+            # Aún sin colocar: los divisores se reparten al verse la ventana
+            # (si no, irían tal cual y Qt dejaría en su mínimo lo que estira).
+            self._tamanos_al_mostrar = True
             self._pintar_tabla_totales([], False, [])
             return
         self._pintar_resumen()
@@ -1295,6 +1298,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def showEvent(self, evento):
         super().showEvent(evento)
+        if getattr(self, "_tamanos_al_mostrar", False):
+            self._tamanos_al_mostrar = False
+            self._poner_tamanos_distribucion()
         self._encajar_totales()
         if sys.platform != "win32" or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
             return

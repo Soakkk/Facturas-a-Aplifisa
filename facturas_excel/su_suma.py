@@ -390,6 +390,11 @@ class TablaSuSuma(QTableWidget):
         relleno = 1 if self._hueco else 0
         if self._vertical:
             self.setRowCount(PRIMERA_FILA_IMPORTE + len(columnas) + relleno)
+            # La fila de relleno de antes puede ser ahora la de un importe:
+            # todas con su alto (la nueva de relleno se pone después).
+            for r in range(PRIMERA_FILA_IMPORTE + len(columnas)):
+                if self.rowHeight(r) != ALTO_FILA_COLUMNA:
+                    self.setRowHeight(r, ALTO_FILA_COLUMNA)
         else:
             self.setColumnCount(PRIMERA_COLUMNA_IMPORTE + len(columnas) + relleno)
         for i, (clave, cabecera, _importe) in enumerate(columnas):

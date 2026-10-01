@@ -361,6 +361,19 @@ class ValidacionMixin:
             if self.tabla.isColumnHidden(columna) != oculta:
                 self.tabla.setColumnHidden(columna, oculta)
 
+    def _con_columnas_de_recargo(self) -> bool:
+        """Si el lote lleva columnas de recargo (por el cliente o por sus
+        facturas), lo vea o no la tabla («una a una» enseña lo justo)."""
+        if not hasattr(self, "accion_todas_columnas"):
+            return not self.tabla.isColumnHidden(C_BASE_RE)
+        self._actualizar_columnas()
+        _clave, recargo_cliente, retenciones_cliente = self._perfil_columnas
+        visibles = columnas_visibles(
+            self.filas, recargo_cliente=recargo_cliente,
+            irpf_cliente=retenciones_cliente,
+            ver_todas=self.accion_todas_columnas.isChecked())
+        return bool(visibles.get(C_BASE_RE))
+
     def _ver_todas_columnas(self, todas: bool) -> None:
         ajustes.guardar("ver_todas_columnas", bool(todas))
         self._actualizar_columnas()
@@ -743,6 +756,7 @@ class ValidacionMixin:
             tabla.setColumnCount(1 + len(ambitos))
             tabla.setHorizontalHeaderLabels(
                 ["", *(f"{tipo}\n{nombre}" for tipo, nombre, *_ in ambitos)])
+            tabla.horizontalHeaderItem(0).setToolTip("")
             for c, (tipo, nombre, nota, _f, _x) in enumerate(ambitos, start=1):
                 tabla.horizontalHeaderItem(c).setToolTip(
                     f"{tipo} · {nombre}" + (f"\n{nota}" if nota else ""))
@@ -759,6 +773,9 @@ class ValidacionMixin:
             cabeceras = ["", "Nº", *(c[1] for c in columnas)]
             tabla.setColumnCount(len(cabeceras))
             tabla.setHorizontalHeaderLabels(cabeceras)
+            # Qt reutiliza los títulos: sin los globos de la forma en columna.
+            for c in range(len(cabeceras)):
+                tabla.horizontalHeaderItem(c).setToolTip("")
             tabla.horizontalHeaderItem(len(cabeceras) - 1).setToolTip(ayuda_total)
             tabla.setRowCount(len(ambitos))
             for r, (tipo, nombre, nota, fondo, cifras) in enumerate(ambitos):
@@ -928,7 +945,7 @@ class ValidacionMixin:
             ("GXX", C_GXX), ("Base", C_BASE), ("% IVA", C_PCT),
             ("Cuota", C_CUOTA),
         ]
-        if not self.tabla.isColumnHidden(C_BASE_RE):
+        if self._con_columnas_de_recargo():
             columnas_detalle.extend([
                 ("Base RE", C_BASE_RE), ("% RE", C_PCT_RE),
                 ("Cuota RE", C_CUOTA_RE),
