@@ -486,3 +486,43 @@ def test_factura_fuera_del_trimestre_se_avisa_y_se_separa_del_total():
     fuera = next(fila for fila in filas if fila[0] == "FUERA 1T 2026")
     assert dentro[2:5] == ["3", "3", "300,00 €"]
     assert fuera[2:5] == ["1", "1", "100,00 €"]
+
+
+def test_un_error_inesperado_se_avisa_y_se_apunta(monkeypatch, tmp_path):
+    """En el .exe no hay consola: un fallo no puede pasar en silencio."""
+    import facturas_excel.app as modulo
+    from facturas_excel.rutas import dir_datos
+    avisos = []
+    monkeypatch.setattr(modulo.QMessageBox, "critical",
+                        lambda *args: avisos.append(args))
+    monkeypatch.setattr(modulo.sys, "__excepthook__", lambda *a: None)
+    try:
+        raise PermissionError("el archivo está abierto en otro programa")
+    except PermissionError as error:
+        modulo._aviso_de_error(type(error), error, error.__traceback__)
+    assert avisos and "abierto en otro programa" in avisos[0][2]
+    with open(os.path.join(dir_datos(), modulo.FICHERO_ERRORES), encoding="utf-8") as fh:
+        assert "PermissionError" in fh.read()
+
+
+def test_un_error_en_un_hilo_de_lectura_solo_se_apunta(monkeypatch):
+    """Abrir una ventana desde otro hilo cerraría el programa."""
+    import threading
+    import facturas_excel.app as modulo
+    from facturas_excel.rutas import dir_datos
+    avisos = []
+    monkeypatch.setattr(modulo.QMessageBox, "critical",
+                        lambda *args: avisos.append(args))
+    monkeypatch.setattr(modulo.sys, "__excepthook__", lambda *a: None)
+
+    def en_otro_hilo():
+        try:
+            raise ValueError("fallo leyendo una hoja")
+        except ValueError as error:
+            modulo._aviso_de_error(type(error), error, error.__traceback__)
+    hilo = threading.Thread(target=en_otro_hilo)
+    hilo.start()
+    hilo.join()
+    assert not avisos
+    with open(os.path.join(dir_datos(), modulo.FICHERO_ERRORES), encoding="utf-8") as fh:
+        assert "fallo leyendo una hoja" in fh.read()

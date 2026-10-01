@@ -4,6 +4,7 @@ colocando cada campo en la columna que indica la configuracion (ConfigColumnas).
 
 from __future__ import annotations
 
+import io
 from datetime import date
 from typing import List
 
@@ -90,12 +91,15 @@ def exportar_excel(
     config: ConfigColumnas,
     ruta_salida: str,
     modo_numeros: str = MODO_TEXTO,
+    solo_nuevo: bool = False,
 ) -> str:
     """Escribe el .xlsx y devuelve la ruta.
 
     - Fila 1: cabecera (si config.incluye_cabecera).
     - Datos desde config.primera_fila.
     - Cada campo va a la columna (letra) que diga config.columnas.
+    - Con ``solo_nuevo`` nunca pisa un archivo que ya exista (lanza
+      FileExistsError): la exportación elige antes un nombre libre.
     """
     wb = Workbook()
     # Aplifisa interpreta la mera presencia de <workbookProtection /> como si
@@ -127,12 +131,17 @@ def exportar_excel(
                     celda.number_format = "@"
         fila += 1
 
+    # El libro se prepara en memoria y se escribe de una vez: si la escritura
+    # falla, el archivo queda cerrado y se puede borrar (en Windows un archivo
+    # abierto no se deja borrar). Así tampoco queda ningún descriptor abierto:
+    # Aplifisa necesita acceso exclusivo para importarlo.
+    contenido = io.BytesIO()
     try:
-        wb.save(ruta_salida)
+        wb.save(contenido)
     finally:
-        # Entregar el archivo sin ningun descriptor abierto. Algunos programas
-        # contables necesitan acceso exclusivo para importarlo o modificarlo.
         wb.close()
+    with open(ruta_salida, "xb" if solo_nuevo else "wb") as fh:
+        fh.write(contenido.getvalue())
     return ruta_salida
 
 

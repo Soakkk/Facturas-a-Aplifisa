@@ -10,10 +10,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import traceback
 
 from collections import Counter
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame,
@@ -26,8 +27,8 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, escaner, notas_version, pendientes,
-    revision_gemini, sesion, updater, muestras_revision,
+    __version__, ajustes, archivo, costes, errores, escaner, notas_version,
+    pendientes, revision_gemini, sesion, updater, muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
 from facturas_excel.claves import guardar_api_key, leer_api_key
@@ -1918,8 +1919,42 @@ def _argumentos(argv):
     return args
 
 
+FICHERO_ERRORES = errores.FICHERO
+
+
+def _aviso_de_error(tipo, valor, rastro) -> None:
+    """Ningún fallo pasa en silencio.
+
+    En el .exe no hay consola: un error inesperado (al exportar, por ejemplo)
+    no enseñaba nada y parecía que el botón no hacía caso. Ahora se apunta en
+    errores.log, en la carpeta de datos, y se avisa con un mensaje.
+    """
+    if issubclass(tipo, KeyboardInterrupt):
+        sys.__excepthook__(tipo, valor, rastro)
+        return
+    errores.apuntar("".join(traceback.format_exception(tipo, valor, rastro)))
+    try:
+        sys.__excepthook__(tipo, valor, rastro)
+    except Exception:
+        pass                     # sin consola (el .exe) no hay dónde escribir
+    app = QApplication.instance()
+    # Solo desde el hilo de la ventana: una ventana abierta desde un hilo de
+    # lectura tumbaría el programa. Allí basta con dejarlo apuntado.
+    if app is not None and QThread.currentThread() is app.thread():
+        try:
+            QMessageBox.critical(
+                None, "Algo ha fallado",
+                f"No se ha podido terminar lo que estaba haciendo:\n\n{valor}"
+                f"\n\nEl detalle queda apuntado en {FICHERO_ERRORES}, en la "
+                "carpeta de datos del programa (%APPDATA%\\FacturasAplifisa). "
+                "Lo que ya estaba hecho no se ha perdido.")
+        except Exception:
+            pass
+
+
 def main():
     args = _argumentos(sys.argv)
+    sys.excepthook = _aviso_de_error
     app = QApplication([sys.argv[0]])
     app.setWindowIcon(QIcon(ruta_recurso("app.ico")))
     aplicar_tema(app)

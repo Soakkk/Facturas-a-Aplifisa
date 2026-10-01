@@ -276,3 +276,16 @@ def test_no_crea_un_zip_vacio(escaneos):
     os.makedirs(os.path.join(escaneos, "CLIENTE", "2025", "Gastos"))
     with pytest.raises(ValueError):
         archivo.comprimir_ejercicio(escaneos, "CLIENTE", 2025)
+
+
+def test_el_excel_nuevo_nunca_pisa_el_anterior(escaneos):
+    propio = archivo.ruta_excel_consolidado("CLIENTE", 2026, "gasto", escaneos)
+    assert archivo.excel_sin_pisar(propio) == propio
+    open(propio, "wb").close()
+    segundo = archivo.excel_sin_pisar(propio)
+    assert segundo == os.path.join(escaneos, "GASTOS_CLIENTE_2.xlsx")
+    open(segundo, "wb").close()
+    assert archivo.excel_sin_pisar(propio) == os.path.join(
+        escaneos, "GASTOS_CLIENTE_3.xlsx")
+    # Los numerados no se confunden con los Excel de partes que se limpian.
+    assert archivo.eliminar_excel_temporales("CLIENTE", "gasto", escaneos) == []

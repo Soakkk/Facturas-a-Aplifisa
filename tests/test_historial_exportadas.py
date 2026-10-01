@@ -52,7 +52,7 @@ def _preparar_exportacion(monkeypatch, tmp_path, escritos):
                         lambda cliente, tipo: [])
     monkeypatch.setattr(ventana_aplifisa, "leer_config", lambda ruta: object())
     monkeypatch.setattr(ventana_aplifisa, "exportar_excel",
-                        lambda facturas, config, ruta: escritos.append(
+                        lambda facturas, config, ruta, **_k: escritos.append(
                             [f.num_factura for f in facturas]))
     monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *a: [])
     monkeypatch.setattr(ventana_aplifisa, "totales_del_excel",
