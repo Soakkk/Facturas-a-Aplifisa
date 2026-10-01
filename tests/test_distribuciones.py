@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from facturas_excel import ajustes, distribucion
 from facturas_excel.app import VentanaPrincipal
@@ -323,6 +323,30 @@ def test_sin_su_suma_en_columna_los_totales_llevan_su_barra(guardado):
     v.close()
 
 
+def _medidas(v) -> str:
+    """Qué pide más ancho en cada tarjeta (para saber qué ajustar si una
+    distribución no cabe en una máquina con otra letra)."""
+    from PySide6.QtWidgets import QLabel, QAbstractButton, QComboBox, QLineEdit
+    lineas = []
+    for tarjeta in (v.tabla_card, v.factura_card, v.totales_card):
+        piezas = []
+        for hijo in tarjeta.findChildren(QWidget):
+            if not hijo.isVisible():
+                continue
+            minimo = max(hijo.minimumSizeHint().width(), hijo.minimumWidth())
+            texto = ""
+            if isinstance(hijo, (QLabel, QAbstractButton, QLineEdit)):
+                texto = hijo.text()[:30]
+            elif isinstance(hijo, QComboBox):
+                texto = hijo.currentText()[:30]
+            piezas.append((minimo, type(hijo).__name__, hijo.objectName(), texto))
+        piezas.sort(reverse=True)
+        lineas.append(f"{tarjeta.objectName()} min={tarjeta.minimumSizeHint().width()} "
+                      f"ancho={tarjeta.width()}: {piezas[:8]}")
+    lineas.append(f"letra={_app.font().family()} {_app.font().pointSizeF()}")
+    return "\n".join(lineas)
+
+
 def test_en_un_portatil_caben_todas(guardado, tema_real):
     """Con el aspecto del programa, en 1366 caben todas (la 5, con la
     factura y lo leído al lado, es la única que pide más que un 1024)."""
@@ -333,7 +357,12 @@ def test_en_un_portatil_caben_todas(guardado, tema_real):
     for clave in CLAVES:
         v._elegir_distribucion(clave)
         _procesar()
-        assert v.minimumSizeHint().width() <= v.width(), clave
+        # Las tres piezas caben en su sitio (la cinta de arriba se adapta
+        # sola al ancho: no cuenta).
+        principal = v.split_principal
+        assert principal.minimumSizeHint().width() <= principal.width(), (
+            clave, principal.minimumSizeHint().width(), principal.width(),
+            _medidas(v))
     v.close()
 
 
@@ -412,7 +441,7 @@ def test_el_listado_pdf_lleva_el_recargo_aunque_la_lista_vaya_con_lo_justo(guard
     v.close()
 
 
-def test_al_abrir_los_divisores_guardados_van_en_proporcion(guardado):
+def test_al_abrir_los_divisores_guardados_van_en_proporcion(guardado, tema_real):
     """Guardados con la ventana maximizada, al abrirla más pequeña se
     reparten en proporción (no se deja la factura en su mínimo)."""
     guardado["distribucion"] = "columnas"
@@ -421,13 +450,14 @@ def test_al_abrir_los_divisores_guardados_van_en_proporcion(guardado):
     v.resize(1420, 820)
     v.show()
     _procesar()
-    if v.minimumSizeHint().width() > v.width():
-        v.close()
-        pytest.skip("en esta pantalla cada pieza va en su mínimo")
     tamanos = v.split_revision.sizes()
     total = sum(tamanos)
+    minimos = [v.split_revision.widget(i).minimumSizeHint().width() for i in range(3)]
+    if any(t * total / 1880 < m for t, m in zip([700, 560, 620], minimos)):
+        v.close()
+        pytest.skip("en esta pantalla alguna pieza no cabe en su proporción")
     for tamano, guardado_ in zip(tamanos, [700, 560, 620]):
-        assert abs(tamano / total - guardado_ / 1880) < 0.03, tamanos
+        assert abs(tamano / total - guardado_ / 1880) < 0.03, (tamanos, _medidas(v))
     v.close()
 
 
