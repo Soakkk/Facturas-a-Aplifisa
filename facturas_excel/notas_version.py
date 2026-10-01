@@ -6,6 +6,26 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.17.2": """
+<h2>Novedades de la versión 1.17.2</h2>
+<ul>
+  <li><b>Un Excel nuevo en cada exportación.</b> Antes el Excel se llamaba
+      siempre igual (<i>GASTOS_CLIENTE.xlsx</i>) y, si el de la vez anterior
+      seguía en el Escritorio o abierto en Excel o en Aplifisa, el nuevo no se
+      generaba. Ahora, si ya existe, el nuevo sale como
+      <i>GASTOS_CLIENTE_2.xlsx</i>, <i>_3</i>… El anterior no se toca, y el
+      aviso final le dice el nombre exacto del que acaba de crear. Así puede
+      trabajar con varios bloques de facturas y exportar cada uno.</li>
+  <li>La comprobación de facturas ya exportadas sigue igual: lo que ya salió
+      hacia Aplifisa no se vuelve a meter si pulsa «Exportar sin ellas».</li>
+  <li><b>Ningún fallo pasa en silencio.</b> Si algo sale mal al exportar, o en
+      cualquier otro momento, aparece un mensaje explicando qué ha pasado y
+      queda apuntado en <i>errores.log</i>. Si el Excel no se puede guardar,
+      no se deja ninguno a medias. Si al releerlo no coincide con la pantalla,
+      se aparta como <i>«NO IMPORTAR - GASTOS_…»</i> para que no se pueda
+      importar por error.</li>
+</ul>
+""",
     "1.17.1": """
 <h2>Novedades de la versión 1.17.1</h2>
 <ul>

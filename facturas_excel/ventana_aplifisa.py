@@ -7,6 +7,7 @@ viva en su sitio. Los métodos usan el estado de la ventana (self).
 from __future__ import annotations
 
 import os
+import traceback
 
 from collections import Counter
 from dataclasses import replace
@@ -15,6 +16,7 @@ from datetime import date
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from facturas_excel import ajustes, archivo, escaner, historial
+from facturas_excel import errores as registro_errores
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.dialogo_orden import (
     PDF as ORDEN_PDF, DialogoOrden,
@@ -323,36 +325,73 @@ class AplifisaMixin:
         resumen_archivos = []      # (ruta, lineas, totales) para enseñarlo
         tipos_exportados = []      # los parciales se borran solo tras verificar
         rutas_por_tipo = {}
+        numerados = []             # ya había otro con ese nombre: va con _2…
+        nuevos = []                # lo creado en esta exportación
         cliente_archivo = self._nombre_cliente_archivo()
-        for tipo, xml in (
-            ("gasto", "gastos.xml"),
-            ("venta", "ingresos.xml"),
-        ):
-            if not por_tipo[tipo]:
-                continue
-            ejercicio = self._ejercicio_exportacion(por_tipo[tipo])
-            ruta = archivo.ruta_excel_consolidado(
-                cliente_archivo, ejercicio, tipo)
-            nombre = os.path.basename(ruta)
-            config = leer_config(ruta_config(xml))
-            listas = self._para_aplifisa(por_tipo[tipo])
-            exportar_excel(listas, config, ruta)
-            # DOBLE CONTRASTE: se vuelve a leer el archivo escrito y se compara
-            # con lo que hay en pantalla. Es el ultimo paso antes de que los
-            # apuntes entren en la contabilidad, y era el unico sin comprobar.
-            fallos = verificar_excel(listas, config, ruta)
-            problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
-            resumen_archivos.append(
-                (ruta, len(listas), totales_del_excel(config, ruta)))
-            tipos_exportados.append(tipo)
-            rutas_por_tipo[tipo] = ruta
+        nombre = ""
+        try:
+            for tipo, xml in (
+                ("gasto", "gastos.xml"),
+                ("venta", "ingresos.xml"),
+            ):
+                if not por_tipo[tipo]:
+                    continue
+                nombre = "el Excel de " + ("gastos" if tipo == "gasto" else "ingresos")
+                ejercicio = self._ejercicio_exportacion(por_tipo[tipo])
+                propia = archivo.ruta_excel_consolidado(
+                    cliente_archivo, ejercicio, tipo)
+                # Nunca se pisa el Excel de una exportación anterior (puede
+                # estar abierto o sin importar): el nuevo lleva «_2», «_3»…
+                ruta = archivo.excel_sin_pisar(propia)
+                nombre = os.path.basename(ruta)
+                config = leer_config(ruta_config(xml))
+                listas = self._para_aplifisa(por_tipo[tipo])
+                try:
+                    exportar_excel(listas, config, ruta, solo_nuevo=True)
+                except FileExistsError:
+                    raise              # no es nuestro: no se toca
+                except Exception:
+                    nuevos.append(ruta)    # puede haber quedado a medias
+                    raise
+                nuevos.append(ruta)
+                if ruta != propia:
+                    numerados.append((propia, ruta))
+                # DOBLE CONTRASTE: se vuelve a leer el archivo escrito y se
+                # compara con lo que hay en pantalla. Es el ultimo paso antes
+                # de que los apuntes entren en la contabilidad.
+                fallos = verificar_excel(listas, config, ruta)
+                problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
+                resumen_archivos.append(
+                    (ruta, len(listas), totales_del_excel(config, ruta)))
+                tipos_exportados.append(tipo)
+                rutas_por_tipo[tipo] = ruta
+        except Exception as error:
+            # Antes un fallo aquí no avisaba de nada: «no genera el Excel».
+            registro_errores.apuntar(traceback.format_exc())
+            sobrantes = self._retirar_excel_fallidos(nuevos, borrar=True)
+            if isinstance(error, OSError):
+                causa = (f"No se pudo guardar «{nombre}» en el Escritorio:\n"
+                         f"{error}\n\nCompruebe que el Escritorio existe y se "
+                         "puede escribir en él, y vuelva a pulsar Exportar.")
+            else:
+                causa = (f"Falló al preparar «{nombre}»: {error}\n\nEl detalle "
+                         f"queda apuntado en {registro_errores.FICHERO}, en la carpeta de "
+                         "datos del programa.")
+            QMessageBox.critical(
+                self, "No se ha podido crear el Excel",
+                "No se ha exportado nada.\n\n" + causa + sobrantes)
+            return
 
         if problemas_export:
+            # Que no parezca un Excel exportado: ni se importa por error, ni
+            # el siguiente sale como «_2» dejando este con el nombre bueno,
+            # ni «Recoger sueltos» lo archiva como si lo fuera.
+            apartados = self._retirar_excel_fallidos(nuevos, borrar=False)
             QMessageBox.critical(
                 self, "El archivo NO coincide con la pantalla",
                 "Al volver a leer lo escrito, esto no cuadra:\n\n  · "
                 + "\n  · ".join(problemas_export)
-                + "\n\nNO importe estos archivos en Aplifisa sin revisarlos.")
+                + "\n\nNo se ha exportado nada." + apartados)
             return
 
         temporales_eliminados = sum(
@@ -365,11 +404,21 @@ class AplifisaMixin:
         historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
                             rutas_por_tipo, getattr(self, "_cliente_nombre", ""),
                             leidas_en=self._momentos_de_lectura())
-        # Los duplicados no van al Excel ni tienen PDF propio: su original sí.
-        texto_expediente = self._archivar_exportacion(
-            exportadas, rutas_por_tipo)
-        aprender_nifs_exportados(
-            [f for t in tipos_exportados for f in por_tipo[t]])
+        # A partir de aquí el Excel ya es bueno y está apuntado: un fallo al
+        # archivar no puede esconder el aviso final con su nombre (si no,
+        # parece que no se exportó y se exporta otra vez).
+        try:
+            # Los duplicados no van al Excel ni tienen PDF propio: su original sí.
+            texto_expediente = self._archivar_exportacion(
+                exportadas, rutas_por_tipo)
+            aprender_nifs_exportados(
+                [f for t in tipos_exportados for f in por_tipo[t]])
+        except Exception as error:
+            registro_errores.apuntar(traceback.format_exc())
+            texto_expediente = (
+                f"\nOJO: el Excel está bien, pero no se pudo poner al día el "
+                f"archivo del cliente ({error}). El detalle queda en "
+                f"{registro_errores.FICHERO}.")
         self._perfil_columnas = (None,)      # el registro ha cambiado
         self._revalidar_todo()
         detalle = "\n".join(
@@ -386,6 +435,10 @@ class AplifisaMixin:
             f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
+            + "".join(
+                f"Ya había un «{os.path.basename(propia)}» en el Escritorio y "
+                f"no se ha tocado: el nuevo es «{os.path.basename(ruta)}».\n"
+                for propia, ruta in numerados)
             + (f"Duplicadas, no exportadas: {len(excluidas)} línea(s).\n"
                if excluidas else "")
             + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
@@ -394,3 +447,37 @@ class AplifisaMixin:
               "en pantalla, línea por línea. No se han creado Excel parciales."
             + texto_expediente,
             EXITO, segundos=0)
+
+    @staticmethod
+    def _retirar_excel_fallidos(rutas, borrar: bool) -> str:
+        """Quita de en medio los Excel de una exportación fallida.
+
+        Se borran, o se renombran a «NO IMPORTAR - …» si hay que poder
+        mirarlos. Si no se puede ninguna de las dos cosas, se dice cuáles
+        quedan para que no se importen. Devuelve el texto para el aviso.
+        """
+        avisos = []
+        for ruta in rutas:
+            if not os.path.exists(ruta):
+                continue
+            nombre = os.path.basename(ruta)
+            if borrar:
+                try:
+                    os.remove(ruta)
+                    continue
+                except OSError:
+                    pass
+            destino = archivo.excel_sin_pisar(os.path.join(
+                os.path.dirname(ruta), f"NO IMPORTAR - {nombre}"))
+            try:
+                os.replace(ruta, destino)
+                if not borrar:
+                    avisos.append(f"Se ha guardado como «{os.path.basename(destino)}» "
+                                  "para que lo pueda mirar: no lo importe.")
+                    continue
+            except OSError:
+                pass
+            if os.path.exists(ruta):
+                avisos.append(f"No se ha podido quitar «{nombre}» del "
+                              "Escritorio: bórrelo a mano y NO lo importe.")
+        return "".join(f"\n\n{a}" for a in avisos)

@@ -208,3 +208,12 @@ def test_ventana_de_recogida_marca_solo_lo_seguro_y_aplica(entorno):
     assert d.resultado["movidos"] == 1
     assert d.resultado["afectados"] == [(CLIENTE[1], CLIENTE[0], 2026)]
     assert (entorno.escritorio / "ajena.pdf").exists()
+
+
+def test_tambien_se_reconoce_el_excel_numerado(entorno):
+    libro = Workbook()
+    libro.active.append(["15/03/2026", "F-2"])
+    libro.save(str(entorno.escritorio / "GASTOS_TALLERES PRUEBA SL_2.xlsx"))
+    [c] = [c for c in recoger.buscar(recoger.carpetas_origen(), entorno.base)
+           if c.clase == "excel"]
+    assert (c.nif, c.tipo, c.ejercicio) == (CLIENTE[0], "gastos", 2026)

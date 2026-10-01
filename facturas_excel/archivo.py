@@ -138,6 +138,22 @@ def ruta_excel_consolidado(cliente: str, ejercicio: int, tipo: str,
     return os.path.join(carpeta, f"{tipo_limpio.upper()}_{cliente_limpio}.xlsx")
 
 
+def excel_sin_pisar(ruta: str) -> str:
+    """La ruta tal cual si está libre; si no, «_2», «_3»… (como los escaneos).
+
+    Antes cada exportación del cliente usaba siempre el mismo nombre: con el
+    Excel anterior aún en el Escritorio (abierto en Excel o en Aplifisa, o sin
+    importar todavía) el nuevo no se podía guardar. Nunca se pisa el anterior.
+    Recoger sueltos ya reconoce los nombres con «_N».
+    """
+    base, extension = os.path.splitext(ruta)
+    candidata, numero = ruta, 2
+    while os.path.exists(candidata):
+        candidata = f"{base}_{numero}{extension}"
+        numero += 1
+    return candidata
+
+
 def eliminar_excel_temporales(cliente: str, tipo: str,
                               carpeta_base: Optional[str] = None) -> List[str]:
     """Elimina solo los Excel ``parte_N_de_M`` del cliente y tipo indicados.

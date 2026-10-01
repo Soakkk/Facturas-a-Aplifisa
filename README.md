@@ -47,6 +47,8 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    La comprobación inferior recalcula los totales del filtro visible sin perder
    el total completo de todo lo cargado y distingue facturas de líneas fiscales.
 4. **Exportar** `GASTOS_CLIENTE.xlsx` / `INGRESOS_CLIENTE.xlsx` al Escritorio
+   (si ya hay uno de una exportación anterior, el nuevo sale como
+   `GASTOS_CLIENTE_2.xlsx`, `_3`…: nunca se pisa ni se queda sin generar)
    → importar en Aplifisa con la
    configuración de columnas incluida (`config/gastos.xml` / `ingresos.xml`).
    Aunque el PDF tenga 100 páginas o varios bloques, solo se genera el Excel
