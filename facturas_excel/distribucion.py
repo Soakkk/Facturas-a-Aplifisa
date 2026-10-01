@@ -21,6 +21,9 @@ class Distribucion:
     clave: str
     numero: int
     nombre: str
+    # Para qué va mejor (sale en el menú): cada una sirve a un momento del
+    # trabajo, no son cinco maneras de ver lo mismo.
+    uso: str
     descripcion: str
     colocacion: str
     # La hoja arriba y lo leído debajo (si no, uno al lado del otro).
@@ -34,6 +37,8 @@ class Distribucion:
     datos_sobre_hoja: bool = False
     # La tabla con lo justo: estado, nombre y total.
     tabla_compacta: bool = False
+    # Encima de los totales, cuántas facturas están listas y cuántas faltan.
+    progreso: bool = False
     # Tamaños de partida de los divisores que usa.
     tamanos: dict = field(default_factory=dict)
 
@@ -41,41 +46,45 @@ class Distribucion:
     def titulo(self) -> str:
         return f"{self.numero} · {self.nombre}"
 
+    @property
+    def titulo_menu(self) -> str:
+        return f"{self.titulo} — {self.uso}"
+
 
 DISTRIBUCIONES = (
     Distribucion(
-        "columnas", 1, "Tres columnas",
+        "columnas", 1, "Tres columnas", "todo a la vista en una pantalla grande",
         "Facturas | factura (la hoja arriba y lo leído debajo) | totales "
         "en columna, con «Su suma» al lado de cada importe.",
         COLUMNAS, factura_vertical=True,
         tamanos={"revision": [700, 480, 620], "factura": [520, 320]}),
     Distribucion(
-        "sobre_hoja", 2, "Lectura sobre la hoja",
-        "Como la 1, pero lo leído se queda en una línea y la hoja ocupa "
-        "toda la factura: los datos que ya se sabe dónde están se señalan "
-        "sobre ella.",
+        "sobre_hoja", 2, "Lectura sobre la hoja", "comprobar contra el papel",
+        "Como la 1, pero la hoja ocupa toda la factura: lo leído se queda en "
+        "una línea y los datos que ya se sabe dónde están se señalan sobre "
+        "ella.",
         COLUMNAS, factura_vertical=True, lectura_plegada=True,
         datos_sobre_hoja=True,
         tamanos={"revision": [680, 500, 620], "factura": [520, 320]}),
     Distribucion(
-        "tabla_arriba", 3, "Tabla arriba",
-        "La tabla de facturas a lo ancho, con todas sus columnas; debajo, "
-        "la factura (la hoja y lo leído al lado) y los totales.",
+        "tabla_arriba", 3, "Tabla arriba", "repasar el lote entero",
+        "La tabla de facturas a lo ancho, con sus columnas a la vista; "
+        "debajo, la factura (la hoja y lo leído al lado) y los totales.",
         TABLA_ARRIBA,
         tamanos={"principal": [420, 480], "inferior": [1100, 620],
                  "factura": [440, 520]}),
     Distribucion(
-        "cuadre", 4, "Cuadre con su suma",
+        "cuadre", 4, "Cuadre con su suma", "cuadrar con su suma y con Aplifisa",
         "Facturas | factura arriba; abajo, a todo lo ancho, los totales como "
         "el listado de Aplifisa con «Su suma» bajo cada columna.",
         TOTALES_ABAJO, totales_en_columna=False,
         tamanos={"revision": [900, 960], "factura": [480, 440]}),
     Distribucion(
-        "una_a_una", 5, "Una a una",
-        "Una lista estrecha con lo justo (estado, nombre y total), la "
-        "factura en grande con lo leído al lado y los totales en columna. "
-        "Para pantallas anchas.",
-        COLUMNAS, tabla_compacta=True,
+        "una_a_una", 5, "Una a una", "revisar las pendientes una detrás de otra",
+        "Una lista con lo justo (estado, nombre y total), la factura en "
+        "grande con lo leído al lado, cuántas quedan y los totales en "
+        "columna. Para pantallas anchas.",
+        COLUMNAS, tabla_compacta=True, progreso=True,
         tamanos={"revision": [520, 760, 620], "factura": [520, 440]}),
 )
 

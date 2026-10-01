@@ -43,6 +43,11 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    la línea del título de la factura, **Revisada** y **Correcta · siguiente**
    (Ctrl+Intro); Intro en la tabla salta a la siguiente pendiente sin marcar
    nada.
+   Es la distribución 4; en **Ver → Distribución de la pantalla**
+   (Ctrl+1 … Ctrl+5) se elige otra de los cinco prototipos: tres columnas,
+   lectura sobre la hoja, tabla arriba, cuadre con su suma o una a una. Con
+   los totales en columna, «Su suma» va al lado de cada importe. Cada una
+   recuerda sus divisores.
    La **lectura de la IA**, al lado de la hoja, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.

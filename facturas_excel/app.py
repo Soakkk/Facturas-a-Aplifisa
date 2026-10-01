@@ -76,6 +76,10 @@ from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
 # Datos de la cabecera de una factura (iguales en todas sus líneas).
 CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclave")
 TODOS_LOS_MESES = "Todos los meses"
+# Las tres tarjetas (facturas, factura, totales), con el mismo aire y el
+# título a la misma altura en cualquier distribución.
+MARGENES_TARJETA = (12, 10, 12, 10)
+ALTO_TITULO_TARJETA = 32
 from facturas_excel.ventana_comun import (  # noqa: F401
     COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente, EtiquetaRecortada,
     ICONO_CORREGIDO, ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
@@ -297,10 +301,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         tabla_card.setObjectName("tarjeta")
         self.tabla_card = tabla_card
         lt = QVBoxLayout(tabla_card)
-        lt.setContentsMargins(12, 10, 12, 10)
+        lt.setContentsMargins(*MARGENES_TARJETA)
         fila_datos = QHBoxLayout()
         titulo_tabla = QLabel("Datos extraídos")
         titulo_tabla.setObjectName("tituloSeccion")
+        # Las tres tarjetas, con el título a la misma altura y del mismo
+        # alto (la de la factura lleva botones en esa línea).
+        titulo_tabla.setMinimumHeight(ALTO_TITULO_TARJETA)
         fila_datos.addWidget(titulo_tabla)
         self.lbl_resultados = QLabel("Sin facturas")
         self.lbl_resultados.setObjectName("textoSuave")
@@ -483,9 +490,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # lado), para que la hoja nunca se quede en una tira.
         self.factura_card = visor_card
         lv = QVBoxLayout(visor_card)
-        lv.setContentsMargins(12, 12, 12, 10)
+        lv.setContentsMargins(*MARGENES_TARJETA)
         titulo_visor = QLabel("Factura")
         titulo_visor.setObjectName("tituloSeccion")
+        titulo_visor.setMinimumHeight(ALTO_TITULO_TARJETA)
         self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_origen.setObjectName("textoSuave")
         self.lbl_origen.setWordWrap(True)
@@ -650,14 +658,43 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         totales_card.setObjectName("tarjeta")
         self.totales_card = totales_card
         lr = QVBoxLayout(totales_card)
-        lr.setContentsMargins(12, 8, 12, 8)
+        lr.setContentsMargins(*MARGENES_TARJETA)
         lr.setSpacing(4)
+        # «Una a una»: cuántas facturas están listas y cuántas faltan.
+        self.panel_progreso = QFrame()
+        self.panel_progreso.setObjectName("progresoLote")
+        capa_progreso = QVBoxLayout(self.panel_progreso)
+        capa_progreso.setContentsMargins(0, 0, 0, 8)
+        capa_progreso.setSpacing(4)
+        fila_progreso = QHBoxLayout()
+        self.lbl_progreso = QLabel("Sin facturas")
+        self.lbl_progreso.setObjectName("tituloSeccion")
+        self.lbl_progreso.setMinimumHeight(ALTO_TITULO_TARJETA)
+        fila_progreso.addWidget(self.lbl_progreso, 1)
+        self.lbl_faltan = QLabel()
+        self.lbl_faltan.setObjectName("faltanLote")
+        fila_progreso.addWidget(self.lbl_faltan)
+        capa_progreso.addLayout(fila_progreso)
+        self.barra_progreso = QProgressBar()
+        self.barra_progreso.setObjectName("barraProgresoLote")
+        self.barra_progreso.setTextVisible(False)
+        self.barra_progreso.setToolTip(
+            "Listas: verificadas, sin verificar, revisadas o corregidas. "
+            "Faltan: las que están por revisar o con error.")
+        capa_progreso.addWidget(self.barra_progreso)
+        self.lbl_progreso_detalle = QLabel()
+        self.lbl_progreso_detalle.setWordWrap(True)
+        self.lbl_progreso_detalle.setObjectName("contadores")
+        capa_progreso.addWidget(self.lbl_progreso_detalle)
+        self.panel_progreso.setVisible(False)
+        lr.addWidget(self.panel_progreso)
         cabecera_totales = QHBoxLayout()
         cabecera_totales.setSpacing(10)
         # Con filtros y recargo el título es largo: se recorta con «…».
         self.lbl_resumen_titulo = EtiquetaRecortada("Comprobación de totales",
                                                     minimo=170)
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
+        self.lbl_resumen_titulo.setMinimumHeight(ALTO_TITULO_TARJETA)
         cabecera_totales.addWidget(self.lbl_resumen_titulo)
         self.tabla_su_suma = TablaSuSuma()
         self.tabla_su_suma.cambiado.connect(self._resaltar_fila_comparada)
@@ -1107,6 +1144,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.panel_lectura.layout().setContentsMargins(
             *((0, 4, 0, 0) if d.factura_vertical else (4, 0, 0, 0)))
         self._datos_sobre_hoja = d.datos_sobre_hoja
+        self.panel_progreso.setVisible(d.progreso)
         if not al_arrancar and self.btn_plegar_lectura.isChecked() != d.lectura_plegada:
             # Al elegirla, lo leído como en su prototipo (se puede cambiar).
             self.btn_plegar_lectura.setChecked(d.lectura_plegada)
@@ -1359,7 +1397,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.grupo_distribucion.setExclusive(True)
         self.acciones_distribucion = {}
         for d in distribucion.DISTRIBUCIONES:
-            accion = menu_distribucion.addAction(d.titulo)
+            accion = menu_distribucion.addAction(d.titulo_menu)
             accion.setCheckable(True)
             accion.setToolTip(d.descripcion)
             accion.setStatusTip(d.descripcion)
@@ -1823,7 +1861,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # (con las medidas de ahora: el mínimo que da Qt puede ir atrasado).
         capa = self.totales_card.layout()
         margenes = capa.contentsMargins()
-        partes = [capa.itemAt(0).sizeHint().height()]
+        # Lo que se ve encima de las tablas (cabecera y, si las hay, las
+        # líneas de progreso y del veredicto) y «Su suma» debajo.
+        partes = [capa.itemAt(i).sizeHint().height() for i in range(capa.count())
+                  if not capa.itemAt(i).isEmpty()
+                  and capa.itemAt(i).spacerItem() is None
+                  and capa.itemAt(i).layout() is not self.capa_tablas_totales]
         if not self.tabla_su_suma.isHidden():
             partes.append(self.tabla_su_suma.maximumHeight())
         resto = (margenes.top() + margenes.bottom() + sum(partes)

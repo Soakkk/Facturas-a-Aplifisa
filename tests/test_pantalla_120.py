@@ -66,8 +66,11 @@ def test_la_hoja_no_se_queda_en_una_tira_al_restaurar_la_ventana():
     assert v.visor_scroll.width() >= 240
     assert abs(v.visor_scroll.width() - antes) <= 4
     # La tarjeta de la factura no se estrecha por debajo de lo que necesita
-    # (la hoja y lo leído, lado a lado).
-    assert v.factura_card.width() >= v.factura_card.minimumSizeHint().width()
+    # (la hoja y lo leído, lado a lado), si la ventana da para todo: en las
+    # máquinas de GitHub, sin el estilo del programa, los botones de Windows
+    # piden más de lo que cabe en 1024.
+    if v.minimumSizeHint().width() <= v.width():
+        assert v.factura_card.width() >= v.factura_card.minimumSizeHint().width()
     v.close()
 
 

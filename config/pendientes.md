@@ -16,8 +16,19 @@ ingresos (con un filtro, lo que se ve va primero) y una columna por importe.
 Debajo, **Su suma** con una casilla bajo cada columna y lo que da de más o
 de menos el programa.
 
-Dime si en tu pantalla se ven bastantes facturas a la vez o si prefieres
-los totales más bajos (el divisor se arrastra y se recuerda).
+**Los cinco prototipos, para elegir.** En Ver → Distribución de la pantalla
+(o Ctrl+1 … Ctrl+5) puedes cambiar entre las cinco que viste dibujadas.
+Cada una va mejor para un momento del trabajo:
+1 tres columnas (todo a la vista en una pantalla grande), 2 lectura sobre la
+hoja (comprobar contra el papel), 3 tabla arriba (repasar el lote entero),
+4 cuadre con su suma (cuadrar con tu suma y con Aplifisa; la de siempre) y
+5 una a una (revisar las pendientes una detrás de otra, con cuántas
+quedan). Cambia solo dónde va cada pieza;
+lo cargado y lo que hayas escrito en «Su suma» se quedan. Cada una recuerda
+sus divisores y el programa abre con la última que elegiste.
+
+Dime con cuál te quedas (o qué cambiarías de la que más te guste) y la dejo
+como la de siempre.
 
 ### Lo nuevo de la 1.19 (lo que pediste)
 

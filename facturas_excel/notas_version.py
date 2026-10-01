@@ -27,6 +27,28 @@ NOTAS = {
       tabla no caben en una fila, los de uso ocasional (unir hojas, limpiar
       filtros, quitar bloque, eliminar) se quedan con el icono; su nombre
       sale al pasar el ratón.</li>
+  <li><b>Elija la distribución de la pantalla</b> en <b>Ver → Distribución
+      de la pantalla</b> (o con Ctrl+1 … Ctrl+5): los cinco prototipos que
+      vio dibujados.
+      <ol>
+        <li><b>Tres columnas</b> — todo a la vista en una pantalla grande:
+            facturas | factura (la hoja arriba y lo leído debajo) | totales
+            en columna.</li>
+        <li><b>Lectura sobre la hoja</b> — para comprobar contra el papel:
+            la hoja ocupa toda la factura, lo leído queda en una línea y los
+            datos ya localizados se señalan sobre la hoja.</li>
+        <li><b>Tabla arriba</b> — para repasar el lote entero: la tabla de
+            facturas a lo ancho; debajo, la factura y los totales.</li>
+        <li><b>Cuadre con su suma</b> (la de siempre) — para cuadrar con su
+            suma y con Aplifisa: los totales abajo, a lo ancho, con «Su suma»
+            bajo cada columna.</li>
+        <li><b>Una a una</b> — para revisar las pendientes una detrás de
+            otra: una lista con lo justo, la factura en grande, cuántas
+            quedan y los totales en columna (para pantallas anchas).</li>
+      </ol>
+      Con los totales en columna, «Su suma» va al lado de cada importe. Cada
+      distribución recuerda dónde dejó los divisores y el programa abre con
+      la última elegida.</li>
 </ul>
 """,
     "1.19.0": """

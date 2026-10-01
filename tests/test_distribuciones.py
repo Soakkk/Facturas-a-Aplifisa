@@ -71,9 +71,12 @@ def _ventana(ancho=1600, alto=950):
 
 def test_el_menu_ofrece_las_cinco_y_marca_la_elegida(guardado):
     v = _ventana()
-    assert [a.text() for a in v.acciones_distribucion.values()] == [
+    # Cada una, con su número del lienzo y para qué va mejor.
+    assert [a.text().split(" — ")[0] for a in v.acciones_distribucion.values()] == [
         "1 · Tres columnas", "2 · Lectura sobre la hoja", "3 · Tabla arriba",
         "4 · Cuadre con su suma", "5 · Una a una"]
+    assert all(" — " in a.text() and a.toolTip()
+               for a in v.acciones_distribucion.values())
     # Por defecto, la de la 1.20 (la que eligió el usuario).
     assert v._distribucion.clave == "cuadre"
     assert v.acciones_distribucion["cuadre"].isChecked()
@@ -313,4 +316,36 @@ def test_en_un_portatil_caben_las_que_no_ponen_la_factura_a_lo_ancho(guardado):
         v._elegir_distribucion(clave)
         _procesar()
         assert v.minimumSizeHint().width() <= v.width(), clave
+    v.close()
+
+
+def test_una_a_una_dice_cuantas_quedan(guardado):
+    v = _ventana()
+    assert not v.panel_progreso.isVisible()
+    v._elegir_distribucion("una_a_una")
+    _procesar()
+    assert v.panel_progreso.isVisible()
+    # 4 facturas; las de prueba se leen bien, así que todas están listas.
+    from facturas_excel.lote import CON_ERROR, POR_REVISAR
+    pendientes = sum(r.presentacion in (POR_REVISAR, CON_ERROR) for r in v.filas)
+    listas = len(v.filas) - pendientes
+    assert v.lbl_progreso.text() == f"{listas} de {len(v.filas)} listas"
+    assert v.barra_progreso.value() == listas
+    assert v.barra_progreso.maximum() == len(v.filas)
+    v._elegir_distribucion("cuadre")
+    _procesar()
+    assert not v.panel_progreso.isVisible()
+    v.close()
+
+
+def test_los_titulos_de_las_tarjetas_van_a_la_misma_altura(guardado):
+    v = _ventana()
+    for clave in ("columnas", "una_a_una"):
+        v._elegir_distribucion(clave)
+        _procesar()
+        titulos = [v.tabla_card.findChildren(type(v.titulo_visor))[0], v.titulo_visor]
+        alturas = {t.mapTo(v, t.rect().topLeft()).y() for t in titulos}
+        alturas.add(v.lbl_resumen_titulo.mapTo(v, v.lbl_resumen_titulo.rect().topLeft()).y()
+                    if not v.panel_progreso.isVisible() else min(alturas))
+        assert max(alturas) - min(alturas) <= 2, (clave, alturas)
     v.close()

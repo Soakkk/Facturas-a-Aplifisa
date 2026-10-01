@@ -26,7 +26,7 @@ from facturas_excel.banda_avisos import AVISO
 from facturas_excel.clientes import regimen_recargo
 from facturas_excel.conceptos import catalogo
 from facturas_excel.control_facturas import controles_documentos, sin_cuadre_antiguo
-from facturas_excel.consulta import PeriodoLote, facturas_unicas
+from facturas_excel.consulta import PeriodoLote, clave_factura, facturas_unicas
 from facturas_excel.estilo import ACCENT_FAINT, INK
 
 # Totales: lo que vale cero, en gris claro.
@@ -484,6 +484,32 @@ class ValidacionMixin:
                   f"{html.escape(TEXTO_PRESENTACION[codigo])}: {c[codigo]}</span>"
                   for codigo in ORDEN_PRESENTACION if c[codigo]]
         self.lbl_contadores.setText(" &nbsp;·&nbsp; ".join(partes))
+        self._pintar_progreso(partes)
+
+    def _pintar_progreso(self, partes) -> None:
+        """«N de M listas»: por factura (una con varias líneas cuenta una
+        vez y está lista solo si lo están todas sus líneas)."""
+        if not hasattr(self, "panel_progreso"):
+            return
+        pendientes = {}
+        for i, registro in enumerate(self.filas):
+            clave = clave_factura(registro.factura, i)
+            pendientes[clave] = pendientes.get(clave, False) or (
+                registro.presentacion in (POR_REVISAR, CON_ERROR))
+        total = len(pendientes)
+        faltan = sum(pendientes.values())
+        if not total:
+            self.lbl_progreso.setText("Sin facturas")
+        else:
+            self.lbl_progreso.setText(f"{total - faltan} de {total} listas")
+        self.lbl_faltan.setText(f"Faltan {faltan}" if faltan else
+                                ("✓ Todas listas" if total else ""))
+        self.lbl_faltan.setProperty("todas", not faltan)
+        self.lbl_faltan.style().unpolish(self.lbl_faltan)
+        self.lbl_faltan.style().polish(self.lbl_faltan)
+        self.barra_progreso.setRange(0, max(total, 1))
+        self.barra_progreso.setValue(total - faltan)
+        self.lbl_progreso_detalle.setText(" &nbsp;·&nbsp; ".join(partes))
 
     def _pintar_resumen(self):
         """Totales del taco, del periodo y de la búsqueda actualmente visible."""
