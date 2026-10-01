@@ -709,6 +709,12 @@ class ValidacionMixin:
             cabecera = max(cabecera, tabla.horizontalHeader().height())
         marco = 2 * tabla.frameWidth()
         alto = cabecera + sum(tabla.rowHeight(r) for r in range(tabla.rowCount())) + marco
+        # Sin «Su suma» la barra horizontal es la de los totales: debajo de
+        # las filas, sin taparlas.
+        barra = tabla.horizontalScrollBar()
+        if (tabla.horizontalScrollBarPolicy() != Qt.ScrollBarAlwaysOff
+                and barra.maximum() > 0):
+            alto += barra.sizeHint().height()
         maximo = max(alto, cabecera + marco + 4)
         minimo = min(alto, cabecera + 2 * tabla.verticalHeader().defaultSectionSize() + marco)
         if tabla.maximumHeight() != maximo:
@@ -747,14 +753,23 @@ class ValidacionMixin:
         anchos[0] = max(anchos[0], tabla.viewport().width() - sum(anchos[1:]))
         self._columnas_totales = list(columnas)
         for tabla in (self.tabla_totales, self.tabla_su_suma):
-            if tabla.columnCount() != len(anchos):
+            if tabla.columnCount() < len(anchos):
                 continue
             cabecera = tabla.horizontalHeader()
-            cabecera.setMinimumSectionSize(40)
+            # Los anchos van calculados (el Nº, 40 como poco); la columna de
+            # relleno de «Su suma» mide lo que la barra, menos de 40.
+            cabecera.setMinimumSectionSize(1)
             for c, ancho in enumerate(anchos):
                 cabecera.setSectionResizeMode(c, QHeaderView.Fixed)
                 if tabla.columnWidth(c) != ancho:
                     tabla.setColumnWidth(c, ancho)
+        # La barra vertical de los totales les quita ancho de vista: «Su
+        # suma» lleva al final una columna vacía de ese ancho para que las
+        # dos se desplacen igual.
+        totales = self.tabla_totales
+        barra = totales.width() - totales.viewport().width() - 2 * totales.frameWidth()
+        self.tabla_su_suma.dejar_hueco(barra if totales.verticalScrollBar().maximum() > 0
+                                       else 0)
 
     def _copiar_resumen(self):
         """El resumen al portapapeles, para pegarlo al comprobar los totales."""

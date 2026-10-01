@@ -12,7 +12,7 @@ import os
 import sys
 import traceback
 
-from PySide6.QtCore import QItemSelectionModel, QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -77,7 +77,7 @@ CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclav
 TAMANOS_COLUMNAS = [900, 960]
 TODOS_LOS_MESES = "Todos los meses"
 from facturas_excel.ventana_comun import (  # noqa: F401
-    COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente,
+    COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente, EtiquetaRecortada,
     ICONO_CORREGIDO, ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
     TODOS_LOS_BLOQUES, _cabeceras_resumen, ruta_recurso,
     rutas_factura_de_mime,
@@ -295,6 +295,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         split.setHandleWidth(8)
         tabla_card = QFrame()
         tabla_card.setObjectName("tarjeta")
+        self.tabla_card = tabla_card
         lt = QVBoxLayout(tabla_card)
         lt.setContentsMargins(12, 10, 12, 10)
         fila_datos = QHBoxLayout()
@@ -308,7 +309,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
         # En ventana ancha coincide con el prototipo: filtros y acciones en
         # una fila. En portátiles se reparten sin comprimir ni cortar textos.
-        self.layout_herramientas = QVBoxLayout()
+        # En su propia caja, que no impone ancho mínimo: si la tabla se
+        # estrecha (restaurar una ventana maximizada, el divisor), los
+        # filtros se reparten de nuevo en vez de quitarle sitio a la hoja.
+        self.caja_herramientas = QWidget()
+        self.caja_herramientas.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.caja_herramientas.setMinimumWidth(300)
+        self.layout_herramientas = QVBoxLayout(self.caja_herramientas)
         self.layout_herramientas.setSpacing(6)
         self.layout_herramientas.setContentsMargins(0, 0, 0, 0)
         self.filas_herramientas = []
@@ -444,7 +451,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 (self.btn_revisada, "Revisada"),
                 (self.btn_unir_hojas, ""), (self.btn_limpiar_filtros, ""),
                 (self.btn_quitar_bloque, ""), (self.btn_eliminar, ""))}
-        lt.addLayout(self.layout_herramientas)
+        lt.addWidget(self.caja_herramientas)
         # Orden contable estable: clasificación y cuenta primero, identificación
         # después e importes fiscales al final (tabla_facturas.py).
         self.tabla = TablaFacturas()
@@ -472,7 +479,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # totales).
         visor_card = QFrame()
         visor_card.setObjectName("tarjeta")
-        visor_card.setMinimumWidth(290)
+        # Sin mínimo fijo: el de su contenido (la hoja y lo leído, lado a
+        # lado), para que la hoja nunca se quede en una tira.
         self.factura_card = visor_card
         lv = QVBoxLayout(visor_card)
         lv.setContentsMargins(12, 12, 12, 10)
@@ -559,6 +567,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.visor_scroll.setObjectName("visorScroll")
         self.visor_scroll.setWidgetResizable(True)
         self.visor_scroll.setWidget(self.lbl_img)
+        self.visor_scroll.setMinimumWidth(240)
         # Al mover el divisor del visor, la hoja se vuelve a encajar.
         self.visor_scroll.installEventFilter(self)
         # «Revisar» va en la línea del título: así la hoja gana esa fila.
@@ -650,13 +659,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         lr.setSpacing(4)
         cabecera_totales = QHBoxLayout()
         cabecera_totales.setSpacing(10)
-        self.lbl_resumen_titulo = QLabel("Comprobación de totales")
+        # Con filtros y recargo el título es largo: se recorta con «…».
+        self.lbl_resumen_titulo = EtiquetaRecortada("Comprobación de totales",
+                                                    minimo=170)
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
         cabecera_totales.addWidget(self.lbl_resumen_titulo)
         self.tabla_su_suma = TablaSuSuma()
         self.tabla_su_suma.cambiado.connect(self._resaltar_fila_comparada)
-        self.tabla_su_suma.lbl_ambito.setSizePolicy(
-            QSizePolicy.Ignored, QSizePolicy.Preferred)
         cabecera_totales.addWidget(self.tabla_su_suma.lbl_ambito, 1)
         cabecera_totales.addWidget(self.tabla_su_suma.lbl_veredicto)
         self.btn_ver_su_suma = QToolButton()
@@ -707,11 +716,17 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla_totales.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tabla_totales.verticalScrollBar().rangeChanged.connect(
             lambda *_: self._ajustar_alto_totales())
-        # La barra de desplazamiento la lleva «Su suma» (debajo): las dos se
-        # mueven juntas para que cada casilla siga bajo su columna.
+        self.tabla_totales.setTabKeyNavigation(False)
+        # A lo ancho, la barra la lleva «Su suma» (debajo; si se oculta, la
+        # de los totales) y las dos se mueven juntas, píxel a píxel, se
+        # desplace la que se desplace: cada casilla sigue bajo su columna.
+        self.tabla_totales.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
         self.tabla_totales.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.tabla_su_suma.horizontalScrollBar().valueChanged.connect(
-            self.tabla_totales.horizontalScrollBar().setValue)
+        barra_totales = self.tabla_totales.horizontalScrollBar()
+        barra_suma = self.tabla_su_suma.horizontalScrollBar()
+        barra_suma.valueChanged.connect(barra_totales.setValue)
+        barra_totales.valueChanged.connect(barra_suma.setValue)
+        barra_totales.rangeChanged.connect(lambda *_: self._ajustar_alto_totales())
         lr.addWidget(self.tabla_totales)
         lr.addWidget(self.tabla_su_suma)
         lr.addStretch(1)
@@ -745,6 +760,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # «Ocultar» quita los totales; se vuelven a ver en el menú Ver.
         totales_card.setVisible(bool(ajustes.leer("ver_totales_lado", True)))
         cuerpo.addWidget(self.split_principal, 1)
+        # Sin lote todavía: las columnas de siempre, sin filas (y el alto
+        # justo, no una tabla en blanco).
+        self._pintar_tabla_totales([], False, [])
 
         barra_estado = QFrame()
         barra_estado.setObjectName("barraEstado")
@@ -789,6 +807,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_herramientas.timeout.connect(
             lambda: self._distribuir_herramientas(self.width()))
         self._timer_herramientas.start(0)
+        # La tabla cambia de ancho por lo que sea: se reparte otra vez.
+        tabla_card.installEventFilter(self)
 
     def _distribuir_herramientas(self, ancho: int):
         """Filtros a la izquierda y, debajo, las acciones, sin cortar textos.
@@ -868,6 +888,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 fila = self.filas_herramientas[fila_actual]
                 fila.insertWidget(fila.count() - 1, widget)
                 usado += necesario
+
+    def eventFilter(self, objeto, evento):
+        if (objeto is getattr(self, "tabla_card", None)
+                and evento.type() == QEvent.Resize
+                and hasattr(self, "_timer_herramientas")):
+            self._timer_herramientas.start(0)
+        return super().eventFilter(objeto, evento)
 
     def _compactar_acciones(self, acciones, disponible: int) -> None:
         """Las acciones de la tabla, en una fila si se puede.
@@ -1559,6 +1586,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla_su_suma.lbl_ambito.setVisible(bool(visible))
         self.tabla_su_suma.lbl_veredicto.setVisible(bool(visible))
         self.btn_ver_su_suma.setArrowType(Qt.DownArrow if visible else Qt.RightArrow)
+        if hasattr(self, "tabla_totales"):
+            # Sin «Su suma», la barra para llegar a «Total» es la de los totales.
+            self.tabla_totales.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarAlwaysOff if visible else Qt.ScrollBarAsNeeded)
+            self._ajustar_alto_totales()
         self._encajar_totales()
 
     def _configurar_textos(self):

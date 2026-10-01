@@ -356,7 +356,7 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         assert not boton.isHidden()
         assert boton.width() >= boton.sizeHint().width()
         assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
-    assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
+    assert v.tabla.parentWidget().isAncestorOf(v.btn_revisada)
     # Los filtros, a la izquierda y encima de las acciones.
     def fila_de(widget):
         return next(i for i, fila in enumerate(v.filas_herramientas)

@@ -119,6 +119,46 @@ class EtiquetaCliente(QLabel):
         pintor.end()
 
 
+class EtiquetaRecortada(QLabel):
+    """Una línea que, si no cabe, se recorta con «…» (nunca se corta a
+    secas). Entonces el texto entero va en el globo.
+
+    `text()` sigue devolviendo el texto entero."""
+
+    def __init__(self, texto: str = "", parent=None, minimo: int = 80):
+        super().__init__(texto, parent)
+        self._minimo = minimo
+
+    def minimumSizeHint(self) -> QSize:
+        alto = super().minimumSizeHint().height()
+        return QSize(min(super().sizeHint().width(), self._minimo), alto)
+
+    def setText(self, texto: str) -> None:
+        super().setText(texto)
+        self._poner_globo()
+
+    def resizeEvent(self, evento):
+        super().resizeEvent(evento)
+        self._poner_globo()
+
+    def _visible(self, ancho: int) -> str:
+        return self.fontMetrics().elidedText(self.text(), Qt.ElideRight, ancho)
+
+    def _poner_globo(self) -> None:
+        recortada = self._visible(self.contentsRect().width()) != self.text()
+        globo = self.text() if recortada else ""
+        if self.toolTip() != globo:
+            self.setToolTip(globo)
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setPen(self.palette().color(QPalette.WindowText))
+        area = self.contentsRect()
+        pintor.drawText(area, Qt.AlignLeft | Qt.AlignVCenter,
+                        self._visible(area.width()))
+        pintor.end()
+
+
 def ruta_recurso(nombre):
     base = getattr(
         sys, "_MEIPASS",
