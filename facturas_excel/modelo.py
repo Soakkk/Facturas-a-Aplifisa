@@ -59,7 +59,11 @@ class Factura:
     es_suplido: bool = False                # esta linea es el suplido de su factura
     confianza_ia: Optional[str] = None      # alta/media/baja informada por Gemini
     revision_confirmada: bool = False       # una persona comprobo el aviso ambar
-    tratamiento_manual: Optional[str] = None  # fuera del flujo rutinario
+    # Motivo por el que conviene mirarla antes de exportar (bien de inversión,
+    # suplido, sustituida…). Desde la 1.17.1 NO la aparta: queda en ámbar con
+    # ese motivo y, tras «Marcar revisada», se exporta como las demás. El
+    # nombre se conserva por las sesiones guardadas.
+    tratamiento_manual: Optional[str] = None
     iva_incluido_en_base: bool = False       # régimen de recargo: gasto por total
     eliminada: bool = False                  # retirada del lote por el usuario
     tipo_revision: Optional[str] = None      # gasto/venta corregido en la tabla

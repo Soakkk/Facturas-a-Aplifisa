@@ -57,6 +57,9 @@ def test_la_factura_cuadra_con_el_suplido_dentro():
     assert not pr.aviso                       # 100 + 21 + 109,08 = 230,08
     assert all(validar(f).estado == REVISAR for f in pr.facturas)
     assert all(f.tratamiento_manual == "Factura con suplido" for f in pr.facturas)
+    # Ya no se aparta: es un ámbar que se quita con «Marcar revisada».
+    assert all(any("Marcar revisada" in m for m in validar(f).mensajes)
+               for f in pr.facturas)
 
 
 def test_el_suplido_no_va_en_la_columna_suplidos():

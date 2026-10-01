@@ -294,10 +294,11 @@ def validar(f: Factura) -> Resultado:
     if confianza in {"media", "baja"}:
         marcar_revisar(
             f"Confianza de lectura {confianza}: compare los datos con el PDF")
-    if f.tratamiento_manual:
-        marcar_revisar(
-            f"Gestión manual: {f.tratamiento_manual}. No se incluirá en la "
-            "exportación automática")
+    motivo = str(f.tratamiento_manual or "").strip()
+    if motivo:
+        # Ya no se aparta de la exportación (eso dejaba facturas sin
+        # registrar): se mira en ámbar y sale con «Marcar revisada».
+        marcar_revisar(texto_motivo_revision(motivo))
 
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
@@ -373,6 +374,23 @@ def validar(f: Factura) -> Resultado:
             )
 
     return Resultado(estado=estado, mensajes=msgs)
+
+
+def texto_motivo_revision(motivo: str) -> str:
+    """El aviso ámbar de una factura que antes se apartaba como «manual»."""
+    if motivo.startswith("Sustituida"):
+        return (f"{motivo}: si es la factura anterior, elimínela del lote "
+                "(botón Eliminar); si no lo es, pulse «Marcar revisada».")
+    if motivo == "Factura con suplido":
+        return ("Factura con suplido: el suplido va como otra línea sin IVA. "
+                "Compruébelo con el documento y pulse «Marcar revisada».")
+    if motivo == "Bien de inversión":
+        return ("Posible bien de inversión: compruebe la cuenta con el "
+                "documento y pulse «Marcar revisada».")
+    if motivo == "Marcada por el usuario":
+        return ("La apartó usted para gestión manual en una versión anterior: "
+                "compruébela y pulse «Marcar revisada» para exportarla.")
+    return f"{motivo}: compruébela con el documento y pulse «Marcar revisada»."
 
 
 def cuadre_de(f: Factura) -> float:

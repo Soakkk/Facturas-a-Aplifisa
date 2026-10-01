@@ -24,15 +24,20 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
      del catálogo).
    - ○ **Sin verificar**: todo cuadra, pero la leyó un solo modelo.
    - ! **Revisar**: las dos lecturas no coinciden, NIF dudoso, cuenta
-     propuesta por descarte, rol ambiguo, factura ya exportada…
+     propuesta por descarte, rol ambiguo, factura ya exportada, factura con
+     suplido, posible bien de inversión, factura sustituida…
    - ✕ **Error**: descuadres, tipo de IVA inexistente, fecha futura, faltan
      campos obligatorios.
    La **ficha de la factura**, junto al documento, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.
-   Con la **imagen de la factura al lado** para corregir al vuelo; al hacer clic
-   se abre una vista previa grande. Una fila ámbar solo se exporta después de
-   pulsar **Marcar revisada**.
+   Con la **imagen de la factura al lado** para corregir al vuelo: la hoja se
+   saca del PDF original al tamaño de la pantalla, así que se ve nítida aunque
+   se acerque. Se arrastra para moverse, Ctrl + rueda o doble clic acercan el
+   punto señalado y otro doble clic vuelve a la hoja entera (sin ventanas que
+   tapen la tabla). Una fila ámbar solo se exporta después de pulsar
+   **Marcar revisada**, que confirma la factura entera aunque tenga varias
+   líneas.
    El buscador encuentra proveedor o cliente sin depender de acentos,
    puntuación o forma jurídica, y también permite localizar NIF, número de
    factura o un importe exacto escrito con formato español.
@@ -47,8 +52,10 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    Aunque el PDF tenga 100 páginas o varios bloques, solo se genera el Excel
    consolidado que se importa en Aplifisa. Al comprobarlo correctamente, se
    eliminan los Excel temporales `parte_N_de_M` de ese cliente y tipo.
-   Los duplicados, documentos sustituidos, suplidos y bienes de inversión se
-   apartan de la exportación rutinaria para tratarlos manualmente.
+   Solo se apartan los duplicados exactos. Desde la 1.17.1 ya no hay «gestión
+   manual»: las facturas con suplido, los bienes de inversión y las
+   sustituidas quedan en ámbar con su motivo y salen en el Excel en cuanto se
+   marcan revisadas (antes se quedaban fuera y no llegaban a Aplifisa).
 5. Tanto los PDF creados desde el escáner como los cargados desde HP u otro
    programa quedan archivados automáticamente en el Escritorio como
    `Documentación Facturas / Nombre — NIF / Ejercicio / Gastos` o `Ingresos`. Los

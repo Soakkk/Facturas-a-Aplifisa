@@ -1,9 +1,24 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 28 de septiembre de 2026 (versión 1.17.0). Apunta abajo lo que
+Actualizado el 1 de octubre de 2026 (versión 1.17.1). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.17.1 (lo que pediste)
+
+**Ya no hay «M Manual».** Suplidos, bienes de inversión y sustituidas salen
+en ámbar con su motivo; los miras, pulsas «Marcar revisada» y van al Excel.
+Las que tenías apartadas en el lote abierto ya están en ámbar: revísalas y
+expórtalas para que cuadre el registro.
+
+**El documento, nítido y sin taparte nada.** Al acercar se ve fino (se saca
+del PDF original). Arrastra para moverte, Ctrl + rueda o doble clic para
+acercar, otro doble clic para ver la hoja entera. El clic ya no abre la
+ventana grande.
+
+Dime si las hojas con grapas rotas o mal escaneadas se leen bien ahora al
+acercarlas.
 
 ### Lo nuevo de la 1.17 (pruébalo)
 

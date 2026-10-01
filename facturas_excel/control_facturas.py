@@ -46,7 +46,7 @@ def controles_documentos(facturas, tipos):
         f = fs[0]
         if len(fs) != f.lineas_factura or any(g.lineas_factura != len(fs) for g in fs):
             avisar(indices, 'Factura incompleta: faltan líneas del documento. '
-                   'Restaure las líneas eliminadas o aparte la factura completa.')
+                   'Restaure las líneas eliminadas o elimine la factura completa.')
         if any((g.num_factura, g.fecha, g.nif, g.nombre) !=
                (f.num_factura, f.fecha, f.nif, f.nombre) for g in fs):
             avisar(indices, 'Las líneas de esta factura no tienen la misma '
@@ -54,8 +54,6 @@ def controles_documentos(facturas, tipos):
         if len({tipos[i] for i in indices}) != 1:
             avisar(indices, 'Una factura no puede tener líneas como gasto y otras '
                    'como ingreso. Compruebe el tipo de todas sus líneas.')
-        if any(g.tratamiento_manual for g in fs) and not all(g.tratamiento_manual for g in fs):
-            avisar(indices, 'La gestión manual debe aplicarse a la factura completa.')
         totales = {g.total_impreso for g in fs if g.total_impreso is not None}
         if len(totales) > 1:
             avisar(indices, 'Las líneas de la misma factura tienen distintos totales impresos.')

@@ -6,15 +6,13 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel
 
-from facturas_excel.estilo import ACCENT, MUTED, SUCCESS, WARNING, DANGER
+from facturas_excel.estilo import ACCENT, SUCCESS, WARNING, DANGER
 from facturas_excel.ficha_incidencias import TITULOS as TITULOS_ESTADO
 from facturas_excel.resumen import porcentaje_iva
 from facturas_excel.lote import (
-    CON_ERROR, MANUAL, POR_REVISAR, REVISADA, SIN_VERIFICAR, TEXTO_PRESENTACION,
+    CON_ERROR, POR_REVISAR, REVISADA, SIN_VERIFICAR, TEXTO_PRESENTACION,
     VERIFICADA,
 )
 from facturas_excel.validacion import ERROR, OK, REVISAR
@@ -32,7 +30,6 @@ ICONO_ESTADO = {OK: TEXTO_PRESENTACION[VERIFICADA],
                 ERROR: TEXTO_PRESENTACION[CON_ERROR]}
 ICONO_SIN_VERIFICAR = TEXTO_PRESENTACION[SIN_VERIFICAR]
 ICONO_REVISADO = TEXTO_PRESENTACION[REVISADA]
-ICONO_MANUAL = TEXTO_PRESENTACION[MANUAL]
 # (texto, color, fondo) de cada presentación.
 ESTILO_PRESENTACION = {
     VERIFICADA: (QColor(SUCCESS), "#E4F1EA"),
@@ -40,11 +37,9 @@ ESTILO_PRESENTACION = {
     POR_REVISAR: (QColor(WARNING), "#FBEFDC"),
     CON_ERROR: (QColor(DANGER), "#F8E1E1"),
     REVISADA: (QColor(ACCENT), "#E6EFF8"),
-    MANUAL: (QColor(MUTED), "#EEF1F4"),
 }
 COLOR_CONTADOR = {VERIFICADA: SUCCESS, SIN_VERIFICAR: "#3F5F7F",
-                  REVISADA: ACCENT, POR_REVISAR: WARNING, CON_ERROR: DANGER,
-                  MANUAL: MUTED}
+                  REVISADA: ACCENT, POR_REVISAR: WARNING, CON_ERROR: DANGER}
 
 _AVISO_EJERCICIOS_ANTIGUO = re.compile(
     r"\s*El PDF mezcla varios ejercicios; se ha archivado en el \d{4}, "
@@ -84,17 +79,6 @@ def _cabeceras_resumen(tipos_iva) -> list:
     else:
         columnas_iva = ["IVA"]
     return [*COLS_RESUMEN_INICIO, *columnas_iva, *COLS_RESUMEN_FIN]
-
-
-class VisorClicable(QLabel):
-    """Miniatura que abre el documento a mayor tamaño con un clic."""
-
-    clicked = Signal()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
 
 
 def ruta_recurso(nombre):

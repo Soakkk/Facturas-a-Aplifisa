@@ -6,6 +6,31 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.17.1": """
+<h2>Novedades de la versión 1.17.1</h2>
+<ul>
+  <li><b>Se acabó la «gestión manual».</b> Las facturas con suplido, los
+      posibles bienes de inversión y las sustituidas ya no se apartan en
+      gris («M Manual»): salen en <b>ámbar</b>, con el motivo en la ficha, y
+      en cuanto pulsa <i>Marcar revisada</i> van al Excel como las demás.
+      Antes se quedaban fuera de la exportación y no llegaban a Aplifisa,
+      y eso descuadraba el registro.</li>
+  <li>Las que tenía apartadas en el lote abierto pasan solas a ámbar: revíselas
+      y expórtelas. Si alguna ya estaba exportada, el programa le avisa antes
+      de repetirla.</li>
+  <li><b>Marcar revisada</b> confirma la factura entera: en una factura con
+      suplido o con varios tipos de IVA basta con pulsar una de sus líneas.</li>
+  <li><b>El documento se ve nítido al acercarlo.</b> La hoja se saca del PDF
+      original al tamaño de la pantalla, en vez de ampliar la imagen pequeña
+      que se manda a Gemini.</li>
+  <li><b>Sin ventanas que lo tapen todo.</b> Un clic en el documento ya no
+      abre la vista grande. En su lugar: <i>arrastre</i> para moverse por la
+      hoja, <i>Ctrl + rueda</i> o <i>doble clic</i> para acercar ese punto, y
+      otro doble clic vuelve a la hoja entera. En el botón ⋮: «Ver la hoja
+      entera» y «Ajustar al ancho». Los recuadros de «¿De dónde sale?» siguen
+      igual.</li>
+</ul>
+""",
     "1.17.0": """
 <h2>Novedades de la versión 1.17.0</h2>
 <ul>
