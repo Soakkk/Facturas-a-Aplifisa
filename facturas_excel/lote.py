@@ -162,7 +162,11 @@ def filas_de_bloques(bloques, por_el_total: bool, a_total_factura) -> List[Fila]
             fuentes = [f for f in pr.facturas if not f.eliminada]
             if not fuentes:
                 continue
-            vista = (a_total_factura(replace(pr, facturas=fuentes))
+            # Manda el tipo que ha puesto la persona (gasto/venta), si lo hay:
+            # solo los gastos se resumen por el total.
+            tipo = next((f.tipo_revision for f in fuentes if f.tipo_revision),
+                        None) or pr.tipo
+            vista = (a_total_factura(replace(pr, facturas=fuentes, tipo=tipo))
                      if por_el_total else pr)
             visibles = vista.facturas if por_el_total else fuentes
             for f in visibles:

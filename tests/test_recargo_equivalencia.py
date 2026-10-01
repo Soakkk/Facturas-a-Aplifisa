@@ -251,6 +251,11 @@ def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
     assert v.tabla.item(0, C_PCT).text() == ""         # sin desglose de IVA
     assert v.tabla.item(0, C_CUOTA).text() == ""
     assert v.tabla.item(0, C_BASE).text() == "145,11"  # base + IVA + recargo
+    # En los totales, solo el total y por qué (no un desglose a cero).
+    totales = v.vista_totales.toPlainText()
+    assert "por el total factura" in totales
+    assert "145,11 €" in totales
+    assert "Base imponible" not in totales.split("Ingresos")[0]
 
 
 def test_el_mayorista_registra_con_desglose(monkeypatch, tmp_path):
@@ -262,6 +267,10 @@ def test_el_mayorista_registra_con_desglose(monkeypatch, tmp_path):
     assert not v._por_el_total()
     assert v.tabla.item(0, C_PCT).text() == "21,00"
     assert v.tabla.item(0, C_BASE).text() == "114,98"
+    # El recargo sale en su línea de los totales, con su importe.
+    lineas = [l.strip() for l in v.vista_totales.toPlainText().splitlines()]
+    recargo = lineas[lineas.index("Recargo de equivalencia") + 1]
+    assert recargo not in ("", "0,00 €")
 
 
 def test_cambiar_de_regimen_rehace_el_lote_sin_volver_a_leer(monkeypatch, tmp_path):
@@ -291,12 +300,39 @@ def test_por_el_total_lo_corregido_no_se_pierde_ni_queda_corregido_sin_dato(
     assert v.tabla.item(0, C_NUM).text() == "NUEVO-1"
     assert v.filas[0]["factura"].revision_corregida
 
-    # Otra factura igual, corrigiendo solo un importe: tras rehacer la tabla
-    # vuelve el importe leído, así que no puede quedar «Corregida».
+    # Otra factura igual, corrigiendo los importes de la línea resumida: al
+    # rehacer la tabla (otro taco, quitar un bloque…) la corrección sigue
+    # ahí, no vuelve en silencio lo que leyó la IA.
+    from facturas_excel.app import C_TOTAL
     otra = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
     otra.tabla.item(0, C_BASE).setText("150,00")
+    otra.tabla.item(0, C_TOTAL).setText("150,00")
+    assert otra.filas[0].presentacion == "corregida"
     otra._rellenar_tabla()
     otra._revalidar_todo()
-    assert otra.tabla.item(0, C_BASE).text() == "145,11"   # se rehízo
-    assert not otra.filas[0]["factura"].revision_corregida
-    assert otra.filas[0].presentacion != "corregida"
+    assert otra.tabla.item(0, C_BASE).text() == "150,00"
+    assert otra.filas[0].presentacion == "corregida"
+    assert "150,00 €" in otra.vista_totales.toPlainText()
+
+
+def test_por_el_total_una_venta_mal_clasificada_recupera_su_iva(
+        monkeypatch, tmp_path):
+    """Si la IA la tomó por gasto (y se resumió por el total), al pasarla a
+    ingreso vuelve su desglose: una venta no se registra por el total."""
+    from facturas_excel.app import C_BASE, C_CUOTA, C_PCT, C_TIPO
+    from facturas_excel.clientes import TOTAL
+    v = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
+    assert v.tabla.item(0, C_PCT).text() == ""             # resumida
+    control = v.tabla.cellWidget(0, C_TIPO)
+    control.setCurrentIndex(control.findData("venta"))
+    f = v.filas[0]["factura"]
+    assert v.filas[0].tipo == "venta"
+    assert v.tabla.item(0, C_BASE).text() == "114,98"
+    assert v.tabla.item(0, C_PCT).text() == "21,00"
+    assert v.tabla.item(0, C_CUOTA).text() == "24,15"
+    assert not f.iva_incluido_en_base
+    assert f.revision_corregida
+    # Y de vuelta a gasto, otra vez por el total.
+    control = v.tabla.cellWidget(0, C_TIPO)
+    control.setCurrentIndex(control.findData("gasto"))
+    assert v.tabla.item(0, C_BASE).text() == "145,11"

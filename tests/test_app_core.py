@@ -289,14 +289,18 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert not hasattr(v, "menu_acciones")
     assert not hasattr(v, "btn_mas_acciones")
     assert not hasattr(v, "accion_gestion_manual")
-    # Tres columnas: datos extraídos | documento | ficha con los totales.
+    # Tres columnas: datos extraídos | factura (hoja + lectura) | totales.
     assert v.split_revision.count() == 3
     assert v.split_revision.widget(0) is v.tabla.parentWidget()
-    assert v.split_revision.widget(1) is v.visor_scroll.parentWidget()
+    assert v.split_revision.widget(1) is v.factura_card
     assert v.split_revision.widget(2) is v.lado_card
-    assert v.split_contenido.orientation() == Qt.Vertical
-    assert v.split_contenido.count() == 2
-    assert v.split_contenido.widget(1) is v.resumen_card
+    # La hoja y lo leído van juntos en la misma tarjeta, uno encima del otro.
+    assert v.split_factura.orientation() == Qt.Vertical
+    assert v.split_factura.widget(0) is v.visor_scroll
+    assert v.factura_card.isAncestorOf(v.ficha)
+    # Los totales tienen la columna entera para ellos.
+    assert v.lado_card.isAncestorOf(v.vista_totales)
+    assert not v.lado_card.isAncestorOf(v.ficha)
     assert not hasattr(v, "lista_card")             # sin «Bloques del lote»
     etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
     botones = {boton.text() for boton in v.findChildren(type(v.btn_siguiente))}

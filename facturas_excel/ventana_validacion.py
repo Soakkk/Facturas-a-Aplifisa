@@ -24,9 +24,15 @@ from facturas_excel.conceptos import catalogo
 from facturas_excel.control_facturas import controles_documentos, sin_cuadre_antiguo
 from facturas_excel.consulta import PeriodoLote, facturas_unicas
 from facturas_excel.estilo import ACCENT_FAINT, INK, MUTED
+
+# Totales: lo que vale cero, en gris claro; la línea del total, con fondo.
+COLOR_CERO = "#9AA9B8"
+FONDO_TOTAL = "#EEF2F7"
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import normaliza_nif
-from facturas_excel.resumen import eur, porcentaje_iva, resumir, resumir_por_bloque
+from facturas_excel.resumen import (
+    eur, eur_con_signo, porcentaje_iva, resumir, resumir_por_bloque,
+)
 from facturas_excel.lote import (
     CON_ERROR, ORDEN_PRESENTACION, POR_REVISAR, TEXTO_PRESENTACION, VERIFICADA,
     presentacion,
@@ -40,7 +46,7 @@ MENSAJE_CORREGIDA_DESCUADRA = (
     "Corregida a mano, pero el total no cuadra: compruébelo y, si está bien "
     "así, pulse «Marcar revisada».")
 MENSAJE_CORREGIDA_NUEVOS = (
-    "Corregida a mano, pero la corrección ha traído un aviso nuevo (arriba): "
+    "Corregida a mano, pero la corrección ha traído un aviso nuevo: "
     "compruébelo y, si está bien así, pulse «Marcar revisada».")
 # Los que añade el propio programa al dar o negar el visto bueno: no son
 # avisos de la factura.
@@ -474,9 +480,11 @@ class ValidacionMixin:
         recargo = self._por_el_total()
         periodo = getattr(self, "_periodo_lote", PeriodoLote())
         filtro_activo = self._hay_filtro_activo()
+        # «3T 2026» no se parte en dos líneas en la columna estrecha.
+        periodo_txt = periodo.etiqueta.replace(" ", "\u00a0")
         self.lbl_resumen_titulo.setText(
             "Comprobación de totales"
-            + (f"  ·  {periodo.etiqueta}" if periodo.ejercicio else "")
+            + (f"  ·  {periodo_txt}" if periodo.ejercicio else "")
             + ("  ·  filtro activo" if filtro_activo else "")
             + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
 
@@ -520,8 +528,9 @@ class ValidacionMixin:
         self.tabla_resumen.setRowCount(len(lineas))
         for r, (bloque, tipo, t, es_total) in enumerate(lineas):
             # En recargo el gasto va por el total factura: el desglose de IVA
-            # no existe y ponerlo a 0,00 despistaria.
-            solo_total = recargo and tipo == "Gastos"
+            # no existe y ponerlo a 0,00 despistaria. Salvo si hay facturas
+            # con retención, que no se resumen y van con su desglose.
+            solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
             cuotas = ["" if solo_total or p not in t.iva_por_tipo
                       else eur(t.iva_por_tipo[p]) for p in tipos_iva]
             if not tipos_iva:
@@ -531,7 +540,7 @@ class ValidacionMixin:
                 "" if solo_total else eur(t.base),
                 *cuotas,
                 eur(t.requiv) if t.tiene_requiv and not solo_total else "",
-                f"−{eur(t.irpf)}" if t.tiene_irpf else "",
+                eur_con_signo(-t.irpf) if t.tiene_irpf else "",
                 eur(t.suplidos) if t.tiene_suplidos and not solo_total else "",
                 eur(t.total),
             ]
@@ -560,17 +569,19 @@ class ValidacionMixin:
         if ambito == "FILTRO ACTUAL":
             return "Lo que se ve (filtro)"
         if ambito.startswith("DENTRO "):
-            return "Dentro del " + ambito[len("DENTRO "):]
+            return "Dentro del " + ambito[len("DENTRO "):].replace(" ", "\u00a0")
         if ambito.startswith("FUERA "):
-            return "Fuera del " + ambito[len("FUERA "):]
+            return "Fuera del " + ambito[len("FUERA "):].replace(" ", "\u00a0")
         return ambito
 
     def _pintar_vista_totales(self, lineas, recargo, tipos_iva) -> None:
-        """Los totales en vertical, para la columna estrecha de la derecha.
+        """Los totales en vertical, en su columna de la derecha.
 
-        Un bloque por cada fila del resumen: título, nº de facturas y una
-        línea por importe (base, cada IVA, recargo, retención, suplidos y el
-        total en negrita). Lo que se ve con filtro va resaltado.
+        Un bloque por cada fila del resumen con el desglose COMPLETO, en el
+        orden del listado de Aplifisa: base imponible, cada IVA, total IVA,
+        recargo, retención, suplidos y el total. Lo que vale cero también se
+        ve (en gris): así se sabe que el programa lo ha mirado y la suma a
+        mano se compara línea a línea. Lo que se ve con filtro va resaltado.
         """
         if not hasattr(self, "vista_totales"):
             return
@@ -578,46 +589,77 @@ class ValidacionMixin:
             self.vista_totales.setHtml(
                 f"<p style='color:{MUTED}'>Sin facturas cargadas.</p>")
             return
+        # Con un filtro, lo que se ve va primero: es la suma que se busca al
+        # filtrar (al final de la columna quedaba fuera de la vista).
+        con_filtro = any(ambito == "FILTRO ACTUAL" for ambito, *_ in lineas)
+        lineas = sorted(lineas, key=lambda l: not (
+            l[0] == "FILTRO ACTUAL" and l[2].lineas))
+        if con_filtro != getattr(self, "_vista_con_filtro", False):
+            # Al poner o quitar el filtro, a lo alto de la columna.
+            self.vista_totales.verticalScrollBar().setValue(0)
+        self._vista_con_filtro = con_filtro
         bloques = []
         for ambito, tipo, t, es_total in lineas:
-            solo_total = recargo and tipo == "Gastos"
-            importes = []
+            # En recargo el gasto va por el total factura: no hay desglose
+            # (salvo las facturas con retención, que no se resumen).
+            solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
+            importes = []                    # (concepto, importe)
             if not solo_total:
-                importes.append(("Base", eur(t.base)))
-                if tipos_iva:
-                    for p in tipos_iva:
-                        if p in t.iva_por_tipo:
-                            importes.append(
-                                (f"IVA {porcentaje_iva(p)}%", eur(t.iva_por_tipo[p])))
-                else:
-                    importes.append(("IVA", eur(t.iva)))
-                if t.tiene_requiv:
-                    importes.append(("Recargo", eur(t.requiv)))
-            if t.tiene_irpf:
-                importes.append(("Retención", f"−{eur(t.irpf)}"))
-            if t.tiene_suplidos and not solo_total:
-                importes.append(("Suplidos (sin IVA)", eur(t.suplidos)))
-            filas = "".join(
-                f"<tr><td>{html.escape(nombre)}</td>"
-                f"<td align='right'>{html.escape(valor)}</td></tr>"
-                for nombre, valor in importes)
+                importes.append(("Base imponible", t.base))
+                for p in sorted(t.iva_por_tipo, reverse=True):
+                    importes.append(
+                        (f"IVA {porcentaje_iva(p)} %", t.iva_por_tipo[p]))
+                if abs(t.iva_sin_tipo) >= 0.005:
+                    importes.append(("IVA sin tipo (falta el %)", t.iva_sin_tipo))
+                importes.append(("Total IVA", t.iva))
+                importes.append(("Recargo de equivalencia", t.requiv))
+            importes.append(("Retención IRPF", -t.irpf))
+            if not solo_total:
+                importes.append(("Suplidos (sin IVA)", t.suplidos))
+            filas = []
+            if solo_total:
+                filas.append(
+                    f"<tr><td colspan='2' style='color:{MUTED}'>Cliente en "
+                    "recargo de equivalencia: los gastos van a Aplifisa por "
+                    "el total factura.</td></tr>")
+            elif recargo and tipo == "Gastos":
+                filas.append(
+                    f"<tr><td colspan='2' style='color:{MUTED}'>Cliente en "
+                    "recargo de equivalencia: las facturas sin retención van "
+                    "por el total factura (dentro de la base); las que llevan "
+                    "retención, con su desglose.</td></tr>")
+            for concepto, importe in importes:
+                cero = abs(importe) < 0.005
+                color = COLOR_CERO if cero else INK
+                valor = eur(0.0) if cero else eur_con_signo(importe)
+                filas.append(
+                    f"<tr><td style='color:{color}'>{html.escape(concepto)}</td>"
+                    f"<td align='right' style='color:{color}'>"
+                    f"{html.escape(valor)}</td></tr>")
+            filas.append(
+                f"<tr bgcolor='{FONDO_TOTAL}'><td><b>Total</b></td>"
+                f"<td align='right'><b style='font-size:14px'>"
+                f"{html.escape(eur(t.total))}</b></td></tr>")
             fondo = (f" bgcolor='{ACCENT_FAINT}'" if ambito == "FILTRO ACTUAL"
                      else "")
             titulo = f"{tipo} · {self._nombre_ambito(ambito)}"
-            # El total en la primera línea: es lo que se mira y en una
-            # pantalla baja puede no caber el desglose entero.
             bloques.append(
-                f"<table width='100%' cellspacing='0' cellpadding='2'{fondo}>"
-                f"<tr><td><b style='color:{INK}'>{html.escape(titulo)}</b></td>"
-                f"<td align='right'><b>{html.escape(eur(t.total))}</b></td></tr>"
-                f"<tr><td colspan='2' style='color:{MUTED}'>{t.facturas} "
-                f"factura(s) · {t.lineas} línea(s)</td></tr>{filas}</table>")
+                f"<table width='100%' cellspacing='0' cellpadding='3'{fondo}>"
+                f"<tr><td colspan='2'><b style='color:{INK}; font-size:13px'>"
+                f"{html.escape(titulo)}</b><br><span style='color:{MUTED}'>"
+                f"{t.facturas} factura(s) · {t.lineas} línea(s)</span></td></tr>"
+                f"{''.join(filas)}</table>")
+        bloques.append(
+            f"<p style='color:{MUTED}; font-size:11px'>Total = base + IVA + "
+            "recargo + suplidos − retención: lo que se registra en Aplifisa. "
+            "La factura cuyo total impreso no coincide sale marcada en la "
+            "tabla.</p>")
         # Al teclear en el buscador se repinta: que no salte arriba.
         barra = self.vista_totales.verticalScrollBar()
         posicion = barra.value()
         self.vista_totales.setHtml(
             f"<div style='font-size:12px; color:{INK}'>"
-            + "<div style='height:8px'></div>".join(bloques) + "</div>")
+            + "<div style='height:10px'></div>".join(bloques) + "</div>")
         barra.setValue(min(posicion, barra.maximum()))
 
     def _copiar_resumen(self):

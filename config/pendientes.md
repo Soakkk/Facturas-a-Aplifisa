@@ -7,9 +7,12 @@ veas y lo leo en la siguiente sesión de trabajo.
 
 ### Lo nuevo de la 1.18 (lo que pediste)
 
-**Tres columnas.** Facturas a la izquierda, el documento en el centro y la
-ficha con los totales a la derecha. Sin logo ni título arriba: botones,
-cliente, periodo y «Exportar a Aplifisa». Los filtros, a la izquierda.
+**Tres columnas.** Facturas a la izquierda; en el centro la factura (la
+hoja y, debajo, lo que ha leído la IA, todo junto); a la derecha los totales
+a toda la altura, con base, cada IVA, total IVA, recargo, retención,
+suplidos y total, para cuadrar con tu suma a mano. Sin logo ni título
+arriba: botones, cliente, periodo y «Exportar a Aplifisa». Los filtros, a la
+izquierda.
 
 **✎ Corregida.** Si corriges a mano un dato de una factura en ámbar, ya
 cuenta como revisada: no hace falta pulsar «Marcar revisada». Si tras tu

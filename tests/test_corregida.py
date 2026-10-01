@@ -176,3 +176,74 @@ def test_elegir_la_lectura_1_tras_escribir_otro_valor_lo_vuelve_a_poner():
     v._resolver_discrepancia(0, 0, 1)
     assert v.tabla.item(0, C_TOTAL).text() == "121,00"
     assert f.total_impreso == 121.0
+
+
+def _documento(*lineas, disc):
+    """Una factura de varias líneas (mismo documento) con una discrepancia."""
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    for i, cambios in enumerate(lineas):
+        f = _factura(confianza_ia="alta", verificacion="doble",
+                     documento_id="doc", lineas_factura=len(lineas),
+                     discrepancias=(disc,), **cambios)
+        v._anadir_fila(b"", f, "gasto", "622", "", "")
+    v._revalidar_todo()
+    return v
+
+
+def _bases(v):
+    return [x["factura"].base_iva for x in v.filas]
+
+
+def test_es_correcto_en_el_desglose_no_toca_los_importes():
+    disc = {"campo": "lineas_iva", "etiqueta": "Desglose de IVA",
+            "valor_1": "base 100,00 al 21% = 21,00; base 50,00 al 10% = 5,00",
+            "valor_2": "base 150,00 al 21% = 31,50", "campo_factura": "base_iva",
+            "lineas_2": [{"base": 150, "tipo_iva": 21, "cuota_iva": 31.5}],
+            "texto": "Doble lectura: Desglose de IVA no coincide"}
+    v = _documento(dict(total_impreso=176.0),
+                   dict(base_iva=50.0, pct_iva=10.0, cuota_iva=5.0,
+                        total_impreso=176.0), disc=disc)
+    v._resolver_discrepancia(0, 0, 1)
+    assert _bases(v) == [100.0, 50.0]
+    # Y la lectura 2 no se puede copiar sola con dos líneas.
+    assert v._destino_discrepancia(disc, [0, 1]) is None
+    v._resolver_discrepancia(0, 0, 2)
+    assert _bases(v) == [100.0, 50.0]
+
+
+def test_es_correcto_en_la_retencion_no_la_copia_a_otras_lineas():
+    disc = {"campo": "cuota_irpf", "etiqueta": "Retención", "valor_1": 15.0,
+            "valor_2": 18.0, "campo_factura": "cuota_irpf",
+            "texto": "Doble lectura: Retención no coincide"}
+    v = _documento(dict(base_irpf=100.0, pct_irpf=15.0, cuota_irpf=15.0,
+                        total_impreso=161.0),
+                   dict(base_iva=50.0, pct_iva=10.0, cuota_iva=5.0,
+                        total_impreso=161.0), disc=disc)
+    v._resolver_discrepancia(0, 0, 1)
+    assert [x["factura"].cuota_irpf for x in v.filas] == [15.0, None]
+
+
+def test_el_suplido_solo_va_a_su_linea():
+    disc = {"campo": "suplidos", "etiqueta": "Suplidos", "valor_1": 30.0,
+            "valor_2": 35.0, "campo_factura": "base_iva",
+            "texto": "Doble lectura: Suplidos no coincide"}
+    lineas = (dict(total_impreso=151.0),
+              dict(base_iva=30.0, pct_iva=None, cuota_iva=None,
+                   es_suplido=True, total_impreso=151.0))
+    v = _documento(*lineas, disc=disc)
+    v._resolver_discrepancia(0, 0, 1)                   # «Es correcto»
+    assert _bases(v) == [100.0, 30.0]
+    v = _documento(*lineas, disc=disc)
+    v._resolver_discrepancia(0, 0, 2)                   # «Usar este»
+    assert _bases(v) == [100.0, 35.0]
+
+
+def test_en_un_abono_la_lectura_elegida_conserva_el_signo():
+    disc = {"campo": "total", "etiqueta": "Total", "valor_1": 121.0,
+            "valor_2": 131.0, "campo_factura": "total_impreso",
+            "texto": "Doble lectura: Total no coincide"}
+    f = _factura(confianza_ia="alta", verificacion="doble", base_iva=-100.0,
+                 cuota_iva=-21.0, total_impreso=-121.0, discrepancias=(disc,))
+    v = _ventana(f)
+    v._resolver_discrepancia(0, 0, 2)
+    assert f.total_impreso == -131.0

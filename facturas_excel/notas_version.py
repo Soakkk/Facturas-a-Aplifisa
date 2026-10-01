@@ -10,10 +10,17 @@ NOTAS = {
 <h2>Novedades de la versión 1.18.0</h2>
 <ul>
   <li><b>Pantalla en tres columnas.</b> A la izquierda, las facturas leídas;
-      en el centro, el documento original; a la derecha, la ficha de la
-      factura y, debajo, los totales del lote en vertical (base, cada IVA,
-      suplidos y total). La franja de totales de abajo y la columna «Bloques
-      del lote» desaparecen: el bloque se sigue eligiendo en su desplegable.</li>
+      en el centro, la <b>factura</b>: la hoja escaneada y, justo debajo, lo
+      que ha leído la IA (el divisor entre las dos se puede arrastrar); a la
+      derecha, a toda la altura, la <b>comprobación de totales</b>. La franja
+      de totales de abajo y la columna «Bloques del lote» desaparecen: el
+      bloque se sigue eligiendo en su desplegable.</li>
+  <li><b>Totales completos para cuadrar a mano.</b> Gastos e ingresos por
+      separado, con base imponible, cada tipo de IVA, total IVA, recargo de
+      equivalencia, retención IRPF, suplidos y total. Lo que vale cero
+      también sale (en gris), para que vea que está mirado. Con un filtro o
+      con facturas fuera del trimestre, sale además el bloque de lo que se
+      ve y el de dentro y fuera del trimestre.</li>
   <li><b>Arriba, solo lo que se usa.</b> Fuera el logo y el título: una fila
       de botones con el cliente y el periodo en el centro y «Exportar a
       Aplifisa» a la derecha. Modelos de lectura y API key siguen en el menú
@@ -28,6 +35,15 @@ NOTAS = {
       cuadra, sigue en ámbar para que no se escape un dígito mal tecleado.
       Las facturas a las que el programa copia ese dato (mismo proveedor)
       siguen pendientes: esas no las ha mirado nadie.</li>
+  <li><b>Doble lectura más segura.</b> «Es correcto» y «Usar este» ya no
+      tocan los importes de otras líneas de la factura: un suplido va solo a
+      su línea, la retención solo a la suya y, en un abono, el importe
+      elegido conserva el signo. Si no se puede poner sin riesgo, el botón
+      le pide corregirlo en la tabla.</li>
+  <li><b>Clientes en recargo «por el total».</b> Un importe corregido a mano
+      en la línea resumida ya no se pierde al escanear otro taco o quitar
+      un bloque. Y si una factura leída como gasto se pasa a ingreso, vuelve
+      con su IVA (una venta no va por el total).</li>
 </ul>
 """,
     "1.17.2": """

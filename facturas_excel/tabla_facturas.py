@@ -176,6 +176,10 @@ class TablaFacturas(QTableWidget):
             modo = QHeaderView.Interactive
         if cabecera.sectionResizeMode(C_NOMBRE) != modo:
             cabecera.setSectionResizeMode(C_NOMBRE, modo)
+            if modo == QHeaderView.Interactive:
+                # El reparto del Stretch es diferido: sin esto se quedaría el
+                # ancho estirado de antes y empujaría los importes fuera.
+                self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
         if modo == QHeaderView.Interactive \
                 and self.columnWidth(C_NOMBRE) < ANCHO_MIN_NOMBRE:
             self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)

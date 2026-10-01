@@ -29,11 +29,13 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    - ✕ **Error**: descuadres, tipo de IVA inexistente, fecha futura, faltan
      campos obligatorios.
    La pantalla va en **tres columnas**: la tabla de datos extraídos (con los
-   filtros a la izquierda), el documento original y, a la derecha, la ficha
-   de la factura con los totales del lote debajo. Corregir a mano un dato de
-   una factura en ámbar la deja en **✎ Corregida**, que cuenta como revisada
-   (salvo que después el total no cuadre).
-   La **ficha de la factura**, junto al documento, agrupa lo leído
+   filtros a la izquierda), la factura (la hoja escaneada y, debajo, lo que
+   ha leído la IA) y, a la derecha, la comprobación de totales con el
+   desglose completo (base, cada IVA, total IVA, recargo, retención,
+   suplidos y total; lo que vale cero sale en gris). Corregir a mano un dato
+   de una factura en ámbar la deja en **✎ Corregida**, que cuenta como
+   revisada (salvo que después el total no cuadre).
+   La **lectura de la IA**, debajo de la hoja, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.
    Con la **imagen de la factura al lado** para corregir al vuelo: la hoja se

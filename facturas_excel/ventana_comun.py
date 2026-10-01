@@ -98,10 +98,6 @@ class EtiquetaCliente(QLabel):
         alto = super().minimumSizeHint().height()
         return QSize(min(super().sizeHint().width(), 140), alto)
 
-    def sizeHint(self) -> QSize:
-        tam = super().sizeHint()
-        return QSize(min(tam.width(), 260), tam.height())
-
     def _visible(self, ancho: int) -> str:
         medida = self.fontMetrics()
         texto = self.text()

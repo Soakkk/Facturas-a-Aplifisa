@@ -99,6 +99,9 @@ QLabel#tituloSeccion {{
     color: {CHROME}; font-size: 12px; font-weight: 700;
     padding-bottom: 3px; border-bottom: 2px solid #E4EAF2;
 }}
+QLabel#tituloSubseccion {{
+    color: {MUTED}; font-size: 11px; font-weight: 700; padding-top: 2px;
+}}
 QLabel#tituloMesa {{ color: {INK}; font-size: 20px; font-weight: 600; }}
 QLabel#contadorLote {{ color: {MUTED}; font-size: 12px; }}
 QLabel#textoSuave {{ color: {MUTED}; font-size: 11px; }}
@@ -176,7 +179,7 @@ QHeaderView::section {{
 QTableWidget QComboBox {{ border: none; border-radius: 3px; padding: 3px 5px; background: transparent; }}
 QSplitter::handle {{ background: {BORDER}; }}
 QSplitter#splitRevision::handle {{ margin: 4px 2px; border-radius: 2px; }}
-QSplitter#splitLado::handle {{ margin: 2px 4px; border-radius: 2px; }}
+QSplitter#splitFactura::handle {{ margin: 2px 40px; border-radius: 2px; }}
 QSplitter::handle:hover {{ background: {ACCENT}; }}
 QProgressBar {{
     background: #E8EDF4; border: none; border-radius: 2px;
