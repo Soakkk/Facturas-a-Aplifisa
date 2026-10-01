@@ -309,7 +309,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.layout_herramientas.setSpacing(6)
         self.layout_herramientas.setContentsMargins(0, 0, 0, 0)
         self.filas_herramientas = []
-        for _ in range(6):
+        # Filas de sobra: con la letra de Windows los filtros pueden ocupar
+        # cuatro o cinco filas en un portátil y las acciones necesitan las
+        # suyas (una fila vacía no ocupa sitio).
+        for _ in range(10):
             fila_herramientas = QHBoxLayout()
             fila_herramientas.setSpacing(8)
             fila_herramientas.setContentsMargins(0, 0, 0, 0)
@@ -658,8 +661,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._actualizar_barra_responsiva(self.width())
         self._distribuir_herramientas(self.width())
         # Tras el primer layout Qt ya conoce el ancho real del panel izquierdo.
-        QTimer.singleShot(
-            0, lambda: self._distribuir_herramientas(self.width()))
+        # Temporizador hijo de la ventana: si se cierra antes, no salta.
+        self._timer_herramientas = QTimer(self)
+        self._timer_herramientas.setSingleShot(True)
+        self._timer_herramientas.timeout.connect(
+            lambda: self._distribuir_herramientas(self.width()))
+        self._timer_herramientas.start(0)
 
     def _distribuir_herramientas(self, ancho: int):
         """Filtros a la izquierda y, debajo, las acciones, sin cortar textos.
@@ -1310,7 +1317,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     self.tabla.parentWidget().width() - max(ancho, 250))
             # QSplitter recuerda el ancho de la columna oculta y lo devuelve.
             self.lado_card.setVisible(bool(visible))
-            QTimer.singleShot(0, self._tras_ver_resumen)
+            if not hasattr(self, "_timer_tras_resumen"):
+                self._timer_tras_resumen = QTimer(self)
+                self._timer_tras_resumen.setSingleShot(True)
+                self._timer_tras_resumen.timeout.connect(self._tras_ver_resumen)
+            self._timer_tras_resumen.start(0)
         if hasattr(self, "accion_resumen") and self.accion_resumen.isChecked() != visible:
             self.accion_resumen.setChecked(bool(visible))
 

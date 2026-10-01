@@ -203,13 +203,20 @@ def test_el_nombre_vuelve_a_su_minimo_al_estrechar_de_golpe():
     assert t.columnWidth(C_NOMBRE) == ANCHO_MIN_NOMBRE
 
 
-def test_un_nombre_de_cliente_largo_se_ve_entero_si_hay_sitio():
+def test_un_nombre_de_cliente_largo_no_se_corta_si_sobra_sitio():
+    """Si el nombre sale recortado, es que no había más sitio: nunca con un
+    hueco vacío al lado (antes se cortaba a 260 px aunque sobrara cinta).
+    No depende del tamaño de la pantalla de quien pase la prueba."""
     v = _ventana()
     v.resize(1920, 1000)
     v.show()
     _app.processEvents()
     nombre = "COMERCIAL DE SUMINISTROS INDUSTRIALES DEL MEDITERRANEO SL"
     v._poner_cliente(f"{nombre}  ·  B12345674")
-    _app.processEvents()
+    for _ in range(3):
+        _app.processEvents()
     etiqueta = v.lbl_cliente
-    assert etiqueta._visible(etiqueta.contentsRect().width()) == etiqueta.text()
+    recortado = (etiqueta._visible(etiqueta.contentsRect().width())
+                 != etiqueta.text())
+    hueco = etiqueta.parentWidget().layout().cellRect(0, 3).width()
+    assert not (recortado and hueco > 4)

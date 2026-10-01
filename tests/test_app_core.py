@@ -317,7 +317,10 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     v.show()
     _app.processEvents()
     v.resize(1024, 640)
-    _app.processEvents()
+    # El reparto de filtros y acciones se rehace en cuanto Qt coloca la
+    # tabla con su ancho nuevo (puede llevar más de una vuelta).
+    for _ in range(3):
+        _app.processEvents()
     assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
     assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
