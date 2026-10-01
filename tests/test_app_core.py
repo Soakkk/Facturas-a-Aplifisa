@@ -356,8 +356,12 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     # GitHub lo es) y Windows no deja la ventana más ancha: la cinta decide
     # solo con el ancho que se le da, así que se le da 1920 directamente.
     v._actualizar_barra_responsiva(1920)
+    datos = (v.width(), v.minimumWidth(),
+             v.barra_rapida.layout().minimumSize().width(),
+             v.lbl_cliente.sizeHint().width(),
+             v.lbl_cliente.minimumSizeHint().width())
     for boton in v._botones_grandes:
-        assert boton.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+        assert boton.toolButtonStyle() == Qt.ToolButtonTextUnderIcon, datos
     # El buscador tiene tamaño de buscador, no ocupa toda la fila (en una
     # ventana ancha, ni la mitad de la tabla).
     assert 260 <= v.txt_buscar.width() <= 320

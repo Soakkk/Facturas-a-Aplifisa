@@ -740,6 +740,28 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """
         if not hasattr(self, "fila_barra_estrecha"):
             return
+        # Al cambiar los botones, Windows puede redimensionar la ventana en
+        # el acto (resizeEvent dentro de esta misma llamada) y esa llamada
+        # anidada pisaría la decisión a medias. Se aplaza y se repite luego
+        # con el ancho real.
+        if getattr(self, "_ajustando_barra", False):
+            self._barra_pendiente = True
+            return
+        self._ajustando_barra = True
+        try:
+            self._ajustar_barra(ancho)
+        finally:
+            self._ajustando_barra = False
+        if getattr(self, "_barra_pendiente", False):
+            self._barra_pendiente = False
+            if not hasattr(self, "_timer_barra"):
+                self._timer_barra = QTimer(self)
+                self._timer_barra.setSingleShot(True)
+                self._timer_barra.timeout.connect(
+                    lambda: self._actualizar_barra_responsiva(self.width()))
+            self._timer_barra.start(0)
+
+    def _ajustar_barra(self, ancho: int) -> None:
         baja = self.height() < 760
         icono = QSize(18, 18) if baja else QSize(ICONO_CINTA, ICONO_CINTA)
         principales = (self.btn_cargar, self.btn_escanear, self.btn_gastos)
