@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel.app import (
-    C_BASE, C_ESTADO, ICONO_MANUAL, ICONO_REVISADO, VentanaPrincipal,
+    C_BASE, C_ESTADO, ICONO_ESTADO, ICONO_REVISADO, VentanaPrincipal,
 )
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import construir
@@ -76,17 +76,69 @@ def test_un_aviso_ambar_no_pasa_hasta_confirmarlo():
     assert errores == [0] and not f.revision_confirmada
 
 
-def test_duplicados_y_gestion_manual_se_apartan_del_excel():
+def test_los_duplicados_se_apartan_del_excel():
     v = VentanaPrincipal(comprobar_updates=False)
     normal = factura(num_factura="F-1")
     duplicada = factura(num_factura="F-1")
-    manual = factura(num_factura="F-2", tratamiento_manual="Factura con suplido")
-    for f in (normal, duplicada, manual):
+    for f in (normal, duplicada):
         v._anadir_fila(b"", f, "gasto", "622", "G13", "")
     v._revalidar_todo()
 
     por_tipo, excluidas, errores, pendientes = v._clasificar_exportacion()
     assert por_tipo["gasto"] == [normal]
-    assert {motivo for _, motivo in excluidas} == {"duplicada", "Factura con suplido"}
+    assert excluidas == [(1, "duplicada")]
     assert not errores and not pendientes
-    assert v.tabla.item(2, C_ESTADO).text() == ICONO_MANUAL
+
+
+def test_ya_no_hay_gestion_manual_todo_sale_tras_marcar_revisada():
+    """Lo que antes se apartaba como «M Manual» no llegaba a Aplifisa y
+    descuadraba el registro. Ahora es un ámbar más: se mira y se exporta."""
+    v = VentanaPrincipal(comprobar_updates=False)
+    assert not hasattr(v, "accion_gestion_manual")
+    motivos = ("Bien de inversión", "Factura con suplido",
+               "Sustituida por F-9", "Marcada por el usuario")
+    facturas = [factura(num_factura=f"F-{i}", tratamiento_manual=motivo)
+                for i, motivo in enumerate(motivos, 1)]
+    for f in facturas:
+        v._anadir_fila(b"", f, "gasto", "622", "G13", "")
+    v._revalidar_todo()
+
+    por_tipo, excluidas, errores, pendientes = v._clasificar_exportacion()
+    assert pendientes == [0, 1, 2, 3] and not excluidas and not errores
+    assert por_tipo["gasto"] == []
+    for fila, motivo in enumerate(motivos):
+        assert v.tabla.item(fila, C_ESTADO).text() == ICONO_ESTADO[REVISAR]
+        textos = " ".join(v.filas[fila]["mensajes"])
+        assert "Marcar revisada" in textos
+        assert "No se incluirá en la exportación" not in textos
+
+    v.tabla.selectAll()
+    v._marcar_revisada()
+    por_tipo, excluidas, errores, pendientes = v._clasificar_exportacion()
+    assert por_tipo["gasto"] == facturas
+    assert not excluidas and not errores and not pendientes
+
+
+def test_marcar_revisada_una_linea_revisa_la_factura_entera():
+    """Una factura con suplido son dos líneas: basta con pulsar una."""
+    datos = {
+        "emisor_nombre": "TELEFONIA PRUEBA SA", "emisor_nif": "B86561412",
+        "receptor_nombre": "CLIENTE", "receptor_nif": "12345678Z",
+        "num_factura": "T-1", "fecha": "03/09/2026",
+        "lineas_iva": [{"base": 100, "tipo_iva": 21, "cuota_iva": 21}],
+        "suplidos": 40.88, "total": 161.88, "cuenta_gasto": "628",
+        "confianza": "alta",
+    }
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    assert len(pr.facturas) == 2
+    v = VentanaPrincipal(comprobar_updates=False)
+    for f in pr.facturas:
+        v._anadir_fila(b"", f, "gasto", f.concepto, f.subclave, "")
+    v._revalidar_todo()
+    assert v._clasificar_exportacion()[3] == [0, 1]
+
+    v.tabla.selectRow(0)
+    v._marcar_revisada()
+    por_tipo, _, errores, pendientes = v._clasificar_exportacion()
+    assert not pendientes and not errores
+    assert por_tipo["gasto"] == pr.facturas

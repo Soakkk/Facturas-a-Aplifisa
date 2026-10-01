@@ -202,12 +202,12 @@ def _html_resumen(e: Ejercicio, documentos: dict, facturas: list) -> str:
             f"<td align='right'><b>{eur(suma['cuota_irpf'])}</b></td>"
             f"<td align='right'><b>{eur(suma['total'])}</b></td><td></td></tr></table>")
     if otras:
-        # Las que tienen su PDF pero no salieron en el Excel: apartadas para
-        # gestión manual (bien de inversión, suplidos…) o exportación deshecha.
+        # Las que tienen su PDF pero no salieron en el Excel: apartadas por
+        # versiones anteriores (gestión manual) o con la exportación deshecha.
         partes.append(
             f"<h3>Archivadas sin exportar a Aplifisa: {len(otras)}</h3>"
-            "<p>Apartadas para gestión manual o con la exportación deshecha. "
-            "Tienen su PDF, pero no van en el Excel.</p>"
+            "<p>Apartadas en versiones anteriores o con la exportación "
+            "deshecha. Tienen su PDF, pero no van en el Excel.</p>"
             "<table border='1' cellspacing='0' cellpadding='3' width='100%'>"
             "<tr><th align='left'>Tipo</th><th align='left'>Fecha</th>"
             "<th align='left'>Nº</th><th align='left'>Nombre</th><th>Total</th>"

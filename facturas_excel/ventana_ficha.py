@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (
-    QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout,
-)
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
 
-from facturas_excel import ajustes, localizar
+from facturas_excel import ajustes, imagen_visor, localizar
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.conceptos import descripcion_de
 from facturas_excel.control_facturas import clave_documento
@@ -27,7 +24,15 @@ from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_
 from facturas_excel.validacion import ERROR, OK, REVISAR
 from facturas_excel.visor import Recuadro
 
+# El zoom se cuenta sobre la hoja entera a la vista (1 = hoja entera). Se
+# puede acercar hasta 4 veces eso, o hasta 3 veces el ancho del visor si el
+# visor es bajo y ancho (la hoja entera ahí se ve muy pequeña).
 ZOOM_MAXIMO = 4.0
+ZOOM_TOPE = 12.0
+PASO_ZOOM = 1.25
+# Lo que se espera desde el último cambio de zoom antes de sacar la hoja fina
+# (mientras, se amplía la que ya hay: el zoom responde al momento).
+ESPERA_NITIDA_MS = 90
 ETIQUETA_DATO = {
     "nif": "NIF", "nombre": "Nombre", "num_factura": "Nº", "fecha": "Fecha",
     "base_iva": "Base", "cuota_iva": "IVA", "pct_iva": "% IVA",
@@ -60,29 +65,201 @@ class FichaMixin:
     def _limpiar_visor(self) -> None:
         self.lbl_img.poner_recuadros([])
         self._pixmap_documento = QPixmap()
+        self._png_visor = None
+        self._fuente_visor = None
+        self._nitida = None
+        self._sin_nitida = set()
         self._zoom_visor = 1.0
         self.lbl_origen.setText("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_pagina.clear()
         self.lbl_img.clear()
+        self.lbl_img.poner_movible(False)
         self.lbl_img.setMinimumSize(250, 180)
         self.lbl_img.setText(
             "Suelte aquí las facturas\no use «Abrir PDF o imágenes»")
 
-    def _pintar_pixmap_visor(self) -> None:
+    # ---------- la hoja en el visor ----------
+    def _escala_hoja_entera(self) -> float:
+        """Escala con la que la hoja entera cabe en el visor."""
+        pix = self._pixmap_documento
+        sitio = self.visor_scroll.maximumViewportSize()
+        return min(max(1, sitio.width()) / max(1, pix.width()),
+                   max(1, sitio.height()) / max(1, pix.height()))
+
+    def _zoom_ancho(self) -> float:
+        """El zoom con el que la hoja ocupa todo el ancho del visor."""
+        sitio = self.visor_scroll.maximumViewportSize()
+        escala = max(1, sitio.width()) / max(1, self._pixmap_documento.width())
+        return max(1.0, escala / self._escala_hoja_entera())
+
+    def _zoom_maximo(self) -> float:
+        return min(ZOOM_TOPE, max(ZOOM_MAXIMO, 3 * self._zoom_ancho()))
+
+    def _tamano_hoja(self) -> QSize:
+        """Lo que ocupa la hoja en pantalla con el zoom actual."""
+        pix = self._pixmap_documento
+        escala = self._escala_hoja_entera() * self._zoom_visor
+        return QSize(max(1, round(pix.width() * escala)),
+                     max(1, round(pix.height() * escala)))
+
+    def _fuente_util(self):
+        """(original, página) de la hoja a la vista, si se puede sacar fina."""
+        fuente = getattr(self, "_fuente_visor", None)
+        if not fuente or fuente in getattr(self, "_sin_nitida", ()):
+            return None
+        return fuente
+
+    def _hoja_nitida(self, fisico: QSize):
+        """La hoja sacada del original al tamaño exacto (o None).
+
+        Devuelve False si el PDF está ocupado (se reintenta enseguida).
+        """
+        fuente = self._fuente_util()
+        if not fuente:
+            return None
+        clave = (*fuente, fisico.width(), fisico.height())
+        guardada = getattr(self, "_nitida", None)
+        if guardada and guardada[0] == clave:
+            return guardada[1]
+        pix = self._pixmap_documento
+        try:
+            hoja = imagen_visor.hoja(fuente[0], fuente[1], fisico.width(),
+                                     fisico.height(), pix.width() / pix.height())
+        except imagen_visor.Ocupado:
+            return False
+        if hoja is None:
+            # No está o no es la misma hoja: se queda la imagen de lectura.
+            if not hasattr(self, "_sin_nitida"):
+                self._sin_nitida = set()
+            self._sin_nitida.add(fuente)
+            return None
+        imagen = QImage(hoja.muestras, hoja.ancho, hoja.alto, hoja.linea,
+                        QImage.Format_RGB888).copy()
+        nitida = QPixmap.fromImage(imagen)
+        if nitida.size() != fisico:
+            nitida = nitida.scaled(fisico, Qt.IgnoreAspectRatio,
+                                   Qt.SmoothTransformation)
+        # Con la escala de la pantalla ya puesta: así no se copia al pintarla.
+        nitida.setDevicePixelRatio(self.lbl_img.devicePixelRatioF() or 1.0)
+        self._nitida = (clave, nitida)
+        return nitida
+
+    @staticmethod
+    def _con_escala(pix: QPixmap, escala: float) -> QPixmap:
+        """La imagen con la escala de la pantalla (125 %, 150 %…)."""
+        if pix.devicePixelRatio() != escala:
+            pix = QPixmap(pix)
+            pix.setDevicePixelRatio(escala)
+        return pix
+
+    def _pintar_pixmap_visor(self, inmediata: bool = False) -> None:
+        """Pone la hoja al tamaño del zoom, nítida aunque se acerque mucho.
+
+        Antes se ampliaba la imagen de lectura (150 ppp en JPEG) y al acercar
+        se veía borrosa. Ahora se saca la hoja del PDF original al tamaño
+        exacto de la pantalla; mientras llega, se amplía la que hay.
+        """
         if self._pixmap_documento.isNull():
             return
-        viewport = self.visor_scroll.viewport().size()
-        ancho = max(250, int(viewport.width() * self._zoom_visor))
-        alto = max(180, int(viewport.height() * self._zoom_visor))
-        self.lbl_img.setMinimumSize(ancho, alto)
-        self.lbl_img.setPixmap(self._pixmap_documento.scaled(
-            ancho, alto, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        tam = self._tamano_hoja()
+        escala_pantalla = self.lbl_img.devicePixelRatioF() or 1.0
+        fisico = QSize(max(1, round(tam.width() * escala_pantalla)),
+                       max(1, round(tam.height() * escala_pantalla)))
+        fuente = self._fuente_util()
+        guardada = getattr(self, "_nitida", None)
+        if not (guardada and fuente and guardada[0][:2] == fuente):
+            guardada = None
+        pix = None
+        if guardada and guardada[0][2:] == (fisico.width(), fisico.height()):
+            pix = guardada[1]
+        elif inmediata and fuente:
+            pix = self._hoja_nitida(fisico) or None
+        if pix is None:
+            # Al momento: la mejor imagen que ya hay, ampliada o reducida.
+            base = guardada[1] if guardada else self._pixmap_documento
+            pix = base.scaled(fisico, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            if self._fuente_util():
+                self._timer_nitida.start(ESPERA_NITIDA_MS)
+        self.lbl_img.setMinimumSize(tam)
+        # Se ajusta ya (no al repintar) para poder colocar las barras al
+        # momento, con el punto acercado bajo el ratón.
+        self.lbl_img.resize(tam.expandedTo(self.visor_scroll.viewport().size()))
+        self.lbl_img.setPixmap(self._con_escala(pix, escala_pantalla))
+        sitio = self.visor_scroll.maximumViewportSize()
+        self.lbl_img.poner_movible(tam.width() > sitio.width()
+                                   or tam.height() > sitio.height())
+
+    def _pintar_nitida(self) -> None:
+        """Cuando el zoom se para, la hoja fina sustituye a la ampliada."""
+        if self._pixmap_documento.isNull() or not self._fuente_util():
+            return
+        tam = self._tamano_hoja()
+        escala_pantalla = self.lbl_img.devicePixelRatioF() or 1.0
+        fisico = QSize(max(1, round(tam.width() * escala_pantalla)),
+                       max(1, round(tam.height() * escala_pantalla)))
+        nitida = self._hoja_nitida(fisico)
+        if nitida is False:
+            self._timer_nitida.start(250)      # la lectura está usando el PDF
+            return
+        if nitida is None:
+            return
+        self.lbl_img.setPixmap(self._con_escala(nitida, escala_pantalla))
+
+    def _zoom_en(self, factor: float, punto: QPointF | None = None,
+                 zoom: float | None = None) -> None:
+        """Acerca o aleja dejando quieto el punto señalado (o el centro)."""
+        if self._pixmap_documento.isNull():
+            return
+        nuevo = zoom if zoom is not None else self._zoom_visor * factor
+        nuevo = min(self._zoom_maximo(), max(1.0, nuevo))
+        if abs(nuevo - self._zoom_visor) < 1e-3:
+            return
+        horizontal = self.visor_scroll.horizontalScrollBar()
+        vertical = self.visor_scroll.verticalScrollBar()
+        vista = self.visor_scroll.viewport().size()
+        if punto is None:
+            punto = QPointF(horizontal.value() + vista.width() / 2,
+                            vertical.value() + vista.height() / 2)
+        antes = self.lbl_img.rect_imagen()
+        if antes is None or antes.width() <= 0 or antes.height() <= 0:
+            fx = fy = 0.5
+        else:
+            fx = min(1.0, max(0.0, (punto.x() - antes.x()) / antes.width()))
+            fy = min(1.0, max(0.0, (punto.y() - antes.y()) / antes.height()))
+        en_vista = QPointF(punto.x() - horizontal.value(),
+                           punto.y() - vertical.value())
+        self._zoom_visor = nuevo
+        self._pintar_pixmap_visor()
+        despues = self.lbl_img.rect_imagen()
+        if despues is not None:
+            horizontal.setValue(round(despues.x() + fx * despues.width() - en_vista.x()))
+            vertical.setValue(round(despues.y() + fy * despues.height() - en_vista.y()))
+
+    def eventFilter(self, objeto, evento):
+        # El visor cambia de tamaño (divisor, ventana): la hoja se reencaja.
+        if (objeto is getattr(self, "visor_scroll", None)
+                and evento.type() == QEvent.Resize
+                and not self._pixmap_documento.isNull()):
+            self._timer_visor.start()
+        return super().eventFilter(objeto, evento)
 
     def _cambiar_zoom_visor(self, incremento: float) -> None:
-        if self._pixmap_documento.isNull():
-            return
-        self._zoom_visor = min(ZOOM_MAXIMO, max(0.7, self._zoom_visor + incremento))
-        self._pintar_pixmap_visor()
+        """Botones de la lupa: un paso más cerca o más lejos."""
+        self._zoom_en(PASO_ZOOM if incremento > 0 else 1 / PASO_ZOOM)
+
+    def _zoom_doble_clic(self, punto: QPointF) -> None:
+        """Doble clic: acerca ese punto; si ya está cerca, la hoja entera."""
+        if self._zoom_visor > 1.05:
+            self._zoom_en(1.0, punto, zoom=1.0)
+        else:
+            self._zoom_en(1.0, punto, zoom=max(2.5, self._zoom_ancho()))
+
+    def _ver_hoja_entera(self) -> None:
+        self._zoom_en(1.0, zoom=1.0)
+
+    def _ajustar_al_ancho(self) -> None:
+        self._zoom_en(1.0, zoom=self._zoom_ancho())
+        self.visor_scroll.verticalScrollBar().setValue(0)
 
     def _mostrar_miniatura(self):
         r = self.tabla.currentRow()
@@ -94,17 +271,30 @@ class FichaMixin:
         factura = self.filas[r]["factura"]
         origen = os.path.basename(factura.origen_imagen or "")
         self.lbl_origen.setText(origen or "Documento cargado")
-        self.lbl_pagina.setText("1 / 1")
-        pix = QPixmap()
-        pix.loadFromData(png)
-        if not pix.isNull():
+        pagina = factura.pagina_origen or 0
+        self.lbl_pagina.setText(f"Pág. {pagina}" if pagina else "")
+        fuente = ((factura.origen_imagen, int(pagina))
+                  if factura.origen_imagen else None)
+        if png is not getattr(self, "_png_visor", None) or self._pixmap_documento.isNull():
+            pix = QPixmap()
+            pix.loadFromData(png)
+            if pix.isNull():
+                self._limpiar_visor()
+                self.lbl_origen.setText(origen or "Documento cargado")
+                self.lbl_img.setText("Vista previa no disponible para esta factura")
+                return
             self._pixmap_documento = pix
-            self._pintar_pixmap_visor()
-            self._pintar_recuadros()
+            self._png_visor = png
+            self._fuente_visor = fuente
+            self._nitida = None
+            self._pintar_pixmap_visor(inmediata=True)
         else:
-            self._limpiar_visor()
-            self.lbl_origen.setText(origen or "Documento cargado")
-            self.lbl_img.setText("Vista previa no disponible para esta factura")
+            # La misma hoja (otra línea de la factura, o la ventana cambió
+            # de tamaño): no se vuelve a cargar. El original puede haber
+            # cambiado de sitio al archivarse el taco.
+            self._fuente_visor = fuente
+            self._pintar_pixmap_visor()
+        self._pintar_recuadros()
 
     # ---------- ficha de la factura ----------
 
@@ -120,8 +310,7 @@ class FichaMixin:
         f = registro["factura"]
         tipo = self._tipo_fila(fila)
         estado = registro.get("estado", OK)
-        confirmada = (estado == REVISAR and f.revision_confirmada
-                      and not f.tratamiento_manual)
+        confirmada = estado == REVISAR and f.revision_confirmada
         de_linea = {"base_iva", "pct_iva", "cuota_iva", "base_requiv",
                     "pct_requiv", "cuota_requiv"}
 
@@ -287,29 +476,6 @@ class FichaMixin:
         self._avisar(f"{d.get('etiqueta')}: se queda el valor de {elegido}.",
                      EXITO)
 
-    def _abrir_vista_previa(self):
-        """Muestra la página seleccionada grande y con barras de desplazamiento."""
-        if self._pixmap_documento.isNull():
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle(self.lbl_origen.text() or "Documento original")
-        dlg.setModal(True)
-        layout = QVBoxLayout(dlg)
-        scroll = QScrollArea(dlg)
-        scroll.setWidgetResizable(False)
-        imagen = QLabel()
-        imagen.setAlignment(Qt.AlignCenter)
-        imagen.setPixmap(self._pixmap_documento)
-        imagen.resize(self._pixmap_documento.size())
-        scroll.setWidget(imagen)
-        layout.addWidget(scroll, 1)
-        cerrar = QPushButton("Cerrar")
-        cerrar.clicked.connect(dlg.accept)
-        layout.addWidget(cerrar, 0, Qt.AlignRight)
-        pantalla = QApplication.primaryScreen().availableGeometry()
-        dlg.resize(int(pantalla.width() * 0.9), int(pantalla.height() * 0.9))
-        dlg.exec()
-
     # ---------- dónde está cada dato en la hoja ----------
     def _recuadros_de_fila(self, r: int, columna=None) -> list:
         """Recuadros para el visor: el dato pulsado, o lo que tiene avisos."""
@@ -390,7 +556,8 @@ class FichaMixin:
         # Si en el tamaño actual el dato no se leería, se acerca la hoja.
         rect = self.lbl_img.rect_de(destacado)
         if rect is not None and rect.height() < 22:
-            self._zoom_visor = min(ZOOM_MAXIMO, self._zoom_visor * 26 / max(rect.height(), 1))
+            self._zoom_visor = min(self._zoom_maximo(),
+                                   self._zoom_visor * 26 / max(rect.height(), 1))
             self._pintar_pixmap_visor()
 
         def centrar():
@@ -449,7 +616,7 @@ class FichaMixin:
         trabajos = {}
         for fila in self.filas:
             f = fila.factura
-            if fila.estado not in (REVISAR, ERROR) or f.tratamiento_manual:
+            if fila.estado not in (REVISAR, ERROR):
                 continue
             if fila.estado == REVISAR and f.revision_confirmada:
                 continue

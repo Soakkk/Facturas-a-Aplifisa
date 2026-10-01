@@ -27,15 +27,18 @@ CAMPOS_IRPF = ("base_irpf", "pct_irpf", "cuota_irpf")
 
 # Cómo se presenta el estado de una línea. El programa decide por el CÓDIGO;
 # el texto es solo lo que se ve (antes se comparaba el texto de la celda).
-VERIFICADA, SIN_VERIFICAR, POR_REVISAR, CON_ERROR, REVISADA, MANUAL = (
-    "verificada", "sin_verificar", "revisar", "error", "revisada", "manual")
+# Ya no hay estado «Manual»: lo que antes se apartaba (bien de inversión,
+# suplido, sustituida) queda en «Revisar» con su motivo y se exporta después
+# de «Marcar revisada», como cualquier otro aviso ámbar.
+VERIFICADA, SIN_VERIFICAR, POR_REVISAR, CON_ERROR, REVISADA = (
+    "verificada", "sin_verificar", "revisar", "error", "revisada")
 TEXTO_PRESENTACION = {
     VERIFICADA: "✓ Verificada", SIN_VERIFICAR: "○ Sin verificar",
     POR_REVISAR: "! Revisar", CON_ERROR: "✕ Error",
-    REVISADA: "✓ Revisada", MANUAL: "M Manual",
+    REVISADA: "✓ Revisada",
 }
 ORDEN_PRESENTACION = (VERIFICADA, SIN_VERIFICAR, REVISADA, POR_REVISAR,
-                      CON_ERROR, MANUAL)
+                      CON_ERROR)
 
 
 def normalizar(f: Factura) -> Factura:
@@ -62,8 +65,6 @@ def normalizar(f: Factura) -> Factura:
 
 def presentacion(estado: str, f: Factura, confirmada: bool) -> str:
     """El código con el que se enseña una línea."""
-    if f.tratamiento_manual:
-        return MANUAL
     if confirmada:
         return REVISADA
     if estado == OK:
@@ -125,16 +126,14 @@ class Fila:
     @property
     def confirmada(self) -> bool:
         f = self.factura
-        return (self.estado == REVISAR and f.revision_confirmada
-                and not f.tratamiento_manual)
+        return self.estado == REVISAR and f.revision_confirmada
 
     @property
     def pendiente(self) -> bool:
         """Lo que impide exportar: un error o un ámbar sin confirmar."""
         f = self.factura
         return (self.estado == ERROR or
-                (self.estado == REVISAR and not f.revision_confirmada
-                 and not f.tratamiento_manual))
+                (self.estado == REVISAR and not f.revision_confirmada))
 
 
 def filas_de_bloques(bloques, por_el_total: bool, a_total_factura) -> List[Fila]:

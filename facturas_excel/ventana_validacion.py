@@ -111,8 +111,7 @@ class ValidacionMixin:
         registro["ya_exportada"] = ya
         if ya:
             anadir(historial.texto_aviso(ya), "num_factura")
-        confirmada = (estado == REVISAR and f.revision_confirmada
-                      and not f.tratamiento_manual)
+        confirmada = estado == REVISAR and f.revision_confirmada
         if confirmada:
             msgs.append("Revisada y confirmada manualmente")
         registro["estado"] = estado

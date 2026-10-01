@@ -188,7 +188,12 @@ class AplifisaMixin:
         return traducidas
 
     def _clasificar_exportacion(self):
-        """Separa lo exportable, lo manual y lo que todavía bloquea el lote."""
+        """Separa lo exportable, los duplicados y lo que todavía bloquea.
+
+        Ya no se aparta nada «para gestión manual»: esas facturas no llegaban
+        a Aplifisa y descuadraban el registro. Ahora son avisos ámbar y salen
+        en el Excel en cuanto se marcan revisadas.
+        """
         por_tipo = {"gasto": [], "venta": []}
         excluidas = []
         errores = []
@@ -199,12 +204,10 @@ class AplifisaMixin:
             registro = self.filas[fila]
             # El aviso de «ya exportada» no cuenta aquí: se decide aparte.
             estado = registro.get("estado_base", registro.get("estado"))
-            if getattr(self, "_errores_documento", {}).get(fila) and not f.tratamiento_manual:
+            if getattr(self, "_errores_documento", {}).get(fila):
                 errores.append(fila)
             elif fila in self._duplicados:
                 excluidas.append((fila, "duplicada"))
-            elif f.tratamiento_manual:
-                excluidas.append((fila, f.tratamiento_manual))
             elif estado == ERROR:
                 errores.append(fila)
             elif estado == REVISAR and not f.revision_confirmada:
@@ -302,9 +305,9 @@ class AplifisaMixin:
             return
         if not any(por_tipo.values()):
             self._avisar(
-                "No hay facturas para exportar automáticamente. "
-                f"Se han apartado {len(excluidas)} línea(s) para gestión "
-                "manual o ya exportadas.", INFO)
+                "No hay facturas nuevas para exportar: las "
+                f"{len(excluidas) + len(self._ya_exportadas_export)} línea(s) "
+                "que quedan están duplicadas o ya se exportaron.", INFO)
             return
 
         # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
@@ -362,16 +365,9 @@ class AplifisaMixin:
         historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
                             rutas_por_tipo, getattr(self, "_cliente_nombre", ""),
                             leidas_en=self._momentos_de_lectura())
-        # Las apartadas para gestión manual (bien de inversión, suplidos…)
-        # no van al Excel, pero son documentación del cliente: también tienen
-        # su PDF. Los duplicados y las sustituidas, no.
-        apartadas = {"gasto": [], "venta": []}
-        for fila, motivo in excluidas:
-            if motivo == "duplicada" or str(motivo).startswith("Sustituida"):
-                continue
-            apartadas[self._tipo_fila(fila)].append(self.filas[fila]["factura"])
+        # Los duplicados no van al Excel ni tienen PDF propio: su original sí.
         texto_expediente = self._archivar_exportacion(
-            exportadas, rutas_por_tipo, apartadas)
+            exportadas, rutas_por_tipo)
         aprender_nifs_exportados(
             [f for t in tipos_exportados for f in por_tipo[t]])
         self._perfil_columnas = (None,)      # el registro ha cambiado
@@ -390,7 +386,7 @@ class AplifisaMixin:
             f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
-            + (f"Apartadas de la exportación automática: {len(excluidas)} línea(s).\n"
+            + (f"Duplicadas, no exportadas: {len(excluidas)} línea(s).\n"
                if excluidas else "")
             + (f"Eliminados {temporales_eliminados} Excel temporales de partes.\n"
                if temporales_eliminados else "")

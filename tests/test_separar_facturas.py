@@ -142,7 +142,9 @@ def test_exportar_parte_el_taco_y_actualiza_la_ventana(monkeypatch):
     assert "guardadas en su propio PDF" in v.banda.historial[-1]
 
 
-def test_las_apartadas_tambien_tienen_su_pdf_pero_no_las_sustituidas(monkeypatch):
+def test_las_revisadas_con_motivo_se_exportan_y_tienen_su_pdf(monkeypatch):
+    """Sin gestión manual: el bien de inversión se revisa y sale; la
+    sustituida se elimina del lote y no deja PDF."""
     import facturas_excel.app as modulo_app
 
     class Orden:
@@ -172,7 +174,13 @@ def test_las_apartadas_tambien_tienen_su_pdf_pero_no_las_sustituidas(monkeypatch
                subclave="G13", verificacion="doble", tratamiento_manual=manual)
         v._anadir_fila(b"", f, "gasto", "622", "G13", "", "b1")
     v._revalidar_todo()
+    v.tabla.selectRow(2)
+    v._eliminar_seleccion()
+    v.tabla.selectRow(1)
+    v._marcar_revisada()
     v._exportar_todo()
+    # Ya no hay «apartadas»: si INV-1 tiene su PDF es porque salió en el Excel.
+    assert "2 línea(s)" in v.banda.historial[-1]
     gastos = sorted(n for n in os.listdir(carpeta) if n.endswith(".pdf"))
     assert gastos == ["2026-02-10 PROVEEDOR PRUEBA F-1.pdf",
                       "2026-02-10 PROVEEDOR PRUEBA INV-1.pdf"]

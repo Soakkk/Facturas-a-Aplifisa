@@ -10,6 +10,7 @@ import io
 import hashlib
 import os
 import re
+import threading
 from typing import List, Tuple
 
 import fitz  # PyMuPDF
@@ -20,6 +21,12 @@ MIME = "image/jpeg"
 CALIDAD = 80
 MAX_LADO = 2000  # px; redimensiona si la imagen es mayor (suficiente para OCR)
 PAGINAS_POR_BLOQUE = 25
+
+# PyMuPDF no admite dos llamadas a la vez desde hilos distintos. La lectura
+# rasteriza en segundo plano mientras el visor dibuja la hoja en pantalla:
+# cada hoja se saca con este cerrojo, y el visor no espera (si está cogido,
+# enseña la imagen de lectura y lo vuelve a intentar al momento).
+CERROJO = threading.Lock()
 
 
 def _comprimir_pil(img: Image.Image) -> bytes:
@@ -35,13 +42,17 @@ def _comprimir_pil(img: Image.Image) -> bytes:
 
 def paginas_pdf_a_jpg(ruta_pdf: str, dpi: int = 150) -> List[bytes]:
     imagenes = []
-    doc = fitz.open(ruta_pdf)
+    with CERROJO:
+        doc = fitz.open(ruta_pdf)
+        total = len(doc)
     try:
-        for pagina in doc:
-            pix = pagina.get_pixmap(dpi=dpi)
-            imagenes.append(pix.pil_tobytes(format="JPEG", quality=CALIDAD))
+        for numero in range(total):
+            with CERROJO:
+                pix = doc[numero].get_pixmap(dpi=dpi)
+                imagenes.append(pix.pil_tobytes(format="JPEG", quality=CALIDAD))
     finally:
-        doc.close()
+        with CERROJO:
+            doc.close()
     return imagenes
 
 
@@ -50,7 +61,7 @@ def pagina_a_jpg(ruta: str, pagina: int = 1, dpi: int = 150) -> bytes:
     if os.path.splitext(ruta)[1].lower() != ".pdf":
         with Image.open(ruta) as im:
             return _comprimir_pil(im)
-    with fitz.open(ruta) as doc:
+    with CERROJO, fitz.open(ruta) as doc:
         pix = doc[max(1, int(pagina)) - 1].get_pixmap(dpi=dpi)
         return pix.pil_tobytes(format="JPEG", quality=CALIDAD)
 

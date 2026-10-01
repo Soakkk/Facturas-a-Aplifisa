@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor, QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
@@ -69,8 +69,8 @@ from facturas_excel.tabla_facturas import (  # noqa: F401
 from facturas_excel.validacion import ERROR, OK, REVISAR, validar_nif
 from facturas_excel.ventana_comun import (  # noqa: F401
     ANCHO_LISTA_BLOQUES, COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO,
-    ICONO_ESTADO, ICONO_MANUAL, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
-    TODOS_LOS_BLOQUES, VisorClicable, _cabeceras_resumen, ruta_recurso,
+    ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
+    TODOS_LOS_BLOQUES, _cabeceras_resumen, ruta_recurso,
     rutas_factura_de_mime,
 )
 from facturas_excel.hilos import (  # noqa: F401
@@ -460,13 +460,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_zoom_menos.setObjectName("botonVisor")
         self.btn_zoom_menos.setIcon(QIcon(ruta_recurso("zoom-out.svg")))
         self.btn_zoom_menos.setToolTip("Alejar documento")
-        self.btn_zoom_menos.clicked.connect(lambda: self._cambiar_zoom_visor(-0.15))
+        self.btn_zoom_menos.clicked.connect(lambda: self._cambiar_zoom_visor(-1))
         barra_documento.addWidget(self.btn_zoom_menos)
         self.btn_zoom_mas = QPushButton()
         self.btn_zoom_mas.setObjectName("botonVisor")
         self.btn_zoom_mas.setIcon(QIcon(ruta_recurso("zoom-in.svg")))
         self.btn_zoom_mas.setToolTip("Acercar documento")
-        self.btn_zoom_mas.clicked.connect(lambda: self._cambiar_zoom_visor(0.15))
+        self.btn_zoom_mas.clicked.connect(lambda: self._cambiar_zoom_visor(1))
         barra_documento.addWidget(self.btn_zoom_mas)
         self.btn_senalar = QPushButton("¿De dónde sale?")
         self.btn_senalar.setObjectName("botonSenalar")
@@ -481,7 +481,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_opciones_visor = QPushButton("⋮")
         self.btn_opciones_visor.setObjectName("botonVisor")
         menu_visor = QMenu(self.btn_opciones_visor)
-        menu_visor.addAction("Abrir vista previa grande", self._abrir_vista_previa)
+        # Sin «vista previa grande»: tapaba toda la ventana. La hoja se
+        # acerca y se mueve aquí mismo.
+        menu_visor.addAction("Ver la hoja entera", self._ver_hoja_entera)
+        menu_visor.addAction("Ajustar al ancho", self._ajustar_al_ancho)
         self.btn_opciones_visor.setMenu(menu_visor)
         barra_documento.addWidget(self.btn_opciones_visor)
         self.lbl_img = VisorDocumento(
@@ -490,15 +493,31 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.lbl_img.setAlignment(Qt.AlignCenter)
         self.lbl_img.setMinimumWidth(250)
         self.lbl_img.setMinimumHeight(180)
-        self.lbl_img.setCursor(QCursor(Qt.PointingHandCursor))
-        self.lbl_img.setToolTip("Haga clic para abrir una vista previa grande.")
-        self.lbl_img.clicked.connect(self._abrir_vista_previa)
+        self.lbl_img.setToolTip(
+            "Arrastre para moverse por la hoja. Ctrl + rueda o doble clic "
+            "para acercar; otro doble clic vuelve a la hoja entera.")
+        self.lbl_img.zoom_pedido.connect(self._zoom_en)
+        self.lbl_img.doble_clic.connect(self._zoom_doble_clic)
         self._pixmap_documento = QPixmap()
+        self._png_visor = None
+        self._fuente_visor = None
+        self._nitida = None
+        self._sin_nitida = set()
         self._zoom_visor = 1.0
+        # La hoja fina se saca cuando el zoom (o el tamaño) se queda quieto.
+        self._timer_nitida = QTimer(self)
+        self._timer_nitida.setSingleShot(True)
+        self._timer_nitida.timeout.connect(self._pintar_nitida)
+        self._timer_visor = QTimer(self)
+        self._timer_visor.setSingleShot(True)
+        self._timer_visor.setInterval(60)
+        self._timer_visor.timeout.connect(self._pintar_pixmap_visor)
         self.visor_scroll = QScrollArea()
         self.visor_scroll.setObjectName("visorScroll")
         self.visor_scroll.setWidgetResizable(True)
         self.visor_scroll.setWidget(self.lbl_img)
+        # Al mover el divisor del visor, la hoja se vuelve a encajar.
+        self.visor_scroll.installEventFilter(self)
         lv.addWidget(titulo_visor)
         lv.addLayout(barra_documento)
         # Documento arriba y ficha de la factura debajo: lo leído, al lado de
@@ -807,18 +826,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Comprobar registro de Aplifisa…\tCtrl+R",
             lambda: self._contrastar_registro())
         self.btn_registro.setEnabled(False)
-        self.accion_gestion_manual = comprobar.addAction(
-            "Apartar selección para gestión manual…",
-            self._alternar_gestion_manual)
+        # Ya no hay «Apartar para gestión manual»: lo dudoso queda en ámbar y
+        # se exporta tras «Marcar revisada» (las apartadas no se registraban).
         self.accion_olvidar_exportacion = comprobar.addAction(
             "Olvidar que la selección ya se exportó…",
             self._olvidar_exportacion)
         self.accion_olvidar_exportacion.setToolTip(
             "Si Aplifisa rechazó el Excel, quita esas facturas del historial "
             "de exportadas para poder exportarlas otra vez sin aviso.")
-        self.accion_gestion_manual.setToolTip(
-            "Uso excepcional: aparta o recupera facturas que no deben entrar "
-            "en la exportación automática.")
 
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales del lote")
@@ -1709,8 +1724,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             f = registro["factura"]
             pendiente = (registro.get("estado") == ERROR or
                          (registro.get("estado") == REVISAR
-                          and not f.revision_confirmada
-                          and not f.tratamiento_manual))
+                          and not f.revision_confirmada))
             if pendiente:
                 # Una búsqueda no debe esconder la incidencia que se visita.
                 self._limpiar_filtros()
@@ -1737,17 +1751,22 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})
 
     def _marcar_revisada(self) -> None:
-        """Da salida únicamente a avisos ámbar comprobados por una persona."""
-        filas = self._filas_seleccionadas()
-        if not filas:
+        """Da salida únicamente a avisos ámbar comprobados por una persona.
+
+        Se revisa la factura, no la línea: una factura con suplido o con
+        varios tipos de IVA tiene varias líneas y basta con pulsar una.
+        """
+        seleccionadas = self._filas_seleccionadas()
+        if not seleccionadas:
             self._avisar("Seleccione una o varias filas ámbar.", AVISO)
             return
+        filas = sorted({r for fila in seleccionadas
+                        for r in self._filas_del_documento(fila)})
         confirmadas = []
         for fila in filas:
             registro = self.filas[fila]
             f = self._leer_fila(fila)
-            if (registro.get("estado") == REVISAR
-                    and not f.tratamiento_manual and not f.revision_confirmada):
+            if registro.get("estado") == REVISAR and not f.revision_confirmada:
                 f.revision_confirmada = True
                 confirmadas.append(f)
         self._revalidar_todo()
@@ -1766,38 +1785,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         else:
             self._avisar(
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
-                "corrigen y las operaciones manuales no se exportan.", AVISO)
-
-    def _alternar_gestion_manual(self) -> None:
-        """Aparta la factura completa, aunque tenga varias líneas de IVA."""
-        seleccionadas = self._filas_seleccionadas()
-        if not seleccionadas:
-            self._avisar("Seleccione al menos una factura.", AVISO)
-            return
-        claves = set()
-        for fila in seleccionadas:
-            f = self._leer_fila(fila)
-            claves.add((f.origen_imagen, f.num_factura, f.fecha, f.nif))
-        candidatas = [self._leer_fila(i) for i in range(self.tabla.rowCount())
-                      if (self.filas[i]["factura"].origen_imagen,
-                          self.filas[i]["factura"].num_factura,
-                          self.filas[i]["factura"].fecha,
-                          self.filas[i]["factura"].nif) in claves]
-        quitar_marca = all(f.tratamiento_manual == "Marcada por el usuario"
-                           for f in candidatas)
-        for f in candidatas:
-            # Las exclusiones detectadas (suplido, bien de inversión o
-            # sustituida) no se desactivan con un clic accidental.
-            if quitar_marca:
-                f.tratamiento_manual = None
-            elif not f.tratamiento_manual:
-                f.tratamiento_manual = "Marcada por el usuario"
-            f.revision_confirmada = False
-        self._revalidar_todo()
-        self.lbl_estado.setText(
-            f"{len(candidatas)} línea(s) "
-            + ("devueltas al flujo automático." if quitar_marca
-               else "apartadas para gestión manual."))
+                "corrigen en la tabla.", AVISO)
 
     def _eliminar_seleccion(self) -> None:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},
@@ -1859,9 +1847,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             f = registro["factura"]
             estado = registro.get("estado", OK)
             c["lineas"] += 1
-            if f.tratamiento_manual:
-                c["manual"] += 1
-            elif estado == ERROR:
+            if estado == ERROR:
                 c["error"] += 1
             elif estado == REVISAR and not f.revision_confirmada:
                 c["revisar"] += 1

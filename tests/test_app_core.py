@@ -6,7 +6,7 @@ from PySide6.QtCore import QMimeData, Qt, QUrl
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel.app import (
-    C_ESTADO, VentanaPrincipal, VisorClicable, _argumentos,
+    C_ESTADO, VentanaPrincipal, _argumentos,
     parse_numero, rutas_factura_de_mime,
 )
 from facturas_excel.modelo import Factura
@@ -121,25 +121,6 @@ def test_el_suplido_es_una_linea_de_base_sin_iva():
     assert v.tabla.item(0, C_PCT).text() == ""
     assert v.tabla.item(0, C_CUOTA).text() == ""
     assert "SUPLIDO" in v.tabla.item(0, C_BASE).toolTip()
-
-
-def test_el_documento_original_es_clicable_y_abre_la_vista_grande(monkeypatch):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
-    from PySide6.QtTest import QSignalSpy, QTest
-    from PySide6.QtWidgets import QDialog
-
-    v = VentanaPrincipal(comprobar_updates=False)
-    assert isinstance(v.lbl_img, VisorClicable)
-    spy = QSignalSpy(v.lbl_img.clicked)
-    abiertos = []
-    monkeypatch.setattr(QDialog, "exec", lambda dialog: abiertos.append(dialog.size()))
-    v._pixmap_documento = QPixmap(600, 900)
-
-    QTest.mouseClick(v.lbl_img, Qt.LeftButton)
-
-    assert spy.count() == 1
-    assert abiertos and abiertos[0].width() > 600
 
 
 def test_una_factura_con_varios_tipos_de_iva_no_es_un_duplicado():
@@ -307,7 +288,7 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         "Exportar a Aplifisa"]
     assert not hasattr(v, "menu_acciones")
     assert not hasattr(v, "btn_mas_acciones")
-    assert v.accion_gestion_manual.text().startswith("Apartar selección")
+    assert not hasattr(v, "accion_gestion_manual")
     assert v.split_contenido.orientation() == Qt.Vertical
     assert v.split_contenido.count() == 2
     etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
