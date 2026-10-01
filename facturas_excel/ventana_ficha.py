@@ -513,29 +513,14 @@ class FichaMixin:
         self._aplicar_plegado(self._plegado_efectivo())
 
     def _aplicar_plegado(self, plegada: bool) -> None:
-        """Plegada: solo el estado y el motivo; la hoja se queda el alto."""
+        """Plegada: lo leído se quita de al lado de la hoja y queda una línea
+        con el estado y el motivo (el divisor recuerda su ancho)."""
         if not hasattr(self, "panel_lectura"):
             return
-        ya_plegada = not self.ficha.isVisibleTo(self.panel_lectura)
-        if plegada and not ya_plegada:
-            # El alto de la lectura para cuando se despliegue. Antes de
-            # enseñar la ventana el divisor aún no tiene su tamaño: lo
-            # guardado vale más.
-            self._tamanos_lectura = (
-                self.split_factura.sizes() if self.isVisible()
-                else self._tamanos_divisor("split_factura", [520, 320]))
-        self.ficha.setVisible(not plegada)
+        self.panel_lectura.setVisible(not plegada)
         self.lbl_lectura_resumen.setVisible(plegada)
         self.btn_plegar_lectura.setArrowType(
-            Qt.RightArrow if plegada else Qt.DownArrow)
-        if plegada:
-            self.panel_lectura.setMaximumHeight(
-                self.panel_lectura.sizeHint().height())
-        else:
-            self.panel_lectura.setMaximumHeight(16_777_215)
-            if ya_plegada and self._tamanos_lectura:
-                self.split_factura.setSizes(self._tamanos_lectura)
-            self._tamanos_lectura = None
+            Qt.LeftArrow if plegada else Qt.RightArrow)
 
     def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
         """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.

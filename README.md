@@ -28,19 +28,22 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
      suplido, posible bien de inversión, factura sustituida…
    - ✕ **Error**: descuadres, tipo de IVA inexistente, fecha futura, faltan
      campos obligatorios.
-   La pantalla va en **tres columnas**: la tabla de datos extraídos (con los
-   filtros a la izquierda), la factura (la hoja escaneada y, debajo, lo que
-   ha leído la IA) y, a la derecha, la comprobación de totales con el
-   desglose completo (base, cada IVA, total IVA, recargo, retención,
-   suplidos y total; lo que vale cero sale en gris). Corregir a mano un dato
-   de una factura en ámbar la deja en **✎ Corregida**, que cuenta como
-   revisada (salvo que después el total no cuadre).
-   Debajo de los totales, **Su suma a mano**: se escribe lo que da al sumar
-   (o el listado de Aplifisa) y al lado sale si cuadra o la diferencia; con
-   el **filtro por mes** se cuadra mes a mes. Debajo de la factura,
-   **Revisada** y **Correcta · siguiente** (Ctrl+Intro); Intro en la tabla
-   salta a la siguiente pendiente sin marcar nada.
-   La **lectura de la IA**, debajo de la hoja, agrupa lo leído
+   Arriba, la tabla de datos extraídos (con los filtros) a la izquierda y la
+   factura a la derecha: la hoja escaneada y, a su lado, lo que ha leído la
+   IA. Abajo, a todo lo ancho, la comprobación de totales como el listado
+   de Aplifisa: una fila por ámbito (todo el lote, dentro y fuera del
+   trimestre, lo que se ve con un filtro) y una columna por importe (base,
+   cada IVA, total IVA, recargo, retención, suplidos y total; lo que vale
+   cero sale en gris). Corregir a mano un dato de una factura en ámbar la
+   deja en **✎ Corregida**, que cuenta como revisada (salvo que después el
+   total no cuadre).
+   Debajo de los totales, **Su suma**: una casilla bajo cada columna donde se
+   escribe lo que da al sumar (o el listado de Aplifisa) y debajo sale si
+   cuadra o la diferencia; con el **filtro por mes** se cuadra mes a mes. En
+   la línea del título de la factura, **Revisada** y **Correcta · siguiente**
+   (Ctrl+Intro); Intro en la tabla salta a la siguiente pendiente sin marcar
+   nada.
+   La **lectura de la IA**, al lado de la hoja, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.
    Con la **imagen de la factura al lado** para corregir al vuelo: la hoja se

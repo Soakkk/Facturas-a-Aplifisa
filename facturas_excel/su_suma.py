@@ -14,30 +14,16 @@ from __future__ import annotations
 import math
 import re
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QTableWidget, QTableWidgetItem, QWidget,
 )
 
-from . import ajustes
 from .estilo import DANGER, MUTED, SUCCESS, WARNING
-from .resumen import eur, eur_con_signo
+from .resumen import eur, eur_con_signo, porcentaje_iva
 
-# (clave, rótulo, importe del programa, siempre a la vista). Recargo,
-# retención y suplidos salen si el programa tiene algo, si se teclea algo o
-# si se piden con «+ recargo, retención y suplidos».
-CONCEPTOS = (
-    ("base", "Base", lambda t: t.base, True),
-    ("iva", "IVA", lambda t: t.iva, True),
-    ("requiv", "Recargo", lambda t: t.requiv, False),
-    ("irpf", "Retención", lambda t: -t.irpf, False),
-    ("suplidos", "Suplidos", lambda t: t.suplidos, False),
-    ("total", "Total", lambda t: t.total, True),
-)
-# Lo que se compara cuando los gastos van por el total (recargo).
-SOLO_TOTAL = ("irpf", "total")
 TIPOS = (("Gastos", "gasto"), ("Ingresos", "venta"))
 # Más de esto no es un importe de un lote de facturas: es un error al teclear.
 IMPORTE_MAXIMO = 1e12
@@ -120,110 +106,166 @@ def diferencia(clave: str, programa: float, suya: float) -> float:
     return comparar(clave, programa, suya)[1]
 
 
-class CajaSuSuma(QFrame):
-    """Casillas para teclear la suma propia y ver al lado la diferencia."""
+# Columnas de la tabla de totales (y de «Su suma», debajo, alineada con
+# ellas): (clave, cabecera, importe del programa). El IVA va además por tipo.
+COLUMNAS_FIJAS = (
+    ("base", "Base imponible", lambda t: t.base),
+    ("iva", "Total IVA", lambda t: t.iva),
+    ("requiv", "Recargo", lambda t: t.requiv),
+    ("irpf", "Retención", lambda t: -t.irpf),
+    ("suplidos", "Suplidos", lambda t: t.suplidos),
+    ("total", "Total", lambda t: t.total),
+)
+# Lo que se compara cuando los gastos van por el total (recargo).
+SOLO_TOTAL = ("irpf", "total")
+# Antes de los importes: el ámbito («Gastos · Todo el lote») y el nº.
+PRIMERA_COLUMNA_IMPORTE = 2
 
-    # Se ha tecleado algo o se ha cambiado Gastos/Ingresos: la ventana lleva
-    # la vista de totales al bloque con el que se compara.
+
+def columnas_totales(tipos_iva, sin_tipo: bool = False) -> list:
+    """Las columnas de importes, con una de IVA por tipo (de mayor a menor)."""
+    columnas = [COLUMNAS_FIJAS[0]]
+    for p in sorted(tipos_iva, reverse=True):
+        texto = porcentaje_iva(p)
+        columnas.append((f"iva_{texto}", f"IVA {texto} %",
+                         lambda t, p=p: t.iva_por_tipo.get(p, 0.0)))
+    if sin_tipo:
+        columnas.append(("iva_sin_tipo", "IVA sin tipo",
+                         lambda t: t.iva_sin_tipo))
+    columnas.extend(COLUMNAS_FIJAS[1:])
+    return columnas
+
+
+class TablaTotales(QTableWidget):
+    """Los totales como el listado de Aplifisa (la rellena la ventana).
+
+    Avisa cuando cambia su ancho útil: la primera columna se queda con lo
+    que sobra, pero nunca menos que su texto, y «Su suma» va igual.
+    """
+
+    redimensionada = Signal()
+
+    def viewportEvent(self, evento):
+        if evento.type() == QEvent.Resize:
+            self.redimensionada.emit()
+        return super().viewportEvent(evento)
+
+
+class TablaSuSuma(QTableWidget):
+    """«Su suma a mano»: una fila de casillas bajo la tabla de totales.
+
+    Cada casilla queda debajo de su columna (base, cada IVA, recargo,
+    retención, suplidos, total) y en la fila de abajo sale si cuadra o
+    cuánto da de más o de menos el programa. Compara con la fila de los
+    totales que se ve resaltada: con un filtro, lo filtrado.
+    """
+
+    # Se ha tecleado algo o se ha cambiado Gastos/Ingresos.
     cambiado = Signal()
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("cajaSuSuma")
-        capa = QVBoxLayout(self)
-        capa.setContentsMargins(0, 6, 0, 2)
-        capa.setSpacing(4)
-        cabecera = QHBoxLayout()
-        cabecera.setSpacing(6)
-        self.btn_plegar = QToolButton()
-        self.btn_plegar.setObjectName("plegarSeccion")
-        self.btn_plegar.setText("Su suma a mano")
-        self.btn_plegar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.btn_plegar.setCheckable(True)
-        self.btn_plegar.setAutoRaise(True)
-        self.btn_plegar.setToolTip(
-            "Escriba lo que le da a usted (a mano o en el listado de "
-            "Aplifisa) y vea al lado si cuadra con el programa.")
-        cabecera.addWidget(self.btn_plegar, 1)
+        super().__init__(2, PRIMERA_COLUMNA_IMPORTE, parent)
+        self.setObjectName("tablaSuSuma")
+        self.horizontalHeader().setVisible(False)
+        self.verticalHeader().setVisible(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setSelectionMode(QAbstractItemView.NoSelection)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setShowGrid(False)
+        self.verticalHeader().setDefaultSectionSize(30)
+        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        # Primera columna: «Su suma» con Gastos/Ingresos; y «Programa da».
+        primera = QWidget()
+        capa = QHBoxLayout(primera)
+        capa.setContentsMargins(6, 0, 4, 0)
+        capa.setSpacing(6)
+        # Corto: en una pantalla de 1024 la columna es estrecha.
+        rotulo = QLabel("Su suma")
+        rotulo.setStyleSheet("font-weight: 600;")
+        rotulo.setToolTip(
+            "Su suma a mano (o la del listado de Aplifisa), columna por "
+            "columna, para compararla con la del programa.")
+        capa.addWidget(rotulo)
         self.combo_tipo = QComboBox()
         for texto, tipo in TIPOS:
             self.combo_tipo.addItem(texto, tipo)
         self.combo_tipo.setToolTip("Qué totales quiere cuadrar.")
-        self.combo_tipo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        cabecera.addWidget(self.combo_tipo)
-        capa.addLayout(cabecera)
-
-        self.cuerpo = QWidget()
-        rejilla = QGridLayout(self.cuerpo)
-        rejilla.setContentsMargins(4, 0, 0, 0)
-        rejilla.setHorizontalSpacing(6)
-        rejilla.setVerticalSpacing(3)
+        capa.addWidget(self.combo_tipo)
+        capa.addStretch(1)
+        self.setCellWidget(0, 0, primera)
+        diferencia = QTableWidgetItem("Programa da")
+        diferencia.setToolTip(
+            "Lo que da el programa menos lo que ha escrito usted: «+35,55 €» "
+            "es que el programa da 35,55 € más.")
+        diferencia.setForeground(QColor(MUTED))
+        self.setItem(1, 0, diferencia)
+        # Fuera de la tabla (la ventana los coloca en la cabecera).
         self.lbl_ambito = QLabel()
-        self.lbl_ambito.setWordWrap(True)
         self.lbl_ambito.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
-        rejilla.addWidget(self.lbl_ambito, 0, 0, 1, 3)
-        # Encabezados: que «+35,55 €» se lea como «el programa da 35,55 más».
-        for columna, texto in ((1, "Su cifra"), (2, "Programa da")):
-            encabezado = QLabel(texto)
-            encabezado.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
-            rejilla.addWidget(encabezado, 1, columna)
-        negrita = QFont(self.font())
-        negrita.setBold(True)
-        ancho_resultado = QFontMetrics(negrita).horizontalAdvance("−99.999,99 €") + 4
-        self._filas = {}
-        for i, (clave, rotulo, _importe, _siempre) in enumerate(CONCEPTOS, 2):
-            etiqueta = QLabel(rotulo)
-            campo = QLineEdit()
-            campo.setObjectName("suSuma")
-            campo.setPlaceholderText("su cifra")
-            campo.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            campo.setFixedWidth(76)
-            resultado = QLabel()
-            # A la izquierda: si no cupiera, se corta el final, nunca el signo.
-            resultado.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            resultado.setMinimumWidth(ancho_resultado)
-            campo.textChanged.connect(self._al_teclear)
-            rejilla.addWidget(etiqueta, i, 0)
-            rejilla.addWidget(campo, i, 1)
-            rejilla.addWidget(resultado, i, 2)
-            self._filas[clave] = (etiqueta, campo, resultado)
-        fila = len(CONCEPTOS) + 2
-        self.btn_mas = QToolButton()
-        self.btn_mas.setObjectName("enlaceSuSuma")
-        self.btn_mas.setAutoRaise(True)
-        self.btn_mas.setCheckable(True)
-        self.btn_mas.setToolTip(
-            "Comparar también el recargo, la retención y los suplidos, aunque "
-            "el programa no tenga ninguno (por si se le ha escapado alguno).")
-        self.btn_mas.setChecked(bool(ajustes.leer("su_suma_todas", False)))
-        self.btn_mas.toggled.connect(self._al_pedir_mas)
-        rejilla.addWidget(self.btn_mas, fila, 0, 1, 3)
-        # Una sola línea: en una columna estrecha y baja, un texto de varias
-        # líneas se montaría encima de lo de abajo. Lo largo, en el globo.
         self.lbl_veredicto = QLabel()
-        rejilla.addWidget(self.lbl_veredicto, fila + 1, 0, 1, 3)
-        rejilla.setColumnStretch(0, 1)
-        capa.addWidget(self.cuerpo)
-
-        # Lo tecleado, por tipo: al pasar de Gastos a Ingresos no se pierde.
+        # Lo tecleado, por tipo y por columna: al pasar de Gastos a Ingresos,
+        # o al cambiar las columnas de IVA, no se pierde.
         self._valores = {tipo: {} for _texto, tipo in TIPOS}
+        self._columnas = []                      # [(clave, cabecera, importe)]
+        self._campos = {}                        # clave -> QLineEdit
         # tipo -> (Totales, de qué son, ¿van por el total?)
         self._totales: dict = {}
         self._cargando = False
         self.combo_tipo.currentIndexChanged.connect(self._al_cambiar_tipo)
-        self.btn_plegar.toggled.connect(self._plegar)
-        self.btn_plegar.setChecked(bool(ajustes.leer("su_suma_abierta", True)))
-        self._plegar(self.btn_plegar.isChecked())
+        # La barra de desplazamiento (si no cabe a lo ancho) va debajo de
+        # las dos filas, sin taparlas.
+        self.horizontalScrollBar().rangeChanged.connect(
+            lambda *_: self._ajustar_alto())
+        self._ajustar_alto()
+
+    def _ajustar_alto(self) -> None:
+        barra = self.horizontalScrollBar()
+        extra = barra.sizeHint().height() if barra.maximum() > 0 else 0
+        alto = 2 * 30 + 2 * self.frameWidth() + extra
+        if self.height() != alto or self.minimumHeight() != alto:
+            self.setFixedHeight(alto)
 
     # ------------------------------------------------------------ datos
     @property
     def tipo(self) -> str:
         return self.combo_tipo.currentData()
 
+    def configurar(self, columnas) -> None:
+        """Pone una casilla bajo cada columna de importe de los totales."""
+        claves = [c[0] for c in columnas]
+        if claves == [c[0] for c in self._columnas]:
+            self._columnas = list(columnas)
+            return
+        self._columnas = list(columnas)
+        self.setColumnCount(PRIMERA_COLUMNA_IMPORTE + len(columnas))
+        self._campos = {}
+        for i, (clave, cabecera, _importe) in enumerate(columnas):
+            c = PRIMERA_COLUMNA_IMPORTE + i
+            campo = QLineEdit()
+            campo.setObjectName("suSuma")
+            campo.setPlaceholderText("su cifra")
+            campo.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            campo.setToolTip(f"{cabecera}: escriba lo que le da a usted.")
+            campo.textChanged.connect(self._al_teclear)
+            self.setCellWidget(0, c, campo)
+            resultado = QTableWidgetItem("")
+            resultado.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.setItem(1, c, resultado)
+            self._campos[clave] = campo
+        self._cargar_campos()
+
     def actualizar(self, totales: dict) -> None:
         """`totales`: tipo -> (Totales, de qué son, ¿van por el total?)."""
         self._totales = dict(totales)
         self._pintar()
+
+    def campo(self, clave: str) -> QLineEdit:
+        return self._campos[clave]
+
+    def resultado(self, clave: str) -> str:
+        c = PRIMERA_COLUMNA_IMPORTE + [k for k, *_ in self._columnas].index(clave)
+        return self.item(1, c).text()
 
     def valores(self) -> dict:
         """Lo tecleado, para guardarlo en la sesión."""
@@ -235,23 +277,14 @@ class CajaSuSuma(QFrame):
             for tipo, campos in valores.items():
                 if tipo in self._valores and isinstance(campos, dict):
                     self._valores[tipo] = {
-                        clave: str(texto) for clave, texto in campos.items()
-                        if clave in self._filas}
+                        str(clave): str(texto) for clave, texto in campos.items()
+                        if str(texto).strip()}
         self._cargar_campos()
 
     def limpiar(self) -> None:
         self.poner_valores({})
 
     # ------------------------------------------------------------ pantalla
-    def _plegar(self, abierta: bool) -> None:
-        self.cuerpo.setVisible(abierta)
-        self.btn_plegar.setArrowType(Qt.DownArrow if abierta else Qt.RightArrow)
-        ajustes.guardar("su_suma_abierta", bool(abierta))
-
-    def _al_pedir_mas(self, todas: bool) -> None:
-        ajustes.guardar("su_suma_todas", bool(todas))
-        self._pintar()
-
     def _al_cambiar_tipo(self) -> None:
         self._cargar_campos()
         self.cambiado.emit()
@@ -259,7 +292,7 @@ class CajaSuSuma(QFrame):
     def _cargar_campos(self) -> None:
         self._cargando = True
         try:
-            for clave, (_etiqueta, campo, _resultado) in self._filas.items():
+            for clave, campo in self._campos.items():
                 campo.setText(self._valores[self.tipo].get(clave, ""))
         finally:
             self._cargando = False
@@ -268,9 +301,12 @@ class CajaSuSuma(QFrame):
     def _al_teclear(self) -> None:
         if self._cargando:
             return
-        self._valores[self.tipo] = {
-            clave: campo.text() for clave, (_e, campo, _r) in self._filas.items()
-            if campo.text().strip()}
+        propios = {clave: campo.text() for clave, campo in self._campos.items()
+                   if campo.text().strip()}
+        # Lo de columnas que ahora no se ven (otro tipo de IVA) se conserva.
+        otros = {clave: texto for clave, texto in self._valores[self.tipo].items()
+                 if clave not in self._campos}
+        self._valores[self.tipo] = {**otros, **propios}
         self._pintar()
         self.cambiado.emit()
 
@@ -281,56 +317,52 @@ class CajaSuSuma(QFrame):
             self.lbl_ambito.setText(f"No hay {nombre} en el lote.")
         elif solo_total:
             self.lbl_ambito.setText(
-                f"Se compara con: {ambito}. Cliente en recargo: los gastos van "
-                "por el total factura; compare el total.")
+                f"Su suma se compara con: {ambito}. Cliente en recargo: los "
+                "gastos van por el total factura; compare el total.")
         else:
-            self.lbl_ambito.setText(f"Se compara con: {ambito}.")
-        todas = self.btn_mas.isChecked()
+            self.lbl_ambito.setText(f"Su suma se compara con: {ambito}.")
         tecleadas = cuadran = 0
         signos = set()
-        hay_ocultables = False
-        for clave, rotulo, importe, siempre in CONCEPTOS:
-            etiqueta, campo, resultado = self._filas[clave]
-            programa = importe(t) if t is not None else 0.0
+        for i, (clave, cabecera, importe) in enumerate(self._columnas):
+            c = PRIMERA_COLUMNA_IMPORTE + i
+            campo, resultado = self._campos[clave], self.item(1, c)
+            fuera = bool(solo_total and clave not in SOLO_TOTAL)
+            campo.setEnabled(not fuera)
+            campo.setPlaceholderText("—" if fuera else "su cifra")
             texto = campo.text().strip()
-            if solo_total and clave not in SOLO_TOTAL:
-                visible = False                # no existe: va dentro del total
-            else:
-                visible = siempre or todas or abs(programa) >= 0.005 or bool(texto)
-                hay_ocultables |= not siempre and not visible
-            for widget in (etiqueta, campo, resultado):
-                widget.setVisible(visible)
-            if not texto or not visible:
-                resultado.setText("")
-                resultado.setToolTip("")
+            resultado.setText("")
+            resultado.setToolTip("")
+            resultado.setFont(QFont(self.font()))
+            if not texto or fuera:
                 continue
             tecleadas += 1
             suya = leer_importe(texto)
+            negrita = QFont(self.font())
+            negrita.setBold(True)
+            resultado.setFont(negrita)
             if suya is None:
                 resultado.setText("¿cifra?")
-                resultado.setStyleSheet(f"color: {WARNING};")
+                resultado.setForeground(QColor(WARNING))
                 resultado.setToolTip(
                     "No se entiende sin dudas. Escriba un importe, por ejemplo "
                     "4.347,51")
                 continue
+            programa = importe(t) if t is not None else 0.0
             programa_suyo, dif = comparar(clave, programa, suya)
             if abs(dif) < 0.005:
                 cuadran += 1
                 resultado.setText("✓ cuadra")
-                resultado.setStyleSheet(f"color: {SUCCESS}; font-weight: 600;")
+                resultado.setForeground(QColor(SUCCESS))
                 resultado.setToolTip(
                     f"El programa también da {eur_con_signo(programa_suyo)}.")
             else:
                 signos.add(dif > 0)
                 resultado.setText(f"{'+' if dif > 0 else '−'}{eur(abs(dif))}")
-                resultado.setStyleSheet(f"color: {DANGER}; font-weight: 600;")
+                resultado.setForeground(QColor(DANGER))
                 resultado.setToolTip(
-                    f"{rotulo}: el programa da {eur_con_signo(programa_suyo)}, "
+                    f"{cabecera}: el programa da {eur_con_signo(programa_suyo)}, "
                     f"{eur(abs(dif))} {'más' if dif > 0 else 'menos'} que su "
                     f"suma ({eur_con_signo(suya)}).")
-        self.btn_mas.setVisible(not solo_total and (hay_ocultables or todas))
-        self.btn_mas.setText("− menos cifras" if todas else
-                             "+ recargo, retención y suplidos")
         if not tecleadas:
             self.lbl_veredicto.setText("")
             self.lbl_veredicto.setToolTip("")

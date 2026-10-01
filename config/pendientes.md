@@ -1,9 +1,23 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 1 de octubre de 2026 (versión 1.19.0). Apunta abajo lo que
+Actualizado el 1 de octubre de 2026 (versión 1.20.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.20 (el prototipo 4 que elegiste)
+
+**Arriba, facturas y factura.** Las facturas a la izquierda; a la derecha la
+hoja y, a su lado, lo que ha leído la IA («Lectura IA» lo quita y la hoja
+gana el ancho). «Revisada» y «Correcta · siguiente», en la línea del título.
+
+**Abajo, los totales como el listado de Aplifisa**: una fila por gastos e
+ingresos (con un filtro, lo que se ve va primero) y una columna por importe.
+Debajo, **Su suma** con una casilla bajo cada columna y lo que da de más o
+de menos el programa.
+
+Dime si en tu pantalla se ven bastantes facturas a la vez o si prefieres
+los totales más bajos (el divisor se arrastra y se recuerda).
 
 ### Lo nuevo de la 1.19 (lo que pediste)
 

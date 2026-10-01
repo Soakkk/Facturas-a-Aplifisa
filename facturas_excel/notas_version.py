@@ -6,6 +6,29 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.20.0": """
+<h2>Novedades de la versión 1.20.0</h2>
+<ul>
+  <li><b>Nueva pantalla.</b> Arriba, las facturas a la izquierda y la
+      <b>factura</b> a la derecha: la hoja escaneada y, a su lado, lo que ha
+      leído la IA (el botón «Lectura IA» lo quita para dar a la hoja todo el
+      ancho). «Revisada» y «Correcta · siguiente» suben a la línea del
+      título de la factura.</li>
+  <li><b>Los totales, abajo y a lo ancho, como el listado de Aplifisa.</b>
+      Una fila por gastos e ingresos (y por lo que se ve con un filtro, que
+      va la primera) y una columna por importe: base, cada IVA, total IVA,
+      recargo, retención, suplidos y total. El divisor entre arriba y abajo
+      se puede arrastrar y el programa lo recuerda.</li>
+  <li><b>Su suma, debajo de cada columna.</b> Una casilla bajo cada importe
+      y, debajo, lo que da de más o de menos el programa (o «✓ cuadra»). La
+      fila con la que se compara sale en negrita. «Su suma a mano» oculta o
+      enseña esa fila.</li>
+  <li><b>Más facturas a la vista en un portátil.</b> Si los botones de la
+      tabla no caben en una fila, los de uso ocasional (unir hojas, limpiar
+      filtros, quitar bloque, eliminar) se quedan con el icono; su nombre
+      sale al pasar el ratón.</li>
+</ul>
+""",
     "1.19.0": """
 <h2>Novedades de la versión 1.19.0</h2>
 <ul>

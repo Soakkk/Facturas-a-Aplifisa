@@ -14,8 +14,12 @@ from collections import Counter
 from datetime import date
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPageLayout, QPageSize, QPdfWriter, QTextDocument
-from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QTableWidgetItem
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QPageLayout, QPageSize, QPdfWriter, QTextDocument,
+)
+from PySide6.QtWidgets import (
+    QApplication, QFileDialog, QHeaderView, QMenu, QTableWidgetItem,
+)
 
 from facturas_excel import ajustes, historial, registro_facturas
 from facturas_excel.banda_avisos import AVISO
@@ -23,15 +27,17 @@ from facturas_excel.clientes import regimen_recargo
 from facturas_excel.conceptos import catalogo
 from facturas_excel.control_facturas import controles_documentos, sin_cuadre_antiguo
 from facturas_excel.consulta import PeriodoLote, facturas_unicas
-from facturas_excel.estilo import ACCENT_FAINT, INK, MUTED
+from facturas_excel.estilo import ACCENT_FAINT, INK
 
-# Totales: lo que vale cero, en gris claro; la línea del total, con fondo.
+# Totales: lo que vale cero, en gris claro.
 COLOR_CERO = "#9AA9B8"
-FONDO_TOTAL = "#EEF2F7"
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import (
-    eur, eur_con_signo, porcentaje_iva, resumir, resumir_por_bloque,
+    eur, eur_con_signo, resumir, resumir_por_bloque,
+)
+from facturas_excel.su_suma import (
+    PRIMERA_COLUMNA_IMPORTE, SOLO_TOTAL, columnas_totales,
 )
 from facturas_excel.lote import (
     CON_ERROR, ORDEN_PRESENTACION, POR_REVISAR, TEXTO_PRESENTACION, VERIFICADA,
@@ -558,42 +564,51 @@ class ValidacionMixin:
                 self.tabla_resumen.setItem(r, c, item)
         # Con un lote vacío no se reserva una gran tabla en blanco.
         self._ajustar_altura_resumen()
-        self._pintar_vista_totales(lineas, recargo, tipos_iva)
-        self._actualizar_su_suma(lineas, recargo)
+        # En pantalla, con un filtro, lo que se ve va primero (es lo que se
+        # está cuadrando); Copiar y el listado PDF siguen el orden de siempre.
+        # (Si el filtro no deja nada de ese tipo, su fila a cero va con las
+        # demás, no delante.)
+        en_pantalla = sorted(lineas, key=lambda linea: not (
+            linea[0] == "FILTRO ACTUAL" and linea[2].lineas))
+        self._pintar_tabla_totales(en_pantalla, recargo, tipos_iva)
+        self._actualizar_su_suma(en_pantalla, recargo)
 
     def _actualizar_su_suma(self, lineas, recargo=False) -> None:
         """«Su suma a mano» compara con lo que se ve: con un filtro (un mes,
         un proveedor…), lo filtrado; si no, todo el lote. Con el cliente en
         recargo «por el total», los gastos solo tienen total (y retención)."""
-        if not hasattr(self, "caja_su_suma"):
+        if not hasattr(self, "tabla_su_suma"):
             return
         if not self.filas and not getattr(self, "_bloques", None):
             # Lote vacío: lo tecleado era para el lote anterior.
-            self.caja_su_suma.limpiar()
+            self.tabla_su_suma.limpiar()
         elegidos = {}
-        self._ancla_su_suma = {}
-        for ambito, tipo, t, _es_total in lineas:
+        self._fila_comparada = {}
+        for r, (ambito, tipo, t, _es_total) in enumerate(lineas):
             clave = "gasto" if tipo == "Gastos" else "venta"
             if ambito == "FILTRO ACTUAL" or (
                     ambito == "TOTAL LOTE" and clave not in elegidos):
                 solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
                 elegidos[clave] = (t, f"{tipo} · {self._nombre_ambito(ambito)}",
                                    solo_total)
-                self._ancla_su_suma[clave] = self._ancla_bloque(ambito, tipo)
-        self.caja_su_suma.actualizar(elegidos)
+                self._fila_comparada[clave] = r
+        self.tabla_su_suma.actualizar(elegidos)
+        self._resaltar_fila_comparada()
 
-    @staticmethod
-    def _ancla_bloque(ambito: str, tipo: str) -> str:
-        """Nombre del ancla de un bloque de la vista de totales."""
-        return "b-" + "".join(c if c.isalnum() else "-"
-                              for c in f"{tipo}-{ambito}".lower())
-
-    def _ir_al_bloque_comparado(self) -> None:
-        """Lleva la vista de totales al bloque con el que se compara «Su
-        suma»: en una pantalla baja, la cifra del programa queda a la vista."""
-        ancla = getattr(self, "_ancla_su_suma", {}).get(self.caja_su_suma.tipo)
-        if ancla and hasattr(self, "vista_totales"):
-            self.vista_totales.scrollToAnchor(ancla)
+    def _resaltar_fila_comparada(self) -> None:
+        """La fila de los totales con la que se compara «Su suma», en
+        negrita: así se sabe de dónde sale la cifra del programa."""
+        if not hasattr(self, "tabla_totales"):
+            return
+        comparada = getattr(self, "_fila_comparada", {}).get(self.tabla_su_suma.tipo)
+        for r in range(self.tabla_totales.rowCount()):
+            for c in range(self.tabla_totales.columnCount()):
+                item = self.tabla_totales.item(r, c)
+                if item is None:
+                    continue
+                fuente = item.font()
+                fuente.setBold(r == comparada or item.data(Qt.UserRole) == "total")
+                item.setFont(fuente)
 
     def _texto_filtro(self) -> str:
         """Cómo se nombra el filtro en el título: el mes si es solo eso."""
@@ -624,94 +639,122 @@ class ValidacionMixin:
             return "Fuera del " + ambito[len("FUERA "):].replace(" ", "\u00a0")
         return ambito
 
-    def _pintar_vista_totales(self, lineas, recargo, tipos_iva) -> None:
-        """Los totales en vertical, en su columna de la derecha.
+    def _pintar_tabla_totales(self, lineas, recargo, tipos_iva) -> None:
+        """Los totales abajo, a lo ancho, como el listado de Aplifisa.
 
-        Un bloque por cada fila del resumen con el desglose COMPLETO, en el
-        orden del listado de Aplifisa: base imponible, cada IVA, total IVA,
-        recargo, retención, suplidos y el total. Lo que vale cero también se
-        ve (en gris): así se sabe que el programa lo ha mirado y la suma a
-        mano se compara línea a línea. Lo que se ve con filtro va resaltado.
+        Una fila por ámbito (todo el lote, dentro y fuera del trimestre, lo
+        que se ve con un filtro) y una columna por importe: base, cada IVA,
+        total IVA, recargo, retención, suplidos y total. Lo que vale cero
+        también se ve (en gris): así se sabe que el programa lo ha mirado.
+        Debajo, «Su suma a mano» tiene una casilla bajo cada columna.
         """
-        if not hasattr(self, "vista_totales"):
+        if not hasattr(self, "tabla_totales"):
             return
-        if not lineas:
-            self.vista_totales.setHtml(
-                f"<p style='color:{MUTED}'>Sin facturas cargadas.</p>")
-            return
-        # Con un filtro, lo que se ve va primero: es la suma que se busca al
-        # filtrar (al final de la columna quedaba fuera de la vista).
-        con_filtro = any(ambito == "FILTRO ACTUAL" for ambito, *_ in lineas)
-        lineas = sorted(lineas, key=lambda l: not (
-            l[0] == "FILTRO ACTUAL" and l[2].lineas))
-        if con_filtro != getattr(self, "_vista_con_filtro", False):
-            # Al poner o quitar el filtro, a lo alto de la columna.
-            self.vista_totales.verticalScrollBar().setValue(0)
-        self._vista_con_filtro = con_filtro
-        bloques = []
-        for ambito, tipo, t, es_total in lineas:
-            # En recargo el gasto va por el total factura: no hay desglose
-            # (salvo las facturas con retención, que no se resumen).
+        tabla = self.tabla_totales
+        sin_tipo = any(abs(t.iva_sin_tipo) >= 0.005 for _a, _t, t, _e in lineas)
+        columnas = columnas_totales(tipos_iva, sin_tipo)
+        cabeceras = ["", "Nº", *(c[1] for c in columnas)]
+        tabla.setColumnCount(len(cabeceras))
+        tabla.setHorizontalHeaderLabels(cabeceras)
+        encabezado_total = tabla.horizontalHeaderItem(len(cabeceras) - 1)
+        encabezado_total.setToolTip(
+            "Total = base + IVA + recargo + suplidos − retención: lo que se "
+            "registra en Aplifisa. La factura cuyo total impreso no coincide "
+            "sale marcada en la tabla.")
+        tabla.setRowCount(len(lineas))
+        for r, (ambito, tipo, t, _es_total) in enumerate(lineas):
             solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
-            importes = []                    # (concepto, importe)
-            if not solo_total:
-                importes.append(("Base imponible", t.base))
-                for p in sorted(t.iva_por_tipo, reverse=True):
-                    importes.append(
-                        (f"IVA {porcentaje_iva(p)} %", t.iva_por_tipo[p]))
-                if abs(t.iva_sin_tipo) >= 0.005:
-                    importes.append(("IVA sin tipo (falta el %)", t.iva_sin_tipo))
-                importes.append(("Total IVA", t.iva))
-                importes.append(("Recargo de equivalencia", t.requiv))
-            importes.append(("Retención IRPF", -t.irpf))
-            if not solo_total:
-                importes.append(("Suplidos (sin IVA)", t.suplidos))
-            filas = []
-            if solo_total:
-                filas.append(
-                    f"<tr><td colspan='2' style='color:{MUTED}'>Cliente en "
-                    "recargo de equivalencia: los gastos van a Aplifisa por "
-                    "el total factura.</td></tr>")
-            elif recargo and tipo == "Gastos":
-                filas.append(
-                    f"<tr><td colspan='2' style='color:{MUTED}'>Cliente en "
-                    "recargo de equivalencia: las facturas sin retención van "
-                    "por el total factura (dentro de la base); las que llevan "
-                    "retención, con su desglose.</td></tr>")
-            for concepto, importe in importes:
-                cero = abs(importe) < 0.005
-                color = COLOR_CERO if cero else INK
-                valor = eur(0.0) if cero else eur_con_signo(importe)
-                filas.append(
-                    f"<tr><td style='color:{color}'>{html.escape(concepto)}</td>"
-                    f"<td align='right' style='color:{color}'>"
-                    f"{html.escape(valor)}</td></tr>")
-            filas.append(
-                f"<tr bgcolor='{FONDO_TOTAL}'><td><b>Total</b></td>"
-                f"<td align='right'><b style='font-size:14px'>"
-                f"{html.escape(eur(t.total))}</b></td></tr>")
-            fondo = (f" bgcolor='{ACCENT_FAINT}'" if ambito == "FILTRO ACTUAL"
-                     else "")
-            titulo = f"{tipo} · {self._nombre_ambito(ambito)}"
-            bloques.append(
-                f"<a name='{self._ancla_bloque(ambito, tipo)}'></a>"
-                f"<table width='100%' cellspacing='0' cellpadding='3'{fondo}>"
-                f"<tr><td colspan='2'><b style='color:{INK}; font-size:13px'>"
-                f"{html.escape(titulo)}</b><br><span style='color:{MUTED}'>"
-                f"{t.facturas} factura(s) · {t.lineas} línea(s)</span></td></tr>"
-                f"{''.join(filas)}</table>")
-        bloques.append(
-            f"<p style='color:{MUTED}; font-size:11px'>Total = base + IVA + "
-            "recargo + suplidos − retención: lo que se registra en Aplifisa. "
-            "La factura cuyo total impreso no coincide sale marcada en la "
-            "tabla.</p>")
-        # Al teclear en el buscador se repinta: que no salte arriba.
-        barra = self.vista_totales.verticalScrollBar()
-        posicion = barra.value()
-        self.vista_totales.setHtml(
-            f"<div style='font-size:12px; color:{INK}'>"
-            + "<div style='height:10px'></div>".join(bloques) + "</div>")
-        barra.setValue(min(posicion, barra.maximum()))
+            fondo = QColor(ACCENT_FAINT) if ambito == "FILTRO ACTUAL" else None
+            nota = None
+            if recargo and tipo == "Gastos" and not solo_total:
+                nota = ("Cliente en recargo de equivalencia: las facturas sin "
+                        "retención van por el total factura (dentro de la "
+                        "base); las que llevan retención, con su desglose.")
+            celdas = [(f"{tipo} · {self._nombre_ambito(ambito)}", INK, nota),
+                      (str(t.facturas), INK,
+                       f"{t.facturas} factura(s) · {t.lineas} línea(s)")]
+            for clave, _cabecera, importe in columnas:
+                if solo_total and clave not in SOLO_TOTAL:
+                    celdas.append(("—", COLOR_CERO,
+                                   "Cliente en recargo de equivalencia: los "
+                                   "gastos van a Aplifisa por el total factura."))
+                    continue
+                valor = importe(t)
+                cero = abs(valor) < 0.005
+                celdas.append((eur(0.0) if cero else eur_con_signo(valor),
+                               COLOR_CERO if cero else INK, None))
+            for c, (texto, color, ayuda) in enumerate(celdas):
+                item = QTableWidgetItem(texto)
+                item.setForeground(QColor(color))
+                if c >= PRIMERA_COLUMNA_IMPORTE - 1:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if c == len(celdas) - 1:
+                    item.setData(Qt.UserRole, "total")
+                if ayuda:
+                    item.setToolTip(ayuda)
+                if fondo is not None:
+                    item.setBackground(fondo)
+                tabla.setItem(r, c, item)
+        self.tabla_su_suma.configurar(columnas)
+        self._anchos_totales(columnas)
+        self._ajustar_alto_totales()
+
+    def _ajustar_alto_totales(self) -> None:
+        """Como mucho lo que ocupan todas las filas (no crece en blanco); si
+        el divisor la deja más baja, se desplaza. Se repite al verse la
+        ventana: hasta entonces no se sabe el alto real de la cabecera."""
+        tabla = self.tabla_totales
+        cabecera = tabla.horizontalHeader().sizeHint().height()
+        if tabla.horizontalHeader().isVisible():
+            cabecera = max(cabecera, tabla.horizontalHeader().height())
+        marco = 2 * tabla.frameWidth()
+        alto = cabecera + sum(tabla.rowHeight(r) for r in range(tabla.rowCount())) + marco
+        maximo = max(alto, cabecera + marco + 4)
+        minimo = min(alto, cabecera + 2 * tabla.verticalHeader().defaultSectionSize() + marco)
+        if tabla.maximumHeight() != maximo:
+            tabla.setMaximumHeight(maximo)
+        if tabla.minimumHeight() != minimo:
+            tabla.setMinimumHeight(minimo)
+        if hasattr(self, "_encajar_totales"):
+            self._encajar_totales()
+
+    def _anchos_totales(self, columnas) -> None:
+        """Mismos anchos arriba (totales) y abajo (su suma): cada casilla
+        bajo su columna. Cada importe, lo que ocupe su cifra más larga (o
+        su título), y nunca menos que una cifra de cinco dígitos para
+        poder escribirla abajo."""
+        tabla = self.tabla_totales
+        medida = tabla.fontMetrics()
+        negrita = QFont(tabla.font())
+        negrita.setBold(True)
+        medida_negrita = QFontMetrics(negrita)
+        cabecera = QFontMetrics(tabla.horizontalHeader().font())
+        minimo = medida.horizontalAdvance("−99.999,99 €") + 20
+        anchos_importe = []
+        for i, (_clave, titulo, _importe) in enumerate(columnas):
+            c = PRIMERA_COLUMNA_IMPORTE + i
+            cifras = [medida_negrita.horizontalAdvance(tabla.item(r, c).text())
+                      for r in range(tabla.rowCount()) if tabla.item(r, c)]
+            anchos_importe.append(max(
+                minimo, cabecera.horizontalAdvance(titulo) + 24,
+                max(cifras, default=0) + 20))
+        ambitos = [medida_negrita.horizontalAdvance(tabla.item(r, 0).text())
+                   for r in range(tabla.rowCount()) if tabla.item(r, 0)]
+        anchos = [max(150, max(ambitos, default=0) + 16),
+                  max(40, cabecera.horizontalAdvance("Nº") + 20)] + anchos_importe
+        # El ámbito se queda lo que sobre, pero nunca menos que su texto: si
+        # no cabe todo, se desplaza a lo ancho (la barra la lleva «Su suma»).
+        anchos[0] = max(anchos[0], tabla.viewport().width() - sum(anchos[1:]))
+        self._columnas_totales = list(columnas)
+        for tabla in (self.tabla_totales, self.tabla_su_suma):
+            if tabla.columnCount() != len(anchos):
+                continue
+            cabecera = tabla.horizontalHeader()
+            cabecera.setMinimumSectionSize(40)
+            for c, ancho in enumerate(anchos):
+                cabecera.setSectionResizeMode(c, QHeaderView.Fixed)
+                if tabla.columnWidth(c) != ancho:
+                    tabla.setColumnWidth(c, ancho)
 
     def _copiar_resumen(self):
         """El resumen al portapapeles, para pegarlo al comprobar los totales."""
