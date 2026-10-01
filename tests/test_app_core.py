@@ -352,10 +352,11 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     _app.processEvents()
     assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
-    # La pantalla de quien pasa la prueba puede ser menor de 1920 (la de
-    # GitHub lo es) y Windows no deja la ventana más ancha: la cinta decide
-    # solo con el ancho que se le da, así que se le da 1920 directamente.
-    v._actualizar_barra_responsiva(1920)
+    # Con sitio de sobra, todos los botones llevan su nombre. Cuánto sitio
+    # hace falta depende de la letra y del escalado de Windows (en las
+    # máquinas de GitHub, algo más de 1920 px), así que se le da un ancho
+    # que siempre sobra: la cinta decide solo con el ancho que se le da.
+    v._actualizar_barra_responsiva(4000)
     datos = (v.width(), v.minimumWidth(),
              v.barra_rapida.layout().minimumSize().width(),
              v.lbl_cliente.sizeHint().width(),
