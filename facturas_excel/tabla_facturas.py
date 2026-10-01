@@ -6,9 +6,11 @@ una celda, dice qué dato de la factura ha cambiado (`valor_de_celda`).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QComboBox, QHeaderView, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem,
+)
 
 from .conceptos import SUBCLAVES_628
 from .lote import CAMPOS_IRPF, CAMPOS_RECARGO, Fila, hay_datos
@@ -130,6 +132,11 @@ AYUDA_SUPLIDO = ("SUPLIDO: se registra como una línea de base más del mismo "
 class TablaFacturas(QTableWidget):
     """La tabla de la mesa de revisión."""
 
+    # Intro (sin editar una celda): a la siguiente pendiente.
+    # Ctrl+Intro: dar por buena la que se ve y pasar a la siguiente.
+    intro = Signal()
+    ctrl_intro = Signal()
+
     def __init__(self, parent=None):
         super().__init__(0, len(COLS), parent)
         self.setAlternatingRowColors(True)
@@ -151,6 +158,22 @@ class TablaFacturas(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         cabecera.sectionResized.connect(self._al_redimensionar_columna)
+
+    def keyPressEvent(self, evento):
+        # Mientras se edita una celda, Intro lo recibe el editor (confirma lo
+        # escrito) y no llega aquí.
+        if (evento.key() in (Qt.Key_Return, Qt.Key_Enter)
+                and self.state() != QAbstractItemView.EditingState):
+            modificadores = evento.modifiers() & ~Qt.KeypadModifier
+            if modificadores == Qt.ControlModifier:
+                self.ctrl_intro.emit()
+                evento.accept()
+                return
+            if modificadores == Qt.NoModifier:
+                self.intro.emit()
+                evento.accept()
+                return
+        super().keyPressEvent(evento)
 
     # ------------------------------------------------------- ancho nombre
     def setColumnHidden(self, columna: int, oculta: bool) -> None:

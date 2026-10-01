@@ -12,14 +12,14 @@ import os
 import sys
 import traceback
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QItemSelectionModel, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar, QPushButton, QProgressDialog, QScrollArea,
-    QSizePolicy, QSplitter, QTableWidget, QTextBrowser, QVBoxLayout, QWidget,
-    QGridLayout,
+    QSizePolicy, QSplitter, QTableWidget, QTextBrowser, QToolButton,
+    QVBoxLayout, QWidget, QGridLayout,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,12 +42,14 @@ from facturas_excel.clientes import (
 from facturas_excel.conceptos import descripcion_de, es_valido
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.consulta import (
-    PeriodoLote, coincide_busqueda, detectar_periodo, facturas_unicas, periodo_manual,
+    SIN_FECHA, PeriodoLote, coincide_busqueda, detectar_periodo, en_el_mes,
+    facturas_unicas, mes_de, nombre_mes, periodo_manual,
 )
 from facturas_excel.estilo import (
     CHROME, CHROME_INK, aplicar_tema,
 )
 from facturas_excel.panel_ficha import PanelFicha
+from facturas_excel.su_suma import CajaSuSuma
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, normaliza_nif, quitar_aviso_cuenta,
@@ -73,6 +75,7 @@ from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
 CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclave")
 # Anchos de partida de las tres columnas (facturas | factura | totales).
 TAMANOS_COLUMNAS = [1080, 480, 300]
+TODOS_LOS_MESES = "Todos los meses"
 from facturas_excel.ventana_comun import (  # noqa: F401
     COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente,
     ICONO_CORREGIDO, ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
@@ -280,7 +283,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         fila_alerta = QHBoxLayout()
         fila_alerta.addWidget(self.lbl_alerta_titulo, 1)
         self.btn_ver_incidencias = QPushButton("Ver incidencias")
-        self.btn_ver_incidencias.clicked.connect(self._siguiente_incidencia)
+        self.btn_ver_incidencias.clicked.connect(lambda: self._siguiente_incidencia())
         fila_alerta.addWidget(self.btn_ver_incidencias)
         lal.addLayout(fila_alerta)
         lal.addWidget(self.lbl_alerta_texto)
@@ -330,6 +333,15 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
              "Solo correctas", "Fuera del trimestre"])
         self.combo_filtro_estado.setToolTip("Qué facturas se ven en la tabla.")
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
+        # Por mes: para cuadrar mes a mes con el listado de Aplifisa (los
+        # totales de «Lo que se ve» son los de ese mes).
+        self.combo_filtro_mes = ComboSinRueda()
+        self.combo_filtro_mes.addItem(TODOS_LOS_MESES, None)
+        self.combo_filtro_mes.setToolTip(
+            "Ver solo las facturas de un mes, por su fecha. En los totales, "
+            "«Lo que se ve» suma ese mes: compárelo con el listado de "
+            "Aplifisa filtrado por el mismo mes.")
+        self.combo_filtro_mes.currentIndexChanged.connect(self._aplicar_filtro)
         self.combo_filtro_bloque = ComboSinRueda()
         self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
         self.combo_filtro_bloque.setToolTip(
@@ -381,13 +393,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_siguiente = QPushButton("Siguiente incidencia")
         self.btn_siguiente.setObjectName("accionTabla")
         self.btn_siguiente.setIcon(QIcon(ruta_recurso("arrow-right.svg")))
-        self.btn_siguiente.clicked.connect(self._siguiente_incidencia)
+        self.btn_siguiente.clicked.connect(lambda: self._siguiente_incidencia())
         self.btn_revisada = QPushButton("Marcar revisada")
         self.btn_revisada.setObjectName("accionTabla")
         self.btn_revisada.setIcon(QIcon(ruta_recurso("check.svg")))
         self.btn_revisada.setToolTip(
             "Confirma que ha comparado con el PDF las filas ámbar seleccionadas.")
-        self.btn_revisada.clicked.connect(self._marcar_revisada)
+        self.btn_revisada.clicked.connect(lambda: self._marcar_revisada())
         self.btn_unir_hojas = QPushButton("Unir hojas")
         self.btn_unir_hojas.setObjectName("accionTabla")
         self.btn_unir_hojas.setIcon(QIcon(ruta_recurso("link.svg")))
@@ -434,6 +446,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla.currentCellChanged.connect(
             lambda fila, columna, *_: self._senalar_celda(fila, columna))
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
+        # Intro: a la siguiente pendiente (sin marcar nada; quien viene de
+        # Excel pulsa Intro sin pensar). Ctrl+Intro: correcta y siguiente.
+        self.tabla.intro.connect(lambda: self._siguiente_incidencia())
+        self.tabla.ctrl_intro.connect(self._correcta_y_siguiente)
         lt.addWidget(self.tabla, 1)
 
         split.addWidget(tabla_card)
@@ -530,12 +546,32 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.split_factura.setHandleWidth(8)
         self.split_factura.addWidget(self.visor_scroll)
         lectura = QWidget()
+        self.panel_lectura = lectura
         lf = QVBoxLayout(lectura)
         lf.setContentsMargins(0, 4, 0, 0)
         lf.setSpacing(2)
-        titulo_ficha = QLabel("Lo que ha leído la IA")
-        titulo_ficha.setObjectName("tituloSubseccion")
-        lf.addWidget(titulo_ficha)
+        # «Lo que ha leído la IA» se pliega a una línea (estado y motivo)
+        # para dar a la hoja todo el alto.
+        self.btn_plegar_lectura = QToolButton()
+        self.btn_plegar_lectura.setObjectName("plegarSeccion")
+        self.btn_plegar_lectura.setText("Lo que ha leído la IA")
+        self.btn_plegar_lectura.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.btn_plegar_lectura.setAutoRaise(True)
+        self.btn_plegar_lectura.setCheckable(True)
+        self.btn_plegar_lectura.setToolTip(
+            "Plegar o desplegar lo leído. Plegado se ve solo el estado y el "
+            "motivo, y la hoja gana alto.")
+        lf.addWidget(self.btn_plegar_lectura)
+        self.lbl_lectura_resumen = QLabel()
+        self.lbl_lectura_resumen.setObjectName("lecturaResumen")
+        self.lbl_lectura_resumen.setTextFormat(Qt.RichText)
+        self.lbl_lectura_resumen.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_lectura_resumen.setCursor(Qt.PointingHandCursor)
+        self.lbl_lectura_resumen.setToolTip("Pulse para desplegar lo leído.")
+        self.lbl_lectura_resumen.mousePressEvent = (
+            lambda _e: self.btn_plegar_lectura.setChecked(False))
+        self.lbl_lectura_resumen.installEventFilter(self)
+        lf.addWidget(self.lbl_lectura_resumen)
         self.ficha = PanelFicha()
         self.ficha.setMinimumHeight(110)
         self.ficha.discrepancia_resuelta.connect(self._resolver_discrepancia)
@@ -547,7 +583,36 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._tamanos_divisor("split_factura", [520, 320]))
         self.split_factura.splitterMoved.connect(
             lambda *_: self._timer_divisores.start())
+        self._tamanos_lectura = None
+        self.btn_plegar_lectura.toggled.connect(self._plegar_lectura)
+        self.btn_plegar_lectura.setChecked(bool(ajustes.leer("lectura_plegada", False)))
+        self._plegar_lectura(self.btn_plegar_lectura.isChecked(), guardar=False)
         lv.addWidget(self.split_factura, 1)
+        # Revisar sin ir a la tabla: donde está la vista.
+        fila_revisar = QHBoxLayout()
+        fila_revisar.setSpacing(6)
+        fila_revisar.addStretch(1)
+        # Texto corto: en un portátil la columna de la factura es estrecha.
+        self.btn_revisada_factura = QPushButton("Revisada")
+        self.btn_revisada_factura.setObjectName("accionTabla")
+        self.btn_revisada_factura.setIcon(QIcon(ruta_recurso("check.svg")))
+        self.btn_revisada_factura.setToolTip(
+            "Marcar revisada: confirma que ha comparado esta factura (en "
+            "ámbar) con la hoja. Se queda en ella.")
+        self.btn_revisada_factura.clicked.connect(self._marcar_revisada_actual)
+        self.btn_revisada_factura.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        fila_revisar.addWidget(self.btn_revisada_factura)
+        self.btn_correcta_siguiente = QPushButton("Correcta · siguiente")
+        self.btn_correcta_siguiente.setObjectName("accionPrincipal")
+        self.btn_correcta_siguiente.setIcon(QIcon(ruta_recurso("arrow-right-blanco.svg")))
+        self.btn_correcta_siguiente.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.btn_correcta_siguiente.setToolTip(
+            "Da por buena esta factura (si está en ámbar, cuenta como "
+            "revisada) y pasa a la siguiente pendiente.  (Ctrl+Intro)\n"
+            "Intro en la tabla pasa a la siguiente pendiente sin marcar nada.")
+        self.btn_correcta_siguiente.clicked.connect(self._correcta_y_siguiente)
+        fila_revisar.addWidget(self.btn_correcta_siguiente)
+        lv.addLayout(fila_revisar)
         split.addWidget(visor_card)
 
         # Tercera columna, a toda la altura: los totales con el desglose
@@ -587,6 +652,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.vista_totales.setOpenLinks(False)
         self.vista_totales.setFrameShape(QFrame.NoFrame)
         lr.addWidget(self.vista_totales, 1)
+        # Lo tecleado se guarda con la sesión al cerrar.
+        self.caja_su_suma = CajaSuSuma()
+        self.caja_su_suma.cambiado.connect(self._ir_al_bloque_comparado)
+        lr.addWidget(self.caja_su_suma)
         fila_botones = QHBoxLayout()
         fila_botones.setSpacing(6)
         btn_copiar = QPushButton("Copiar")
@@ -684,9 +753,23 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             if self.btn_senalar.text() != texto:
                 self.btn_senalar.setText(texto)
             self.btn_senalar.setMinimumWidth(self.btn_senalar.sizeHint().width())
+        if hasattr(self, "btn_revisada_factura"):
+            # Y «Revisada» se queda en solo el ✓ antes que cortar «Correcta ·
+            # siguiente» (su nombre sigue en el globo). Con los anchos reales:
+            # dependen de la letra de cada equipo.
+            boton = self.btn_revisada_factura
+            if boton.text() != "Revisada":
+                boton.setText("Revisada")
+            margenes = self.factura_card.layout().contentsMargins()
+            necesario = (boton.sizeHint().width() + 6
+                         + self.btn_correcta_siguiente.sizeHint().width()
+                         + margenes.left() + margenes.right())
+            if self.factura_card.width() < necesario:
+                boton.setText("")
         filtros = (
-            self.lbl_mostrar, self.combo_filtro_estado, self.caja_tipo,
-            self.txt_buscar, self.combo_filtro_bloque, self.combo_filtro_registro,
+            self.lbl_mostrar, self.combo_filtro_estado, self.combo_filtro_mes,
+            self.caja_tipo, self.txt_buscar, self.combo_filtro_bloque,
+            self.combo_filtro_registro,
         )
         acciones = (
             self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
@@ -846,7 +929,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     tamanos[2] = ancho
             ajustes.guardar("split_revision_v4", tamanos)
         if hasattr(self, "split_factura"):
-            ajustes.guardar("split_factura", self.split_factura.sizes())
+            # Plegada, la lectura mide una línea: se guarda lo de antes.
+            plegada = not self.ficha.isVisibleTo(self.panel_lectura)
+            if not plegada or self._tamanos_lectura:
+                ajustes.guardar("split_factura", self._tamanos_lectura if plegada
+                                else self.split_factura.sizes())
 
     def showEvent(self, evento):
         super().showEvent(evento)
@@ -1166,6 +1253,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "periodo_modo": getattr(self, "_periodo_manual_valor", "auto"),
             "localizaciones": {clave: localizar.a_guardar(cajas) for clave, cajas
                                in self._localizaciones.items()},
+            "su_suma": self.caja_su_suma.valores(),
         })
 
     def _restaurar_sesion(self) -> None:
@@ -1199,6 +1287,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     fila.get("bloque", ""), fila.get("fuentes"))
             self._pintar_cliente()
             self._revalidar_todo()
+            # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
+            try:
+                self.caja_su_suma.poner_valores(datos.get("su_suma"))
+            except Exception:
+                self.caja_su_suma.limpiar()
             hay_datos = self.tabla.rowCount() > 0
             self.btn_gastos.setEnabled(hay_datos)
             self.btn_registro.setEnabled(hay_datos)
@@ -1487,6 +1580,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _vaciar_todo(self):
         if not self._bloques and not self.filas:
             self._limpiar_visor()
+            self.caja_su_suma.limpiar()
             sesion.borrar()
             return
         if QMessageBox.question(
@@ -1519,6 +1613,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.chk_hay_recargo.setChecked(False)
         self.combo_filtro_estado.setCurrentIndex(0)
         self.combo_filtro_bloque.setCurrentIndex(0)
+        self.combo_filtro_mes.setCurrentIndex(0)
+        self.caja_su_suma.limpiar()
         self._actualizar_combo_bloques()
         self._rellenar_tabla()
         self.tabla.clearSelection()
@@ -1851,7 +1947,38 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """Localiza la fila actual del desplegable incluso después de borrar filas."""
         return self.tabla.fila_del_combo(control)
 
+    def _actualizar_combo_meses(self) -> None:
+        """Los meses que hay en el lote (y «Sin fecha» si alguna no la tiene).
+
+        El mes elegido se conserva aunque ya no quede ninguna factura suya:
+        así no se quita el filtro sin que nadie lo pida.
+        """
+        actual = self.combo_filtro_mes.currentData()
+        meses = {mes_de(fila.factura) for fila in self.filas}
+        sin_fecha = None in meses
+        meses = sorted(m for m in meses if m is not None)
+        if actual not in (None, SIN_FECHA) and tuple(actual) not in meses:
+            meses = sorted(meses + [tuple(actual)])
+        opciones = [(nombre_mes(m), m) for m in meses]
+        if sin_fecha or actual == SIN_FECHA:
+            opciones.append((nombre_mes(SIN_FECHA), SIN_FECHA))
+        ya = [(self.combo_filtro_mes.itemText(i), self.combo_filtro_mes.itemData(i))
+              for i in range(1, self.combo_filtro_mes.count())]
+        if ya == opciones:
+            return
+        self.combo_filtro_mes.blockSignals(True)
+        self.combo_filtro_mes.clear()
+        self.combo_filtro_mes.addItem(TODOS_LOS_MESES, None)
+        for texto, dato in opciones:
+            self.combo_filtro_mes.addItem(texto, dato)
+        indice = next((i for i in range(self.combo_filtro_mes.count())
+                       if self.combo_filtro_mes.itemData(i) == actual), 0)
+        self.combo_filtro_mes.setCurrentIndex(indice)
+        self.combo_filtro_mes.blockSignals(False)
+
     def _aplicar_filtro(self) -> None:
+        self._actualizar_combo_meses()
+        mes = self.combo_filtro_mes.currentData()
         opcion = self.combo_filtro_estado.currentIndex()
         bloque = self.combo_filtro_bloque.currentText()
         busqueda = self.txt_buscar.text()
@@ -1874,6 +2001,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     and not self._periodo_lote.contiene(self.filas[fila]["factura"]))
             )
             if tipo != "todos" and self._tipo_fila(fila) != tipo:
+                visible = False
+            if visible and not en_el_mes(self.filas[fila].factura, mes):
                 visible = False
             if bloque != TODOS_LOS_BLOQUES and self.filas[fila]["bloque"] != bloque:
                 visible = False
@@ -1905,6 +2034,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _hay_filtro_activo(self) -> bool:
         return bool(
             self.combo_filtro_estado.currentIndex()
+            or self.combo_filtro_mes.currentData() is not None
             or not self.botones_tipo["todos"].isChecked()
             or self.combo_filtro_bloque.currentText() != TODOS_LOS_BLOQUES
             or self.txt_buscar.text().strip()
@@ -1912,49 +2042,80 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 and self.combo_filtro_registro.currentData() != "todas")
         )
 
-    def _siguiente_incidencia(self) -> None:
+    def _seleccionar_fila(self, fila: int) -> None:
+        """Deja seleccionada solo esa fila y la hace la actual.
+
+        Sin selectRow: con Ctrl pulsado (Ctrl+Intro) selectRow alterna la
+        fila en vez de seleccionarla."""
+        modelo = self.tabla.model()
+        indice = modelo.index(fila, C_ESTADO)
+        self.tabla.selectionModel().setCurrentIndex(
+            indice, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        self.tabla.scrollTo(indice)
+
+    def _siguiente_incidencia(self, desde: int | None = None) -> None:
+        """La siguiente factura pendiente después de `desde` (o de la actual).
+
+        Primero entre las que se ven: si se está cuadrando un mes, se queda
+        en ese mes. Solo si ahí no queda ninguna se quitan los filtros, y se
+        dice.
+        """
         total = self.tabla.rowCount()
         if not total:
             return
-        inicio = self.tabla.currentRow()
-        for salto in range(1, total + 1):
-            fila = (inicio + salto) % total
-            # Lo revisado y lo corregido a mano ya no son incidencias.
-            if self.filas[fila].presentacion in PENDIENTES:
-                # Una búsqueda no debe esconder la incidencia que se visita.
-                self._limpiar_filtros()
-                self.tabla.selectRow(fila)
-                self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
-                return
-        self.lbl_estado.setText("Todo el lote está correcto y listo para exportar.")
+        inicio = self.tabla.currentRow() if desde is None else desde
+        orden = [(inicio + salto) % total for salto in range(1, total + 1)]
+        # Lo revisado y lo corregido a mano ya no son incidencias.
+        pendientes = [f for f in orden if self.filas[f].presentacion in PENDIENTES]
+        if not pendientes:
+            self.lbl_estado.setText(
+                "Todo el lote está correcto y listo para exportar.")
+            return
+        visibles = [f for f in pendientes if not self.tabla.isRowHidden(f)]
+        if visibles:
+            fila = visibles[0]
+        else:
+            fila = pendientes[0]
+            filtro = self._texto_filtro() if self._hay_filtro_activo() else ""
+            self._limpiar_filtros()
+            if filtro:
+                self._avisar(f"No quedan pendientes con el filtro ({filtro}): "
+                             "se ha quitado para ir a la siguiente.", INFO)
+        self._seleccionar_fila(fila)
 
     def _limpiar_filtros(self):
         for control in (self.txt_buscar, self.combo_filtro_estado,
-                        self.combo_filtro_bloque, self.combo_filtro_registro):
+                        self.combo_filtro_bloque, self.combo_filtro_registro,
+                        self.combo_filtro_mes):
             control.blockSignals(True)
         self.txt_buscar.clear()
         self.combo_filtro_estado.setCurrentIndex(0)
+        self.combo_filtro_mes.setCurrentIndex(0)
         self.combo_filtro_bloque.setCurrentIndex(0)
         self.combo_filtro_registro.setCurrentIndex(0)
         self.botones_tipo["todos"].setChecked(True)
         for control in (self.txt_buscar, self.combo_filtro_estado,
-                        self.combo_filtro_bloque, self.combo_filtro_registro):
+                        self.combo_filtro_bloque, self.combo_filtro_registro,
+                        self.combo_filtro_mes):
             control.blockSignals(False)
         self._aplicar_filtro()
 
     def _filas_seleccionadas(self) -> list[int]:
         return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})
 
-    def _marcar_revisada(self) -> None:
+    def _marcar_revisada(self, filas=None):
         """Da salida únicamente a avisos ámbar comprobados por una persona.
 
         Se revisa la factura, no la línea: una factura con suplido o con
         varios tipos de IVA tiene varias líneas y basta con pulsar una.
+        `filas`: las que se marcan (si no, las seleccionadas). Devuelve la
+        función que lo deshace, o None si no se ha marcado nada.
         """
-        seleccionadas = self._filas_seleccionadas()
+        seleccionadas = (list(filas) if filas is not None
+                         else self._filas_seleccionadas())
         if not seleccionadas:
             self._avisar("Seleccione una o varias filas ámbar.", AVISO)
-            return
+            return None
         filas = sorted({r for fila in seleccionadas
                         for r in self._filas_del_documento(fila)})
         confirmadas = []
@@ -1980,13 +2141,56 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._avisar("Revisión deshecha: vuelven a estar pendientes.",
                              INFO)
             self._avisar(texto, EXITO, deshacer=deshacer)
-        elif ya_corregidas:
+            return deshacer
+        if ya_corregidas:
             self._avisar("Ya cuenta como revisada (corregida a mano): puede "
                          "exportarse.", INFO)
         else:
             self._avisar(
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
                 "corrigen en la tabla.", AVISO)
+        return None
+
+    def _fila_que_se_ve(self) -> int:
+        """La factura de la tarjeta, o -1 si no se ve ninguna (un filtro
+        puede esconder la fila actual: esa no se marca sin verla)."""
+        r = self.tabla.currentRow()
+        if 0 <= r < len(self.filas) and not self.tabla.isRowHidden(r):
+            return r
+        return -1
+
+    def _marcar_revisada_actual(self) -> None:
+        """«Revisada» de la tarjeta de la factura: solo la que se ve."""
+        r = self._fila_que_se_ve()
+        if r < 0:
+            self._avisar("Seleccione la factura que ha revisado.", AVISO)
+            return
+        self._marcar_revisada(filas=[r])
+
+    def _correcta_y_siguiente(self) -> None:
+        """Da por buena la factura que se ve y pasa a la siguiente pendiente.
+
+        Una en ámbar queda revisada (como «Marcar revisada»); una en rojo no
+        se puede dar por buena: se corrige antes en la tabla. Si no se ve
+        ninguna, solo se pasa a la siguiente.
+        """
+        r = self._fila_que_se_ve()
+        deshacer = None
+        if r >= 0:
+            presentacion = self.filas[r].presentacion
+            if presentacion == CON_ERROR:
+                self._avisar("Esta factura tiene un error (en rojo): corríjalo "
+                             "en la tabla antes de darla por buena.", AVISO)
+                return
+            if presentacion == POR_REVISAR:
+                deshacer = self._marcar_revisada(filas=[r])
+        if self.filas and not any(f.presentacion in PENDIENTES for f in self.filas):
+            # Un solo aviso, con su «Deshacer» si se acaba de marcar: si no,
+            # el de «no queda ninguna» taparía el de la revisión.
+            self._avisar("No queda ninguna factura pendiente: ya puede "
+                         "exportar a Aplifisa.", EXITO, deshacer=deshacer)
+            return
+        self._siguiente_incidencia(desde=r if r >= 0 else None)
 
     def _eliminar_seleccion(self) -> None:
         filas = sorted({i.row() for i in self.tabla.selectionModel().selectedRows()},

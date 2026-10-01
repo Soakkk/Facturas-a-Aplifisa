@@ -12,6 +12,34 @@ from .modelo import Factura
 from .validacion import fecha_de
 
 
+MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+         "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+# Filtro por mes: las facturas cuya fecha no se entiende van aparte.
+SIN_FECHA = "sin_fecha"
+
+
+def mes_de(factura: Factura) -> Optional[tuple]:
+    """(año, mes) de la factura, o None si su fecha no se entiende."""
+    dia = fecha_de(factura.fecha)
+    return (dia.year, dia.month) if dia else None
+
+
+def nombre_mes(mes) -> str:
+    """«Julio 2026» para (2026, 7); «Sin fecha» para SIN_FECHA."""
+    if mes == SIN_FECHA:
+        return "Sin fecha"
+    anio, numero = mes
+    return f"{MESES[numero - 1].capitalize()} {anio}"
+
+
+def en_el_mes(factura: Factura, mes) -> bool:
+    """¿Entra la factura en el filtro de ese mes? (None: todos los meses)."""
+    if mes is None:
+        return True
+    propio = mes_de(factura)
+    return propio is None if mes == SIN_FECHA else propio == tuple(mes)
+
+
 FORMAS_JURIDICAS = {
     "s", "l", "a", "u", "p", "sl", "sa", "slu", "slp",
     "sociedad", "limitada", "anonima", "unipersonal", "profesional",

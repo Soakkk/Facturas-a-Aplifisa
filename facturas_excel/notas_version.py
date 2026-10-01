@@ -6,6 +6,27 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.19.0": """
+<h2>Novedades de la versión 1.19.0</h2>
+<ul>
+  <li><b>Su suma a mano.</b> Debajo de los totales, escriba lo que le da a
+      usted (a mano o en el listado de Aplifisa): base, IVA, total… Al lado
+      sale «✓ cuadra» o cuánto se separa el programa (+35,55 €). Compara con
+      lo que se ve: si filtra un mes, con ese mes. Lo escrito se guarda con
+      el lote.</li>
+  <li><b>Filtro por mes</b>, junto al de estado: julio, agosto, septiembre…
+      (y «Sin fecha» si alguna no la tiene). Los totales de «Lo que se ve»
+      son los de ese mes, para cuadrar mes a mes con Aplifisa.</li>
+  <li><b>Revisar sin ir a la tabla.</b> Debajo de la factura: «Revisada»
+      (la marca y se queda) y «Correcta · siguiente» (la da por buena y salta
+      a la siguiente pendiente). Atajos en la tabla: <b>Intro</b> pasa a la
+      siguiente pendiente sin marcar nada; <b>Ctrl+Intro</b> la da por buena
+      y pasa. Una en rojo no se puede dar por buena: se corrige antes.</li>
+  <li><b>«Lo que ha leído la IA» se pliega</b> a una línea (estado y
+      motivo) con un clic en su título, y la hoja gana todo el alto. El
+      programa recuerda cómo lo dejó.</li>
+</ul>
+""",
     "1.18.0": """
 <h2>Novedades de la versión 1.18.0</h2>
 <ul>

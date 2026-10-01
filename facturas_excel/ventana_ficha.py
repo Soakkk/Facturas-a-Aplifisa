@@ -6,10 +6,11 @@ viva en su sitio. Los métodos usan el estado de la ventana (self).
 
 from __future__ import annotations
 
+import html
 import os
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QFont, QFontMetrics, QImage, QPixmap
 
 from facturas_excel import ajustes, imagen_visor, localizar
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
@@ -19,7 +20,7 @@ from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
-from facturas_excel.estilo import ACCENT, DANGER, WARNING
+from facturas_excel.estilo import ACCENT, DANGER, MUTED, WARNING
 from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
 from facturas_excel.validacion import ERROR, OK, REVISAR
 from facturas_excel.ventana_validacion import MENSAJE_CORREGIDA, MENSAJE_REVISADA
@@ -250,6 +251,10 @@ class FichaMixin:
                 and evento.type() == QEvent.Resize
                 and not self._pixmap_documento.isNull()):
             self._timer_visor.start()
+        # La línea de lo leído plegado se recorta al ancho que tenga.
+        if (objeto is getattr(self, "lbl_lectura_resumen", None)
+                and evento.type() == QEvent.Resize):
+            self._pintar_resumen_lectura()
         return super().eventFilter(objeto, evento)
 
     def _cambiar_zoom_visor(self, incremento: float) -> None:
@@ -429,10 +434,108 @@ class FichaMixin:
         if not hasattr(self, "ficha"):
             return
         r = self.tabla.currentRow()
-        if r < 0 or r >= len(self.filas) or self.tabla.isRowHidden(r):
+        visible = 0 <= r < len(self.filas) and not self.tabla.isRowHidden(r)
+        if hasattr(self, "btn_revisada_factura"):
+            # Sin factura a la vista no hay nada que dar por revisado.
+            self.btn_revisada_factura.setEnabled(visible)
+        if not visible:
             self.ficha.vacio()
+            self._poner_resumen_lectura(None)
             return
-        self.ficha.mostrar(self._datos_ficha(r))
+        datos = self._datos_ficha(r)
+        self.ficha.mostrar(datos)
+        self._poner_resumen_lectura(datos)
+
+    # ---------- lo leído, plegado a una línea ----------
+    def _poner_resumen_lectura(self, d) -> None:
+        """La línea que se ve con la lectura plegada: estado y motivo.
+
+        Si hay que elegir entre las dos lecturas, la lectura se despliega
+        sola para esa factura (sin cambiar la preferencia guardada): plegada,
+        la elección no se vería y se daría por buena la lectura 1.
+        """
+        if not hasattr(self, "lbl_lectura_resumen"):
+            return
+        self._lectura_con_decision = bool(d and d["discrepancias"])
+        if d is None:
+            self._resumen_lectura = ("", None, None, "", "")
+        else:
+            texto, color, fondo = d["estado"]
+            if d["discrepancias"]:
+                motivo = (f"{len(d['discrepancias'])} dato(s) no coinciden "
+                          "entre las dos lecturas")
+            elif d["cuadre"] and not d["cuadre"]["ok"]:
+                motivo = "El total no cuadra"
+            else:
+                motivo = next((m for _g, m in d["otros_motivos"]), "")
+            self._resumen_lectura = (texto, color, fondo, d["titulo"], motivo)
+        self._pintar_resumen_lectura()
+        self._aplicar_plegado(self._plegado_efectivo())
+
+    def _pintar_resumen_lectura(self) -> None:
+        """Estado, título y motivo en una línea; el motivo se recorta con
+        «…» a lo que quepa y entero sale en el globo."""
+        texto, color, fondo, titulo, motivo = getattr(
+            self, "_resumen_lectura", ("", None, None, "", ""))
+        etiqueta = self.lbl_lectura_resumen
+        if not texto:
+            etiqueta.setText(
+                f"<span style='color:{MUTED}'>Seleccione una factura.</span>")
+            etiqueta.setToolTip("Pulse para desplegar lo leído.")
+            return
+        medida = etiqueta.fontMetrics()
+        negrita = QFont(etiqueta.font())
+        negrita.setBold(True)
+        ocupado = (QFontMetrics(negrita).horizontalAdvance(f" {texto}  {titulo} ")
+                   + medida.horizontalAdvance(" · ") + 16)
+        visible = medida.elidedText(
+            motivo, Qt.ElideRight, max(0, etiqueta.width() - ocupado))
+        partes = [
+            f"<span style='background:{fondo}; color:{color.name()};"
+            f" font-weight:700'>&nbsp;{html.escape(texto)}&nbsp;</span>",
+            f"<b>{html.escape(titulo)}</b>"]
+        if motivo:
+            # Aunque no quepa nada, «…» dice que hay un motivo (en el globo).
+            partes.append(f"<span style='color:{MUTED}'>· "
+                          f"{html.escape(visible or '…')}</span>")
+        etiqueta.setText(" ".join(partes))
+        etiqueta.setToolTip(
+            (f"{motivo}\n\n" if motivo else "") + "Pulse para desplegar lo leído.")
+
+    def _plegado_efectivo(self) -> bool:
+        return (self.btn_plegar_lectura.isChecked()
+                and not getattr(self, "_lectura_con_decision", False))
+
+    def _plegar_lectura(self, plegada: bool, guardar: bool = True) -> None:
+        """El usuario pliega o despliega lo leído (se recuerda)."""
+        if guardar:
+            ajustes.guardar("lectura_plegada", bool(plegada))
+        self._aplicar_plegado(self._plegado_efectivo())
+
+    def _aplicar_plegado(self, plegada: bool) -> None:
+        """Plegada: solo el estado y el motivo; la hoja se queda el alto."""
+        if not hasattr(self, "panel_lectura"):
+            return
+        ya_plegada = not self.ficha.isVisibleTo(self.panel_lectura)
+        if plegada and not ya_plegada:
+            # El alto de la lectura para cuando se despliegue. Antes de
+            # enseñar la ventana el divisor aún no tiene su tamaño: lo
+            # guardado vale más.
+            self._tamanos_lectura = (
+                self.split_factura.sizes() if self.isVisible()
+                else self._tamanos_divisor("split_factura", [520, 320]))
+        self.ficha.setVisible(not plegada)
+        self.lbl_lectura_resumen.setVisible(plegada)
+        self.btn_plegar_lectura.setArrowType(
+            Qt.RightArrow if plegada else Qt.DownArrow)
+        if plegada:
+            self.panel_lectura.setMaximumHeight(
+                self.panel_lectura.sizeHint().height())
+        else:
+            self.panel_lectura.setMaximumHeight(16_777_215)
+            if ya_plegada and self._tamanos_lectura:
+                self.split_factura.setSizes(self._tamanos_lectura)
+            self._tamanos_lectura = None
 
     def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
         """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.

@@ -1,9 +1,27 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 1 de octubre de 2026 (versión 1.18.0). Apunta abajo lo que
+Actualizado el 1 de octubre de 2026 (versión 1.19.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.19 (lo que pediste)
+
+**Su suma a mano.** Debajo de los totales escribes lo que te da a ti (o el
+listado de Aplifisa) y al lado sale si cuadra o cuánto se separa. Compara con
+lo que se ve: filtra un mes y compara con ese mes.
+
+**Filtro por mes**, junto al de estado.
+
+**Revisar desde la factura.** «Revisada» y «Correcta · siguiente» debajo de
+la hoja. En la tabla, Intro pasa a la siguiente pendiente (sin marcar nada) y
+Ctrl+Intro la da por buena y pasa. No puse Intro solo para marcar porque
+quien viene de Excel pulsa Intro sin pensar y se daría por buena una factura
+sin mirarla.
+
+**Lo leído se pliega** a una línea con un clic en «Lo que ha leído la IA».
+
+Dime si te sirve así o si prefieres otras cifras en «Su suma».
 
 ### Lo nuevo de la 1.18 (lo que pediste)
 
