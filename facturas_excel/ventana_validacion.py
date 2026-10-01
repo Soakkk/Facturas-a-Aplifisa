@@ -559,20 +559,41 @@ class ValidacionMixin:
         # Con un lote vacío no se reserva una gran tabla en blanco.
         self._ajustar_altura_resumen()
         self._pintar_vista_totales(lineas, recargo, tipos_iva)
-        self._actualizar_su_suma(lineas)
+        self._actualizar_su_suma(lineas, recargo)
 
-    def _actualizar_su_suma(self, lineas) -> None:
-        """«Cuadrar con su suma» compara con lo que se ve: con un filtro (un
-        mes, un proveedor…), lo filtrado; si no, todo el lote."""
+    def _actualizar_su_suma(self, lineas, recargo=False) -> None:
+        """«Su suma a mano» compara con lo que se ve: con un filtro (un mes,
+        un proveedor…), lo filtrado; si no, todo el lote. Con el cliente en
+        recargo «por el total», los gastos solo tienen total (y retención)."""
         if not hasattr(self, "caja_su_suma"):
             return
+        if not self.filas and not getattr(self, "_bloques", None):
+            # Lote vacío: lo tecleado era para el lote anterior.
+            self.caja_su_suma.limpiar()
         elegidos = {}
+        self._ancla_su_suma = {}
         for ambito, tipo, t, _es_total in lineas:
             clave = "gasto" if tipo == "Gastos" else "venta"
             if ambito == "FILTRO ACTUAL" or (
                     ambito == "TOTAL LOTE" and clave not in elegidos):
-                elegidos[clave] = (t, f"{tipo} · {self._nombre_ambito(ambito)}")
+                solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
+                elegidos[clave] = (t, f"{tipo} · {self._nombre_ambito(ambito)}",
+                                   solo_total)
+                self._ancla_su_suma[clave] = self._ancla_bloque(ambito, tipo)
         self.caja_su_suma.actualizar(elegidos)
+
+    @staticmethod
+    def _ancla_bloque(ambito: str, tipo: str) -> str:
+        """Nombre del ancla de un bloque de la vista de totales."""
+        return "b-" + "".join(c if c.isalnum() else "-"
+                              for c in f"{tipo}-{ambito}".lower())
+
+    def _ir_al_bloque_comparado(self) -> None:
+        """Lleva la vista de totales al bloque con el que se compara «Su
+        suma»: en una pantalla baja, la cifra del programa queda a la vista."""
+        ancla = getattr(self, "_ancla_su_suma", {}).get(self.caja_su_suma.tipo)
+        if ancla and hasattr(self, "vista_totales"):
+            self.vista_totales.scrollToAnchor(ancla)
 
     def _texto_filtro(self) -> str:
         """Cómo se nombra el filtro en el título: el mes si es solo eso."""
@@ -583,7 +604,9 @@ class ValidacionMixin:
         otros = (self.combo_filtro_estado.currentIndex()
                  or not self.botones_tipo["todos"].isChecked()
                  or self.combo_filtro_bloque.currentText() != TODOS_LOS_BLOQUES
-                 or self.txt_buscar.text().strip())
+                 or self.txt_buscar.text().strip()
+                 or (self.combo_filtro_registro.isVisible()
+                     and self.combo_filtro_registro.currentData() != "todas"))
         nombre = self.combo_filtro_mes.currentText().lower().replace(" ", "\u00a0")
         return f"{nombre} y otros filtros" if otros else nombre
 
@@ -671,6 +694,7 @@ class ValidacionMixin:
                      else "")
             titulo = f"{tipo} · {self._nombre_ambito(ambito)}"
             bloques.append(
+                f"<a name='{self._ancla_bloque(ambito, tipo)}'></a>"
                 f"<table width='100%' cellspacing='0' cellpadding='3'{fondo}>"
                 f"<tr><td colspan='2'><b style='color:{INK}; font-size:13px'>"
                 f"{html.escape(titulo)}</b><br><span style='color:{MUTED}'>"

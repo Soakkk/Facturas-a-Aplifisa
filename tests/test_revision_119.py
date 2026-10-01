@@ -117,7 +117,7 @@ def test_su_suma_dice_si_cuadra_y_cuanto_falta():
     assert _resultado(v, "base") == "✓ cuadra"
     _teclear(v, "total", "430")                     # programa: 435,60
     assert _resultado(v, "total") == "+5,60 €"
-    assert "no cuadran" in v.caja_su_suma.lbl_veredicto.text()
+    assert "El programa da más" in v.caja_su_suma.lbl_veredicto.text()
     _teclear(v, "total", "435,60")
     assert "Todo lo que ha escrito cuadra" in v.caja_su_suma.lbl_veredicto.text()
     _teclear(v, "iva", "x")
@@ -240,7 +240,9 @@ def test_la_lectura_se_pliega_a_una_linea_con_el_motivo(monkeypatch):
     assert v.ficha.isHidden()
     assert v.lbl_lectura_resumen.isVisible()
     resumen = v.lbl_lectura_resumen.text()
-    assert "Revisar" in resumen and "F-9" in resumen and "suplido" in resumen
+    assert "Revisar" in resumen and "F-9" in resumen
+    # El motivo, recortado a lo que quepa en la línea y entero en el globo.
+    assert "suplido" in v.lbl_lectura_resumen.toolTip()
     assert guardado["lectura_plegada"] is True
     alto_plegada = v.panel_lectura.height()
     v.btn_plegar_lectura.setChecked(False)
@@ -248,3 +250,143 @@ def test_la_lectura_se_pliega_a_una_linea_con_el_motivo(monkeypatch):
     assert not v.ficha.isHidden()
     assert v.panel_lectura.height() > alto_plegada
     assert guardado["lectura_plegada"] is False
+
+
+# ------------------------------------------- lo que encontró la revisión
+def test_lo_que_no_es_un_importe_sale_como_cifra_dudosa():
+    for texto in ("Inf", "inf", "nan", "1e400", "9" * 320, "4,347",
+                  "4347.510", "1,23,4", "abc"):
+        assert leer_importe(texto) is None, texto
+    assert leer_importe("4,347.51") == 4347.51     # formato inglés
+    assert leer_importe("1.234.567") == 1234567
+    assert leer_importe("22,50-") == -22.5
+
+
+def test_teclear_inf_no_rompe_nada_y_la_sesion_se_recupera(tmp_path, monkeypatch):
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    v = _lote()
+    v._bloques = [{"nombre": "b1", "procesadas": [], "crudos": [],
+                   "cliente": "CLIENTE", "nif": "12345678Z"}]
+    _teclear(v, "base", "Inf")
+    assert _resultado(v, "base") == "¿cifra?"
+    v._revalidar_todo()                                   # no lanza nada
+    v.closeEvent(QCloseEvent())
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert len(otra.filas) == 4                           # el lote sigue ahí
+
+
+def test_la_retencion_se_compara_con_el_signo_que_se_escriba():
+    from facturas_excel.su_suma import comparar
+    assert comparar("irpf", -22.5, 22.5) == (22.5, 0.0)
+    assert comparar("irpf", -22.5, -22.5) == (-22.5, 0.0)
+    # −22,50 es 7,50 más que −30: la diferencia y la ayuda lo dicen así.
+    assert comparar("irpf", -22.5, -30.0) == (-22.5, 7.5)
+
+
+def test_se_pueden_pedir_recargo_retencion_y_suplidos_aunque_valgan_cero():
+    v = _lote()
+    etiqueta = v.caja_su_suma._filas["irpf"][0]
+    assert etiqueta.isHidden()
+    v.caja_su_suma.btn_mas.setChecked(True)
+    assert not etiqueta.isHidden()
+    _teclear(v, "irpf", "22,50")
+    assert _resultado(v, "irpf") == "−22,50 €"       # el programa no tiene
+
+
+def test_vaciar_un_lote_ya_vacio_borra_lo_tecleado():
+    v = _lote()
+    _teclear(v, "base", "360")
+    for _ in range(len(v.filas)):
+        v.tabla.selectRow(0)
+        v._eliminar_seleccion()
+    v._vaciar_todo()
+    assert v.caja_su_suma._filas["base"][1].text() == ""
+
+
+def test_ctrl_intro_de_verdad_marca_la_que_se_ve():
+    from PySide6.QtTest import QTest
+    v = _pendientes()
+    v.show()
+    v.tabla.setCurrentCell(0, 3)
+    v.tabla.selectRow(0)
+    # Como en Windows: Ctrl pulsado mientras llega el Intro (y luego suelto,
+    # para no dejar Ctrl «pulsado» a las pruebas siguientes).
+    QTest.keyPress(v.tabla, Qt.Key_Control)
+    QTest.keyClick(v.tabla, Qt.Key_Return, Qt.ControlModifier)
+    QTest.keyRelease(v.tabla, Qt.Key_Control)
+    assert v.filas[0].presentacion == REVISADA
+    assert v.filas[2].presentacion == POR_REVISAR
+    assert v.tabla.currentRow() == 2
+    assert [i.row() for i in v.tabla.selectionModel().selectedRows()] == [2]
+
+
+def test_la_siguiente_pendiente_del_mes_va_antes_que_quitar_el_filtro():
+    v = _ventana(_factura(num_factura="J-1", fecha="03/07/2026", confianza_ia="media"),
+                 _factura(num_factura="S-1", fecha="03/09/2026", confianza_ia="media"),
+                 _factura(num_factura="J-2", fecha="20/07/2026", confianza_ia="media"))
+    _elegir_mes(v, "Julio 2026")
+    v.tabla.setCurrentCell(0, 3)
+    v._siguiente_incidencia()
+    assert v.filas[v.tabla.currentRow()].factura.num_factura == "J-2"
+    assert v.combo_filtro_mes.currentData() == (2026, 7)
+
+
+def test_correcta_y_siguiente_no_se_salta_ninguna_con_solo_por_revisar():
+    v = _ventana(_factura(num_factura="F-1", confianza_ia="media"),
+                 _factura(num_factura="F-2"),
+                 _factura(num_factura="F-3", confianza_ia="media"),
+                 _factura(num_factura="F-4", confianza_ia="media"))
+    v.combo_filtro_estado.setCurrentIndex(1)              # Solo por revisar
+    v.tabla.setCurrentCell(0, 3)
+    v._correcta_y_siguiente()
+    assert v.filas[v.tabla.currentRow()].factura.num_factura == "F-3"
+
+
+def test_no_se_marca_una_factura_que_no_se_ve():
+    v = _pendientes()
+    v.tabla.setCurrentCell(0, 3)
+    v.txt_buscar.setText("NO EXISTE")                     # ninguna a la vista
+    v.btn_revisada_factura.click()
+    assert v.filas[0].presentacion == POR_REVISAR
+    v._correcta_y_siguiente()
+    assert v.filas[0].presentacion == POR_REVISAR
+
+
+def test_la_ultima_pendiente_conserva_el_deshacer():
+    v = _ventana(_factura(num_factura="F-1", confianza_ia="media"),
+                 _factura(num_factura="F-2"))
+    v.tabla.setCurrentCell(0, 3)
+    v._correcta_y_siguiente()
+    assert v.filas[0].presentacion == REVISADA
+    assert "No queda ninguna" in v.banda.lbl.text()
+    assert v.banda._accion_deshacer is not None
+    v.banda._deshacer()
+    assert v.filas[0].presentacion == POR_REVISAR
+
+
+def test_con_una_eleccion_pendiente_la_lectura_se_despliega_sola(monkeypatch):
+    from facturas_excel import ajustes
+    monkeypatch.setattr(ajustes, "guardar", lambda *_a: None)
+    disc = {"campo": "total", "etiqueta": "Total", "valor_1": 121.0,
+            "valor_2": 131.0, "campo_factura": "total_impreso",
+            "texto": "Doble lectura: Total no coincide"}
+    v = _ventana(_factura(num_factura="F-1"),
+                 _factura(num_factura="F-2", verificacion="doble",
+                          discrepancias=(disc,)))
+    v.btn_plegar_lectura.setChecked(True)
+    v.tabla.setCurrentCell(0, 3)
+    assert v.ficha.isHidden()
+    v.tabla.setCurrentCell(1, 3)
+    assert not v.ficha.isHidden()                         # hay que elegir
+    assert v.btn_plegar_lectura.isChecked()               # la preferencia sigue
+    v.tabla.setCurrentCell(0, 3)
+    assert v.ficha.isHidden()
+
+
+def test_plegada_el_motivo_entero_va_en_el_globo():
+    v = _ventana(_factura(num_factura="F-9",
+                          tratamiento_manual="Factura con suplido"))
+    v.btn_plegar_lectura.setChecked(True)
+    v.tabla.setCurrentCell(0, 3)
+    assert "suplido" in v.lbl_lectura_resumen.toolTip()
