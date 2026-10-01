@@ -12,16 +12,14 @@ import os
 import sys
 import traceback
 
-from collections import Counter
-
 from PySide6.QtCore import QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame,
-    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar, QPushButton, QProgressDialog, QScrollArea,
-    QSizePolicy, QSplitter, QTableWidget, QVBoxLayout, QWidget, QListWidget,
-    QListWidgetItem,
+    QSizePolicy, QSplitter, QTableWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QGridLayout,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,7 +45,7 @@ from facturas_excel.consulta import (
     PeriodoLote, coincide_busqueda, detectar_periodo, facturas_unicas, periodo_manual,
 )
 from facturas_excel.estilo import (
-    CHROME, CHROME_INK, MUTED, SUCCESS, WARNING, DANGER, aplicar_tema,
+    CHROME, CHROME_INK, aplicar_tema,
 )
 from facturas_excel.panel_ficha import PanelFicha
 from facturas_excel.modelo import Factura
@@ -56,7 +54,8 @@ from facturas_excel.procesar import (
     recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
 )
 from facturas_excel.lote import (
-    CON_ERROR, POR_REVISAR, REVISADA, SIN_VERIFICAR, VERIFICADA, Fila,
+    CON_ERROR, CORREGIDA, PENDIENTES, POR_REVISAR, REVISADA, SIN_VERIFICAR,
+    VERIFICADA, Fila,
     filas_de_bloques, ordenar as ordenar_filas,
 )
 # Las columnas, los estados y el Worker se siguen importando desde aquí en
@@ -67,17 +66,23 @@ from facturas_excel.tabla_facturas import (  # noqa: F401
     C_GXX, C_NIF, C_NOMBRE, C_NUM, C_PCT, C_PCT_IRPF, C_PCT_RE, C_TIPO, C_TOTAL,
     ComboSinRueda, TablaFacturas, fmt, parse_numero, valor_de_celda,
 )
-from facturas_excel.validacion import ERROR, OK, REVISAR, validar_nif
+from facturas_excel.validacion import REVISAR, validar_nif
+from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
+
+# Datos de la cabecera de una factura (iguales en todas sus líneas).
+CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclave")
+# Anchos de partida de las tres columnas (facturas | factura | totales).
+TAMANOS_COLUMNAS = [1080, 480, 300]
 from facturas_excel.ventana_comun import (  # noqa: F401
-    ANCHO_LISTA_BLOQUES, COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO,
-    ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
+    COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente,
+    ICONO_CORREGIDO, ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
     TODOS_LOS_BLOQUES, _cabeceras_resumen, ruta_recurso,
     rutas_factura_de_mime,
 )
 from facturas_excel.hilos import (  # noqa: F401
     HILOS, HiloActualizacion, HiloDescargaActualizacion, Worker, hilos_lectura,
 )
-from facturas_excel.cinta import crear_cinta
+from facturas_excel.cinta import ICONO_CINTA, crear_cinta
 from facturas_excel import localizar
 from facturas_excel.visor import VisorDocumento
 from facturas_excel.ventana_aplifisa import AplifisaMixin
@@ -167,20 +172,21 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         cuerpo.setContentsMargins(12, 8, 12, 8)
         cuerpo.setSpacing(8)
 
-        # El lote ocupa una sola fila. Las acciones frecuentes viven junto al
-        # menú para no robar altura ni encoger la tabla en portátiles.
+        # Cliente y periodo van dentro de la cinta, en el hueco que quedaba
+        # vacío entre los botones y «Exportar» (antes eran una fila aparte).
         cliente_bar = QFrame()
-        cliente_bar.setObjectName("barraCliente")
-        bloque_cliente = QHBoxLayout(cliente_bar)
-        bloque_cliente.setContentsMargins(12, 7, 12, 7)
-        bloque_cliente.setSpacing(10)
+        cliente_bar.setObjectName("cajaCliente")
+        bloque_cliente = QGridLayout(cliente_bar)
+        bloque_cliente.setContentsMargins(6, 0, 6, 0)
+        bloque_cliente.setHorizontalSpacing(8)
+        bloque_cliente.setVerticalSpacing(2)
         etiqueta = QLabel("Cliente")
-        etiqueta.setObjectName("tituloSeccion")
-        self.lbl_cliente = QLabel("Pendiente de detectar")
+        etiqueta.setObjectName("textoSuave")
+        self.lbl_cliente = EtiquetaCliente("Pendiente de detectar")
         self.lbl_cliente.setObjectName("cliente")
-        self.lbl_cliente.setWordWrap(True)
-        bloque_cliente.addWidget(etiqueta)
-        bloque_cliente.addWidget(self.lbl_cliente, 1)
+        self.lbl_cliente.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        bloque_cliente.addWidget(etiqueta, 0, 0)
+        bloque_cliente.addWidget(self.lbl_cliente, 0, 1)
         self.btn_cliente = QPushButton("Cambiar")
         self.btn_cliente.setObjectName("compacto")
         self.btn_cliente.setMaximumWidth(110)
@@ -189,10 +195,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "cambia aquí y el lote se rehace sin volver a pasar por Gemini.")
         self.btn_cliente.setEnabled(False)
         self.btn_cliente.clicked.connect(self._cambiar_cliente)
-        bloque_cliente.addWidget(self.btn_cliente)
+        bloque_cliente.addWidget(self.btn_cliente, 0, 2)
         lbl_periodo = QLabel("Periodo")
-        lbl_periodo.setObjectName("tituloSeccion")
-        bloque_cliente.addWidget(lbl_periodo)
+        lbl_periodo.setObjectName("textoSuave")
+        bloque_cliente.addWidget(lbl_periodo, 1, 0)
         self.combo_periodo = ComboSinRueda()
         self.combo_periodo.setMinimumWidth(150)
         self.combo_periodo.setToolTip(
@@ -201,7 +207,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "salen del trimestre quedan señaladas para revisar.")
         self.combo_periodo.addItem("Automático", "auto")
         self.combo_periodo.currentIndexChanged.connect(self._on_periodo)
-        bloque_cliente.addWidget(self.combo_periodo)
+        bloque_cliente.addWidget(self.combo_periodo, 1, 1, 1, 2, Qt.AlignLeft)
+        # Lo que sobre, después de «Cambiar» (que va pegado al nombre).
+        bloque_cliente.setColumnStretch(3, 1)
+        self.combo_periodo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self._rotulos_cliente = (etiqueta, lbl_periodo)
+        # El cliente se queda con el sitio que sobre en la cinta.
+        self.layout_cinta.insertWidget(self.posicion_cliente, cliente_bar, 1)
         # Solo aparece si el lote trae facturas con recargo de equivalencia:
         # para el resto de clientes no significa nada y estorba.
         self.fila_recargo = QWidget()
@@ -234,7 +246,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.combo_recargo.currentIndexChanged.connect(self._on_recargo)
         lr_recargo.addWidget(self.combo_recargo, 1)
         self.fila_recargo.setVisible(False)
-        raiz.addWidget(cliente_bar)
         cuerpo.addWidget(self.fila_recargo)
 
         # Se conserva el contador para la lógica interna, pero no se duplica en
@@ -298,7 +309,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.layout_herramientas.setSpacing(6)
         self.layout_herramientas.setContentsMargins(0, 0, 0, 0)
         self.filas_herramientas = []
-        for _ in range(4):
+        # Filas de sobra: con la letra de Windows los filtros pueden ocupar
+        # cuatro o cinco filas en un portátil y las acciones necesitan las
+        # suyas (una fila vacía no ocupa sitio).
+        for _ in range(10):
             fila_herramientas = QHBoxLayout()
             fila_herramientas.setSpacing(8)
             fila_herramientas.setContentsMargins(0, 0, 0, 0)
@@ -314,6 +328,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.combo_filtro_estado.addItems(
             ["Todas las facturas", "Solo por revisar", "Solo con errores",
              "Solo correctas", "Fuera del trimestre"])
+        self.combo_filtro_estado.setToolTip("Qué facturas se ven en la tabla.")
         self.combo_filtro_estado.currentIndexChanged.connect(self._aplicar_filtro)
         self.combo_filtro_bloque = ComboSinRueda()
         self.combo_filtro_bloque.addItem(TODOS_LOS_BLOQUES)
@@ -321,11 +336,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Cada escaneo o PDF cargado es un bloque. Puede revisarlos de uno "
             "en uno y exportarlos todos juntos.")
         self.combo_filtro_bloque.currentIndexChanged.connect(self._aplicar_filtro)
-        self.combo_filtro_bloque.currentIndexChanged.connect(
-            lambda *_: self._pintar_lista_bloques())
         self.txt_buscar = QLineEdit()
         self.txt_buscar.setObjectName("buscadorLote")
-        self.txt_buscar.setMinimumWidth(260)
+        # Tamaño de buscador, no de barra: antes ocupaba todo el ancho.
+        self.txt_buscar.setFixedWidth(280)
         self.txt_buscar.addAction(
             QIcon(ruta_recurso("search.svg")), QLineEdit.LeadingPosition)
         self.txt_buscar.setPlaceholderText(
@@ -347,13 +361,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self.botones_tipo[valor] = boton
         self.botones_tipo["todos"].setChecked(True)
         self.grupo_tipo.buttonClicked.connect(self._aplicar_filtro)
-        barra_busqueda = QHBoxLayout()
-        barra_busqueda.setSpacing(8)
-        barra_busqueda.addWidget(self.txt_buscar, 1)
+        # Todos / Gastos / Ingresos, pequeños y juntos (al final salen dos
+        # Excel distintos: es solo para mirar).
+        self.caja_tipo = QWidget()
+        capa_tipo = QHBoxLayout(self.caja_tipo)
+        capa_tipo.setContentsMargins(0, 0, 0, 0)
+        capa_tipo.setSpacing(2)
         for boton in self.botones_tipo.values():
-            barra_busqueda.addWidget(boton)
-        barra_busqueda.addWidget(self.combo_filtro_estado)
-        cuerpo.addLayout(barra_busqueda)
+            capa_tipo.addWidget(boton)
         cuerpo.addWidget(self.alerta)
         self.banda = BandaAvisos(self)
         cuerpo.addWidget(self.banda)
@@ -421,32 +436,19 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.tabla.itemSelectionChanged.connect(self._mostrar_miniatura)
         lt.addWidget(self.tabla, 1)
 
-        # Lista lateral de bloques: cada PDF o escaneo con lo que le queda
-        # por revisar. Pulsar uno filtra la tabla; «Todo el lote» lo quita.
-        lista_card = QFrame()
-        self.lista_card = lista_card
-        lista_card.setObjectName("tarjeta")
-        lista_card.setMinimumWidth(150)
-        ll = QVBoxLayout(lista_card)
-        ll.setContentsMargins(8, 10, 8, 10)
-        ll.setSpacing(6)
-        titulo_lista = QLabel("Bloques del lote")
-        titulo_lista.setObjectName("tituloSeccion")
-        ll.addWidget(titulo_lista)
-        self.lista_bloques = QListWidget()
-        self.lista_bloques.setObjectName("listaBloques")
-        self.lista_bloques.setWordWrap(True)
-        self.lista_bloques.currentRowChanged.connect(self._on_lista_bloques)
-        ll.addWidget(self.lista_bloques, 1)
-        split.addWidget(lista_card)
         split.addWidget(tabla_card)
 
+        # Columna central: la factura entera en una sola tarjeta. Arriba la
+        # hoja escaneada y debajo lo que ha leído la IA (antes eran dos
+        # columnas; el usuario las quería unidas para dejar sitio a los
+        # totales).
         visor_card = QFrame()
         visor_card.setObjectName("tarjeta")
         visor_card.setMinimumWidth(290)
+        self.factura_card = visor_card
         lv = QVBoxLayout(visor_card)
-        lv.setContentsMargins(12, 12, 12, 12)
-        titulo_visor = QLabel("Documento original")
+        lv.setContentsMargins(12, 12, 12, 10)
+        titulo_visor = QLabel("Factura")
         titulo_visor.setObjectName("tituloSeccion")
         self.lbl_origen = QLabel("Arrastre aquí un PDF o imágenes para comenzar")
         self.lbl_origen.setObjectName("textoSuave")
@@ -521,93 +523,106 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.visor_scroll.installEventFilter(self)
         lv.addWidget(titulo_visor)
         lv.addLayout(barra_documento)
-        # Documento arriba y ficha de la factura debajo: lo leído, al lado de
-        # donde se ha leído.
-        self.split_visor = QSplitter(Qt.Vertical)
-        self.split_visor.setObjectName("splitVisor")
-        self.split_visor.setChildrenCollapsible(False)
-        self.split_visor.setHandleWidth(8)
-        self.split_visor.addWidget(self.visor_scroll)
-        ficha_card = QWidget()
-        lf = QVBoxLayout(ficha_card)
+        # Hoja arriba, lectura debajo; el divisor decide cuánto de cada.
+        self.split_factura = QSplitter(Qt.Vertical)
+        self.split_factura.setObjectName("splitFactura")
+        self.split_factura.setChildrenCollapsible(False)
+        self.split_factura.setHandleWidth(8)
+        self.split_factura.addWidget(self.visor_scroll)
+        lectura = QWidget()
+        lf = QVBoxLayout(lectura)
         lf.setContentsMargins(0, 4, 0, 0)
         lf.setSpacing(2)
-        titulo_ficha = QLabel("Ficha de la factura")
-        titulo_ficha.setObjectName("tituloSeccion")
+        titulo_ficha = QLabel("Lo que ha leído la IA")
+        titulo_ficha.setObjectName("tituloSubseccion")
         lf.addWidget(titulo_ficha)
         self.ficha = PanelFicha()
+        self.ficha.setMinimumHeight(110)
         self.ficha.discrepancia_resuelta.connect(self._resolver_discrepancia)
         lf.addWidget(self.ficha, 1)
-        self.split_visor.addWidget(ficha_card)
-        self.split_visor.setSizes(self._tamanos_divisor("split_visor", [280, 380]))
-        self.split_visor.splitterMoved.connect(
+        self.split_factura.addWidget(lectura)
+        self.split_factura.setStretchFactor(0, 3)
+        self.split_factura.setStretchFactor(1, 2)
+        self.split_factura.setSizes(
+            self._tamanos_divisor("split_factura", [520, 320]))
+        self.split_factura.splitterMoved.connect(
             lambda *_: self._timer_divisores.start())
-        lv.addWidget(self.split_visor, 1)
+        lv.addWidget(self.split_factura, 1)
         split.addWidget(visor_card)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 7)
-        split.setStretchFactor(2, 3)
-        split.setSizes(self._tamanos_divisor("split_revision_v2", [180, 860, 400]))
-        split.splitterMoved.connect(self._divisor_revision_movido)
 
-        resumen_card = QFrame()
-        resumen_card.setObjectName("tarjeta")
+        # Tercera columna, a toda la altura: los totales con el desglose
+        # completo, para cuadrar con la suma a mano y con Aplifisa.
+        lado_card = QFrame()
+        lado_card.setObjectName("tarjeta")
+        lado_card.setMinimumWidth(250)
+        self.lado_card = lado_card
+        lado = QVBoxLayout(lado_card)
+        lado.setContentsMargins(12, 12, 12, 10)
+
+        resumen_card = QWidget()
         lr = QVBoxLayout(resumen_card)
-        lr.setContentsMargins(12, 10, 12, 10)
-        lr.setSpacing(2)
-        fila_titulo = QHBoxLayout()
+        lr.setContentsMargins(0, 0, 0, 0)
+        lr.setSpacing(4)
         self.lbl_resumen_titulo = QLabel("Comprobación de totales")
         self.lbl_resumen_titulo.setObjectName("tituloSeccion")
         self.lbl_resumen_titulo.setWordWrap(True)
-        fila_titulo.addWidget(self.lbl_resumen_titulo, 1)
-        btn_cerrar_resumen = QPushButton("Ocultar")
+        cabecera_totales = QHBoxLayout()
+        cabecera_totales.setSpacing(4)
+        cabecera_totales.addWidget(self.lbl_resumen_titulo, 1)
+        # Ocultar, como una ✕ junto al título: abajo no cabía con los otros
+        # dos botones en una columna estrecha.
+        btn_cerrar_resumen = QPushButton("✕")
+        btn_cerrar_resumen.setObjectName("botonVisor")
+        btn_cerrar_resumen.setFixedWidth(26)
         btn_cerrar_resumen.setToolTip(
-            "Es solo una comprobación. Se vuelve a ver en el menú Ver.")
+            "Ocultar los totales. Es solo una comprobación: se vuelven a ver "
+            "en el menú Ver.")
         btn_cerrar_resumen.clicked.connect(lambda: self._ver_resumen(False))
-        fila_titulo.addWidget(btn_cerrar_resumen)
-        btn_copiar = QPushButton("Copiar resumen")
+        cabecera_totales.addWidget(btn_cerrar_resumen, 0, Qt.AlignTop)
+        lr.addLayout(cabecera_totales)
+        # Los totales, en vertical: un bloque por gastos e ingresos (y por
+        # periodo o filtro), con una línea por importe.
+        self.vista_totales = QTextBrowser()
+        self.vista_totales.setObjectName("vistaTotales")
+        self.vista_totales.setOpenLinks(False)
+        self.vista_totales.setFrameShape(QFrame.NoFrame)
+        lr.addWidget(self.vista_totales, 1)
+        fila_botones = QHBoxLayout()
+        fila_botones.setSpacing(6)
+        btn_copiar = QPushButton("Copiar")
+        btn_copiar.setObjectName("compacto")
         btn_copiar.setToolTip(
             "Copia el resumen al portapapeles para pegarlo donde haga falta.")
         btn_copiar.clicked.connect(self._copiar_resumen)
-        fila_titulo.addWidget(btn_copiar)
+        fila_botones.addWidget(btn_copiar)
         self.btn_listado_totales = QPushButton("Listado PDF")
+        self.btn_listado_totales.setObjectName("compacto")
         self.btn_listado_totales.setToolTip(
             "Guarda un listado imprimible con los totales y las facturas "
             "mostradas en la tabla.")
         self.btn_listado_totales.clicked.connect(self._guardar_listado_totales)
-        fila_titulo.addWidget(self.btn_listado_totales)
-        lr.addLayout(fila_titulo)
+        fila_botones.addWidget(self.btn_listado_totales)
+        fila_botones.addStretch(1)
+        lr.addLayout(fila_botones)
+        # La tabla de siempre sigue siendo el dato (Copiar, Listado PDF y
+        # las pruebas la leen); en pantalla se ve la versión vertical.
         self.tabla_resumen = QTableWidget(0, len(COLS_RESUMEN_INICIO) + 1
-                                          + len(COLS_RESUMEN_FIN))
+                                          + len(COLS_RESUMEN_FIN), resumen_card)
         self.tabla_resumen.setHorizontalHeaderLabels(
             _cabeceras_resumen([]))
-        self.tabla_resumen.setShowGrid(False)
-        self.tabla_resumen.verticalHeader().setVisible(False)
         self.tabla_resumen.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabla_resumen.setSelectionMode(QTableWidget.NoSelection)
-        self.tabla_resumen.setAlternatingRowColors(True)
-        # Sin ajuste de linea: un nombre de PDF largo no debe estirar la fila.
-        self.tabla_resumen.setWordWrap(False)
-        self.tabla_resumen.verticalHeader().setDefaultSectionSize(28)
-        self.tabla_resumen.setMinimumHeight(60)
-        self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        lr.addWidget(self.tabla_resumen, 1)
+        self.tabla_resumen.hide()
         self.resumen_card = resumen_card
-        resumen_card.setVisible(bool(ajustes.leer("ver_resumen", True)))
-
-        self.split_contenido = QSplitter(Qt.Vertical)
-        self.split_contenido.setObjectName("splitContenido")
-        self.split_contenido.setChildrenCollapsible(False)
-        self.split_contenido.setHandleWidth(8)
-        self.split_contenido.addWidget(split)
-        self.split_contenido.addWidget(resumen_card)
-        self.split_contenido.setStretchFactor(0, 1)
-        self.split_contenido.setStretchFactor(1, 0)
-        self.split_contenido.setSizes(
-            self._tamanos_divisor("split_contenido", [610, 150]))
-        self.split_contenido.splitterMoved.connect(
-            lambda *_: self._timer_divisores.start())
-        cuerpo.addWidget(self.split_contenido, 1)
+        lado.addWidget(resumen_card, 1)
+        split.addWidget(lado_card)
+        # «Ocultar» quita la columna entera; se vuelve a ver en el menú Ver.
+        lado_card.setVisible(bool(ajustes.leer("ver_totales_lado", True)))
+        split.setStretchFactor(0, 5)
+        split.setStretchFactor(1, 3)
+        split.setStretchFactor(2, 2)
+        split.setSizes(self._tamanos_divisor("split_revision_v4", TAMANOS_COLUMNAS))
+        split.splitterMoved.connect(self._divisor_revision_movido)
+        cuerpo.addWidget(split, 1)
 
         barra_estado = QFrame()
         barra_estado.setObjectName("barraEstado")
@@ -616,12 +631,17 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         pie.setSpacing(14)
         self.lbl_estado = QLabel("Cargue o escanee un lote de facturas para empezar.")
         self.lbl_estado.setObjectName("textoSuave")
+        # Un mensaje largo no ensancha la ventana: se recorta por la derecha.
+        self.lbl_estado.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_estado.setMinimumWidth(0)
         pie.addWidget(self.lbl_estado, 1)
         self.lbl_contadores = QLabel("")
         self.lbl_contadores.setObjectName("contadores")
         self.lbl_contadores.setToolTip(
             "Verificada: las dos lecturas coinciden y todo cuadra.\n"
             "Sin verificar: todo cuadra, pero solo la leyó un modelo.\n"
+            "Revisada: la ha confirmado usted con «Marcar revisada».\n"
+            "Corregida: ha cambiado usted algún dato; cuenta como revisada.\n"
             "Revisar: hay algo que mirar antes de exportar.\n"
             "Error: no se puede exportar hasta corregirlo.")
         pie.addWidget(self.lbl_contadores)
@@ -641,89 +661,148 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._actualizar_barra_responsiva(self.width())
         self._distribuir_herramientas(self.width())
         # Tras el primer layout Qt ya conoce el ancho real del panel izquierdo.
-        QTimer.singleShot(
-            0, lambda: self._distribuir_herramientas(self.width()))
+        # Temporizador hijo de la ventana: si se cierra antes, no salta.
+        self._timer_herramientas = QTimer(self)
+        self._timer_herramientas.setSingleShot(True)
+        self._timer_herramientas.timeout.connect(
+            lambda: self._distribuir_herramientas(self.width()))
+        self._timer_herramientas.start(0)
 
     def _distribuir_herramientas(self, ancho: int):
-        """Muestra todas las acciones habituales sin estirarlas ni ocultarlas."""
+        """Filtros a la izquierda y, debajo, las acciones, sin cortar textos.
+
+        Con tres columnas la de la tabla es más estrecha: lo que no cabe en
+        una fila pasa a la siguiente (nunca se encoge ni se oculta nada).
+        """
         if not hasattr(self, "tabla"):
             return
         if hasattr(self, "btn_senalar"):
             # En un visor estrecho el botón se abrevia en vez de cortarse.
-            texto = ("¿De dónde sale?" if self.split_visor.width() >= 390
+            visor = self.visor_scroll.parentWidget()
+            texto = ("¿De dónde sale?" if visor is not None and visor.width() >= 430
                      else "¿Dónde?")
             if self.btn_senalar.text() != texto:
                 self.btn_senalar.setText(texto)
             self.btn_senalar.setMinimumWidth(self.btn_senalar.sizeHint().width())
-        elementos = (
-            self.lbl_mostrar, self.combo_filtro_bloque, self.combo_filtro_registro,
+        filtros = (
+            self.lbl_mostrar, self.combo_filtro_estado, self.caja_tipo,
+            self.txt_buscar, self.combo_filtro_bloque, self.combo_filtro_registro,
+        )
+        acciones = (
             self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
             self.btn_limpiar_filtros, self.btn_quitar_bloque,
             self.btn_eliminar, self.btn_deshacer_borrado,
         )
         for fila in self.filas_herramientas:
-            for elemento in elementos:
+            for elemento in filtros + acciones:
                 fila.removeWidget(elemento)
         self.combo_filtro_bloque.setMinimumWidth(135)
         self.combo_filtro_bloque.setMaximumWidth(220)
         ancho_tabla = min(ancho, self.tabla.parentWidget().width())
         disponible = max(320, ancho_tabla - 24)
-        fila_actual = 0
-        usado = 0
-        habituales = (
-            self.lbl_mostrar, self.combo_filtro_bloque, self.btn_siguiente,
-            self.btn_revisada, self.btn_unir_hojas,
-            self.btn_limpiar_filtros, self.btn_quitar_bloque,
-            self.btn_eliminar, self.btn_deshacer_borrado,
-        )
-        for widget in habituales:
-            if widget is self.btn_deshacer_borrado and not widget.isEnabled():
-                continue
-            maximo = widget.maximumWidth()
-            preferido = max(widget.minimumWidth(), widget.sizeHint().width())
-            if maximo < 16_777_215:
-                preferido = min(preferido, maximo)
-            necesario = preferido + (8 if usado else 0)
-            if usado and usado + necesario > disponible and fila_actual < 3:
-                fila_actual += 1
-                usado = 0
-                necesario = preferido
-            fila = self.filas_herramientas[fila_actual]
-            fila.insertWidget(fila.count() - 1, widget)
-            usado += necesario
-        fila_registro = min(fila_actual + 1, len(self.filas_herramientas) - 1)
-        fila = self.filas_herramientas[fila_registro]
-        fila.insertWidget(fila.count() - 1, self.combo_filtro_registro)
+        def oculto(widget) -> bool:
+            # Ocultado a propósito (no solo porque la ventana aún no se ve).
+            return (widget.testAttribute(Qt.WA_WState_ExplicitShowHide)
+                    and widget.testAttribute(Qt.WA_WState_Hidden))
+
+        fila_actual = -1
+        ultima = len(self.filas_herramientas) - 1
+        for grupo in (filtros, acciones):
+            fila_actual = min(fila_actual + 1, ultima)
+            usado = 0
+            for widget in grupo:
+                if widget is self.btn_deshacer_borrado and not widget.isEnabled():
+                    continue
+                if oculto(widget):
+                    # En su sitio pero sin contar: no ocupa hasta que se vea.
+                    fila = self.filas_herramientas[fila_actual]
+                    fila.insertWidget(fila.count() - 1, widget)
+                    continue
+                maximo = widget.maximumWidth()
+                preferido = max(widget.minimumWidth(), widget.sizeHint().width())
+                if maximo < 16_777_215:
+                    preferido = min(preferido, maximo)
+                necesario = preferido + (8 if usado else 0)
+                if usado and usado + necesario > disponible and fila_actual < ultima:
+                    fila_actual += 1
+                    usado = 0
+                    necesario = preferido
+                fila = self.filas_herramientas[fila_actual]
+                fila.insertWidget(fila.count() - 1, widget)
+                usado += necesario
 
     def _actualizar_barra_responsiva(self, ancho: int):
-        """En poca altura los accesos, sin marca duplicada, comparten el menú."""
+        """Nunca se cortan los textos de la cinta.
+
+        En ventanas estrechas los botones de uso ocasional se quedan solo con
+        el icono (su nombre sale al pasar el ratón); en poca altura, iconos
+        algo más pequeños.
+        """
         if not hasattr(self, "fila_barra_estrecha"):
             return
-        compacta = self.height() < 760
-        for marca in self._marcas_barra:
-            marca.setVisible(not compacta)
-        # Compacta: botones con el texto al lado y sin rótulos de grupo, para
-        # caber en la barra de menús.
-        for boton in self._botones_grandes:
-            boton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if compacta
-                                     else Qt.ToolButtonTextUnderIcon)
-            boton.setIconSize(QSize(16, 16) if compacta else QSize(26, 26))
-        for widget in self._pilas_cinta + self._etiquetas_grupo:
-            widget.setVisible(not compacta)
+        # Al cambiar los botones, Windows puede redimensionar la ventana en
+        # el acto (resizeEvent dentro de esta misma llamada) y esa llamada
+        # anidada pisaría la decisión a medias. Se aplaza y se repite luego
+        # con el ancho real.
+        if getattr(self, "_ajustando_barra", False):
+            self._barra_pendiente = True
+            return
+        self._ajustando_barra = True
+        try:
+            self._ajustar_barra(ancho)
+        finally:
+            self._ajustando_barra = False
+        if getattr(self, "_barra_pendiente", False):
+            self._barra_pendiente = False
+            if not hasattr(self, "_timer_barra"):
+                self._timer_barra = QTimer(self)
+                self._timer_barra.setSingleShot(True)
+                self._timer_barra.timeout.connect(
+                    lambda: self._actualizar_barra_responsiva(self.width()))
+            self._timer_barra.start(0)
+
+    def _ajustar_barra(self, ancho: int) -> None:
+        baja = self.height() < 760
+        icono = QSize(18, 18) if baja else QSize(ICONO_CINTA, ICONO_CINTA)
+        principales = (self.btn_cargar, self.btn_escanear, self.btn_gastos)
+
+        def aplicar(nivel: int) -> None:
+            # 0: todo con su nombre; 1: los ocasionales solo con el icono;
+            # 2: también el resto, menos Abrir, Escanear y Exportar.
+            for boton in self._botones_grandes:
+                boton.setIconSize(icono)
+                solo = ((nivel >= 1 and boton in self._botones_secundarios)
+                        or (nivel >= 2 and boton not in principales))
+                boton.setToolButtonStyle(Qt.ToolButtonIconOnly if solo
+                                         else Qt.ToolButtonTextUnderIcon)
+                if boton.property("soloIcono") != solo:
+                    boton.setProperty("soloIcono", solo)
+                    boton.style().unpolish(boton)
+                    boton.style().polish(boton)
+            for rotulo in getattr(self, "_rotulos_cliente", ()):
+                rotulo.setVisible(nivel < 2)
+
+        # Se quitan nombres solo si de verdad no caben: así nunca se corta un
+        # texto ni se pierden sin necesidad. Antes de recortar el nombre del
+        # cliente se pasan a icono los ocasionales (el cliente importa más).
+        disponible = max(ancho, self.minimumWidth())
+        etiqueta = getattr(self, "lbl_cliente", None)
+        # Hasta 420 px de nombre: uno larguísimo no manda los ocasionales a
+        # icono en ventanas grandes (se recorta con «…» y sale en el globo).
+        holgura = 0 if etiqueta is None else max(
+            0, min(etiqueta.sizeHint().width(), 420)
+            - etiqueta.minimumSizeHint().width())
+        for nivel in (0, 1, 2):
+            aplicar(nivel)
+            necesario = self.barra_rapida.layout().minimumSize().width()
+            if nivel < 1:
+                necesario += holgura
+            if necesario <= disponible:
+                break
         self.barra_rapida.layout().setContentsMargins(
-            6 if compacta else 16, 0 if compacta else 6,
-            8 if compacta else 16, 0)
-        if compacta != getattr(self, "_barra_en_menu", False):
-            if compacta:
-                self.layout_barra_estrecha.removeWidget(self.barra_rapida)
-                self.menuBar().setCornerWidget(self.barra_rapida, Qt.TopRightCorner)
-            else:
-                self.barra_rapida.setParent(self.fila_barra_estrecha)
-                self.menuBar().setCornerWidget(None, Qt.TopRightCorner)
-                self.layout_barra_estrecha.addWidget(self.barra_rapida)
-            self._barra_en_menu = compacta
+            8, 2 if baja else 4, 8, 2 if baja else 4)
         self.barra_rapida.show()
-        self.fila_barra_estrecha.setVisible(not compacta)
+        self.fila_barra_estrecha.setVisible(True)
         if hasattr(self, "tabla_resumen"):
             self._ajustar_altura_resumen()
 
@@ -749,12 +828,25 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_divisores.start()
 
     def _guardar_divisores(self):
+        # Claves nuevas en la 1.18: los tamaños de antes eran de otras
+        # columnas (con la lista de bloques) y no deben heredarse.
         if hasattr(self, "split_revision"):
-            ajustes.guardar("split_revision_v2", self.split_revision.sizes())
-        if hasattr(self, "split_contenido"):
-            ajustes.guardar("split_contenido", self.split_contenido.sizes())
-        if hasattr(self, "split_visor"):
-            ajustes.guardar("split_visor", self.split_visor.sizes())
+            tamanos = self.split_revision.sizes()
+            # Con los totales ocultos su columna mide 0: se guarda el ancho
+            # que tenían y las otras dos, en proporción, sin ese sitio.
+            if len(tamanos) == 3 and tamanos[2] == 0:
+                ancho = self._tamanos_divisor(
+                    "split_revision_v4", TAMANOS_COLUMNAS)[2]
+                resto = tamanos[0] + tamanos[1]
+                if resto > 2 * ancho:
+                    escala = (resto - ancho) / resto
+                    tamanos = [round(tamanos[0] * escala),
+                               round(tamanos[1] * escala), ancho]
+                else:
+                    tamanos[2] = ancho
+            ajustes.guardar("split_revision_v4", tamanos)
+        if hasattr(self, "split_factura"):
+            ajustes.guardar("split_factura", self.split_factura.sizes())
 
     def showEvent(self, evento):
         super().showEvent(evento)
@@ -839,7 +931,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         ver = self.menuBar().addMenu("Ver")
         self.accion_resumen = ver.addAction("Comprobación de totales del lote")
         self.accion_resumen.setCheckable(True)
-        self.accion_resumen.setChecked(bool(ajustes.leer("ver_resumen", True)))
+        self.accion_resumen.setChecked(bool(ajustes.leer("ver_totales_lado", True)))
         self.accion_resumen.toggled.connect(self._ver_resumen)
         self.accion_detalle_bloques = ver.addAction("Desglosar totales por escaneo")
         self.accion_detalle_bloques.setCheckable(True)
@@ -1234,17 +1326,35 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.lbl_gasto.setText(costes.resumen(modelo, coste_lote))
 
     def _ver_resumen(self, visible: bool):
-        """El resumen es solo un punto de control: si estorba, se quita."""
-        ajustes.guardar("ver_resumen", bool(visible))
-        if hasattr(self, "resumen_card"):
-            self.resumen_card.setVisible(bool(visible))
-            if visible and hasattr(self, "split_contenido"):
-                tamanos = self.split_contenido.sizes()
-                if len(tamanos) == 2 and tamanos[1] < 80:
-                    total = max(sum(tamanos), 600)
-                    self.split_contenido.setSizes([max(300, total - 150), 150])
+        """Los totales son un punto de control: si estorban, se quitan."""
+        ajustes.guardar("ver_totales_lado", bool(visible))
+        if hasattr(self, "lado_card"):
+            if visible and not self.lado_card.isVisible():
+                # Antes de enseñarla, los filtros ya para la tabla más
+                # estrecha: en una sola fila, su mínimo no dejaría estrecharla
+                # y el sitio saldría de la factura.
+                ancho = self._tamanos_divisor(
+                    "split_revision_v4", TAMANOS_COLUMNAS)[2]
+                self._distribuir_herramientas(
+                    self.tabla.parentWidget().width() - max(ancho, 250))
+            # QSplitter recuerda el ancho de la columna oculta y lo devuelve.
+            self.lado_card.setVisible(bool(visible))
+            if not hasattr(self, "_timer_tras_resumen"):
+                self._timer_tras_resumen = QTimer(self)
+                self._timer_tras_resumen.setSingleShot(True)
+                self._timer_tras_resumen.timeout.connect(self._tras_ver_resumen)
+            self._timer_tras_resumen.start(0)
         if hasattr(self, "accion_resumen") and self.accion_resumen.isChecked() != visible:
             self.accion_resumen.setChecked(bool(visible))
+
+    def _tras_ver_resumen(self) -> None:
+        """Ya colocadas las columnas: totales legibles y filtros recolocados."""
+        tamanos = self.split_revision.sizes()
+        if self.lado_card.isVisible() and len(tamanos) == 3 and tamanos[2] < 200:
+            tamanos[0] = max(400, tamanos[0] - (300 - tamanos[2]))
+            tamanos[2] = 300
+            self.split_revision.setSizes(tamanos)
+        self._distribuir_herramientas(self.width())
 
     def _configurar_textos(self):
         """La lista de textos que hay que parametrizar una vez en Aplifisa."""
@@ -1281,11 +1391,22 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """Cliente del lote. Si hay bloques de varios, se dice claramente."""
         nifs = {b["nif"] for b in self._bloques if b["nif"]}
         if len(nifs) > 1:
-            self.lbl_cliente.setText(f"⚠ VARIOS CLIENTES en el lote ({len(nifs)})")
+            self._poner_cliente(f"⚠ VARIOS CLIENTES en el lote ({len(nifs)})")
             return
-        self.lbl_cliente.setText(
+        self._poner_cliente(
             f"{self._cliente_nombre or 'Cliente no identificado'}"
             + (f"  ·  {self._cliente_nif}" if self._cliente_nif else ""))
+
+    def _poner_cliente(self, texto: str) -> None:
+        """El cliente en la cinta, con el texto entero en el globo (en una
+        ventana estrecha el nombre se recorta)."""
+        self.lbl_cliente.setText(texto)
+        self.lbl_cliente.setToolTip(texto)
+        # La caja del cliente rehace ya su tamaño (si no, la cinta mediría
+        # con el del texto anterior): un nombre más largo puede pedir pasar
+        # los ocasionales a icono.
+        self.lbl_cliente.parentWidget().layout().activate()
+        self._actualizar_barra_responsiva(self.width())
 
     def _actualizar_selector_periodo(self) -> None:
         """Propone trimestre/anual y conserva cualquier elección manual."""
@@ -1331,8 +1452,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _quitar_bloque(self):
         nombre = self.combo_filtro_bloque.currentText()
         if nombre == TODOS_LOS_BLOQUES or not self._bloques:
-            self._avisar("Para quitar un bloque, elíjalo primero en la lista "
-                         "de bloques o en el desplegable.", AVISO)
+            self._avisar("Para quitar un bloque, elíjalo primero en el "
+                         "desplegable «Todos los bloques».", AVISO)
             return
         # Sin «¿Seguro?»: se quita y se ofrece deshacerlo en la banda.
         quitados = [(i, b) for i, b in enumerate(self._bloques)
@@ -1405,7 +1526,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._revalidar_todo()
         self.btn_gastos.setEnabled(False)
         self.btn_registro.setEnabled(False)
-        self.lbl_cliente.setText("Pendiente de detectar")
+        self._poner_cliente("Pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
         sesion.borrar()
 
@@ -1416,8 +1537,38 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _rellenar_tabla(self):
         self._invalidar_contraste_registro()
-        self._poner_filas(filas_de_bloques(
-            self._bloques, self._por_el_total(), a_total_factura))
+        filas = filas_de_bloques(
+            self._bloques, self._por_el_total(), a_total_factura)
+        self._conservar_resumenes_corregidos(filas)
+        self._poner_filas(filas)
+
+    def _conservar_resumenes_corregidos(self, filas) -> None:
+        """Recargo «por el total»: la línea a la vista es una copia que se
+        rehace desde sus líneas originales (`fuentes`) cada vez que se monta
+        la tabla (otro taco, quitar un bloque, unir hojas…). Si una persona
+        corrigió un importe en ella, se conserva su corrección en vez de
+        volver en silencio a lo que leyó la IA."""
+        def clave(fila):
+            return tuple(id(x) for x in fila.fuentes)
+
+        def es_copia(fila):
+            return bool(fila.fuentes) and not any(
+                x is fila.factura for x in fila.fuentes)
+
+        antes = {}
+        for fila in self.filas:
+            if es_copia(fila):
+                antes.setdefault(clave(fila), []).append(fila.factura)
+        ahora = {}
+        for fila in filas:
+            if es_copia(fila):
+                ahora.setdefault(clave(fila), []).append(fila)
+        for k, grupo in ahora.items():
+            previas = antes.get(k)
+            if previas and len(previas) == len(grupo) and any(
+                    f.edicion_manual for f in previas):
+                for fila, factura in zip(grupo, previas):
+                    fila.factura = factura
 
     def _poner_filas(self, filas) -> None:
         """Sustituye las filas del lote y las pinta de nuevo."""
@@ -1486,14 +1637,34 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     # ---------- edicion / validacion ----------
     def _invalidar_revision_documento(self, fila):
+        """Un cambio que no hizo la persona en ESTA factura (se propagó
+        desde otra): vuelve a estar pendiente de revisar."""
+        self._marcar_documento(fila, corregida=False)
+
+    def _marcar_corregida_documento(self, fila):
+        """La persona ha corregido un dato: la factura entera (todas sus
+        líneas) pasa a «✎ Corregida» y cuenta como revisada."""
+        self._marcar_documento(fila, corregida=True)
+
+    def _marcar_documento(self, fila, corregida: bool,
+                          incluir_fuentes: bool = True):
         clave = clave_documento(self.filas[fila]["factura"])
-        for registro in self.filas:
-            if clave_documento(registro["factura"]) == clave:
-                registro["factura"].revision_confirmada = False
-                registro["factura"].edicion_manual = True
-                for fuente in registro.get("fuentes", []):
-                    fuente.revision_confirmada = False
-                    fuente.edicion_manual = True
+        filas_doc = [r for r in self.filas
+                     if clave_documento(r["factura"]) == clave]
+        # Lo que la persona tenía delante al corregir: solo eso se da por
+        # visto (los avisos de la última revisión de sus líneas).
+        vistos = tuple(sorted({
+            str(m) for r in filas_doc for m in (r.get("mensajes") or [])
+            if str(m) not in MENSAJES_DE_ESTADO})) if corregida else ()
+        for registro in filas_doc:
+            facturas = [registro["factura"]]
+            if incluir_fuentes:
+                facturas += registro.get("fuentes", [])
+            for factura in facturas:
+                factura.revision_confirmada = False
+                factura.revision_corregida = corregida
+                factura.avisos_vistos = vistos
+                factura.edicion_manual = True
 
     def _on_celda(self, item):
         """Lo que se corrige a mano se guarda para ese proveedor.
@@ -1503,12 +1674,27 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """
         self._invalidar_contraste_registro()
         columna = item.column()
+        cambiado = False
+        a_las_fuentes = True
         if item.row() < len(self.filas):
             # Lo escrito pasa a la factura en el momento: la tabla solo enseña.
             campo, valor = valor_de_celda(columna, item.text())
             if campo:
-                setattr(self.filas[item.row()].factura, campo, valor)
-            self._invalidar_revision_documento(item.row())
+                registro = self.filas[item.row()]
+                factura = registro.factura
+                cambiado = getattr(factura, campo, None) != valor
+                setattr(factura, campo, valor)
+                fuentes = registro.get("fuentes") or []
+                if not any(x is factura for x in fuentes):
+                    # Recargo «por el total»: la línea a la vista es un
+                    # resumen y se rehace desde sus líneas originales. Los
+                    # datos de la cabecera pasan a ellas; un importe no
+                    # (no hay a qué línea ponerlo), y la marca tampoco.
+                    if campo in CAMPOS_CABECERA:
+                        for fuente in fuentes:
+                            setattr(fuente, campo, valor)
+                    else:
+                        a_las_fuentes = False
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
         elif columna == C_NOMBRE:
@@ -1517,6 +1703,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             aviso = self._cuenta_escrita_a_mano(item.row())
         else:
             aviso = ""
+        # Al final, después de copiar el dato a otras facturas (eso las deja
+        # pendientes): ESTA queda «Corregida», que cuenta como revisada. Si
+        # se escribe lo mismo que había, no cambia nada.
+        if cambiado and item.row() < len(self.filas):
+            self._marcar_documento(item.row(), corregida=True,
+                                   incluir_fuentes=a_las_fuentes)
         self._revalidar_todo()
         if aviso:
             self.lbl_estado.setText(aviso)  # despues: _resumen pisa la barra
@@ -1525,11 +1717,16 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._invalidar_contraste_registro()
         fila = self._fila_del_control_tipo(control)
         if 0 <= fila < len(self.filas):
-            self._invalidar_revision_documento(fila)
+            self._marcar_corregida_documento(fila)
             self.filas[fila].tipo = control.currentData()
             self.filas[fila]["factura"].tipo_revision = control.currentData()
             for fuente in self.filas[fila].get("fuentes", []):
                 fuente.tipo_revision = control.currentData()
+            if self._por_el_total():
+                # En recargo «por el total» solo los gastos van resumidos: al
+                # cambiar el tipo, la línea se rehace desde las originales
+                # (una venta recupera su IVA; un gasto se resume).
+                self._rellenar_tabla()
         self._revalidar_todo()
 
     def _nombre_escrito_a_mano(self, r) -> str:
@@ -1671,7 +1868,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 opcion == 0
                 or (opcion == 1 and estado == POR_REVISAR)
                 or (opcion == 2 and estado == CON_ERROR)
-                or (opcion == 3 and estado in {VERIFICADA, SIN_VERIFICAR, REVISADA})
+                or (opcion == 3 and estado in {VERIFICADA, SIN_VERIFICAR,
+                                               REVISADA, CORREGIDA})
                 or (opcion == 4 and self._periodo_lote.es_trimestre
                     and not self._periodo_lote.contiene(self.filas[fila]["factura"]))
             )
@@ -1721,12 +1919,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         inicio = self.tabla.currentRow()
         for salto in range(1, total + 1):
             fila = (inicio + salto) % total
-            registro = self.filas[fila]
-            f = registro["factura"]
-            pendiente = (registro.get("estado") == ERROR or
-                         (registro.get("estado") == REVISAR
-                          and not f.revision_confirmada))
-            if pendiente:
+            # Lo revisado y lo corregido a mano ya no son incidencias.
+            if self.filas[fila].presentacion in PENDIENTES:
                 # Una búsqueda no debe esconder la incidencia que se visita.
                 self._limpiar_filtros()
                 self.tabla.selectRow(fila)
@@ -1767,9 +1961,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         for fila in filas:
             registro = self.filas[fila]
             f = self._leer_fila(fila)
-            if registro.get("estado") == REVISAR and not f.revision_confirmada:
+            if registro.get("estado") == REVISAR and not f.revision_confirmada \
+                    and registro.presentacion != CORREGIDA:
                 f.revision_confirmada = True
                 confirmadas.append(f)
+        ya_corregidas = any(self.filas[fila].presentacion == CORREGIDA
+                            for fila in filas)
         self._revalidar_todo()
         if confirmadas:
             texto = (f"{len(confirmadas)} línea(s) revisada(s): ya pueden "
@@ -1783,6 +1980,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._avisar("Revisión deshecha: vuelven a estar pendientes.",
                              INFO)
             self._avisar(texto, EXITO, deshacer=deshacer)
+        elif ya_corregidas:
+            self._avisar("Ya cuenta como revisada (corregida a mano): puede "
+                         "exportarse.", INFO)
         else:
             self._avisar(
                 "Solo se pueden confirmar avisos ámbar. Los errores rojos se "
@@ -1838,73 +2038,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.lbl_estado.setText(f"{cantidad} línea(s) restaurada(s).")
         self._avisar(f"{cantidad} línea(s) restaurada(s).", EXITO)
 
-    def _pintar_lista_bloques(self) -> None:
-        """Cada bloque con sus facturas y lo que queda por revisar."""
-        if not hasattr(self, "lista_bloques"):
-            return
-        cuentas = {}
-        for registro in self.filas:
-            c = cuentas.setdefault(registro.get("bloque", ""), Counter())
-            f = registro["factura"]
-            estado = registro.get("estado", OK)
-            c["lineas"] += 1
-            if estado == ERROR:
-                c["error"] += 1
-            elif estado == REVISAR and not f.revision_confirmada:
-                c["revisar"] += 1
-
-        def texto(nombre, c):
-            partes = [f"{c['lineas']} líneas"]
-            if c["error"]:
-                partes.append(f"✕ {c['error']}")
-            if c["revisar"]:
-                partes.append(f"! {c['revisar']}")
-            if not c["error"] and not c["revisar"] and c["lineas"]:
-                partes.append("✓ listo")
-            return f"{nombre}\n" + " · ".join(partes)
-
-        total = Counter()
-        for c in cuentas.values():
-            total.update(c)
-        actual = self.combo_filtro_bloque.currentText()
-        self.lista_bloques.blockSignals(True)
-        self.lista_bloques.clear()
-        entradas = [(TODOS_LOS_BLOQUES, "Todo el lote", total)]
-        for i in range(1, self.combo_filtro_bloque.count()):
-            nombre = self.combo_filtro_bloque.itemText(i)
-            entradas.append((nombre, nombre, cuentas.get(nombre, Counter())))
-        seleccion = 0
-        for fila, (clave, nombre, c) in enumerate(entradas):
-            item = QListWidgetItem(texto(nombre, c))
-            item.setData(Qt.UserRole, clave)
-            color = (DANGER if c["error"] else WARNING if c["revisar"]
-                     else SUCCESS if c["lineas"] else MUTED)
-            item.setForeground(QColor(color))
-            item.setToolTip(f"{nombre}: {c['lineas']} líneas, "
-                            f"{c['error']} con error, {c['revisar']} por revisar")
-            self.lista_bloques.addItem(item)
-            if clave == actual:
-                seleccion = fila
-        self.lista_bloques.setCurrentRow(seleccion)
-        self.lista_bloques.blockSignals(False)
-
-    def _on_lista_bloques(self, fila: int) -> None:
-        item = self.lista_bloques.item(fila) if fila >= 0 else None
-        if not item:
-            return
-        clave = item.data(Qt.UserRole)
-        indice = self.combo_filtro_bloque.findText(clave)
-        if indice >= 0 and indice != self.combo_filtro_bloque.currentIndex():
-            self.combo_filtro_bloque.setCurrentIndex(indice)
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         ancho = event.size().width()
         self._actualizar_barra_responsiva(ancho)
-        # En ventanas estrechas la lista de bloques deja su sitio a la tabla:
-        # el mismo filtro sigue en el desplegable «Todos los bloques».
-        if hasattr(self, "lista_card"):
-            self.lista_card.setVisible(ancho >= ANCHO_LISTA_BLOQUES)
         self._distribuir_herramientas(ancho)
         if self.tabla.currentRow() >= 0:
             self._mostrar_miniatura()

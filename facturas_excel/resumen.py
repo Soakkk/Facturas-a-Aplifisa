@@ -25,6 +25,9 @@ class Totales:
     requiv: float = 0.0
     suplidos: float = 0.0
     iva_por_tipo: Dict[float, float] = field(default_factory=dict)
+    # Cuota de las líneas sin % (en rojo hasta que se ponga): sin esto el
+    # desglose por tipos no sumaría el total IVA.
+    iva_sin_tipo: float = 0.0
 
     @property
     def total(self) -> float:
@@ -57,13 +60,15 @@ def _acumular(t: Totales, f: Factura) -> None:
     if f.pct_iva is not None and f.cuota_iva is not None:
         tipo = round(float(f.pct_iva), 4)
         t.iva_por_tipo[tipo] = t.iva_por_tipo.get(tipo, 0.0) + f.cuota_iva
+    elif f.cuota_iva:
+        t.iva_sin_tipo += f.cuota_iva
     t.irpf += f.cuota_irpf or 0.0
     t.requiv += f.cuota_requiv or 0.0
     t.suplidos += f.suplidos or 0.0    # respaldo por si viniera en su campo
 
 
 def _redondear(t: Totales) -> Totales:
-    for campo in ("base", "iva", "irpf", "requiv", "suplidos"):
+    for campo in ("base", "iva", "irpf", "requiv", "suplidos", "iva_sin_tipo"):
         setattr(t, campo, round(getattr(t, campo), 2))
     t.iva_por_tipo = {tipo: round(cuota, 2)
                       for tipo, cuota in t.iva_por_tipo.items()}
@@ -100,6 +105,11 @@ def eur(v: float) -> str:
     grupos.insert(0, entero)
     signo = "-" if v < 0 else ""
     return f"{signo}{'.'.join(grupos)},{dec} €"
+
+
+def eur_con_signo(v: float) -> str:
+    """Importe con el menos tipográfico delante cuando es negativo («−22,50 €»)."""
+    return f"−{eur(-v)}" if v < 0 else eur(v)
 
 
 def porcentaje_iva(tipo: float) -> str:

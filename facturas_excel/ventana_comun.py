@@ -6,14 +6,16 @@ import os
 import re
 import sys
 
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtWidgets import QLabel
 
 from facturas_excel.estilo import ACCENT, SUCCESS, WARNING, DANGER
 from facturas_excel.ficha_incidencias import TITULOS as TITULOS_ESTADO
 from facturas_excel.resumen import porcentaje_iva
 from facturas_excel.lote import (
-    CON_ERROR, POR_REVISAR, REVISADA, SIN_VERIFICAR, TEXTO_PRESENTACION,
-    VERIFICADA,
+    CON_ERROR, CORREGIDA, POR_REVISAR, REVISADA, SIN_VERIFICAR,
+    TEXTO_PRESENTACION, VERIFICADA,
 )
 from facturas_excel.validacion import ERROR, OK, REVISAR
 
@@ -30,6 +32,8 @@ ICONO_ESTADO = {OK: TEXTO_PRESENTACION[VERIFICADA],
                 ERROR: TEXTO_PRESENTACION[CON_ERROR]}
 ICONO_SIN_VERIFICAR = TEXTO_PRESENTACION[SIN_VERIFICAR]
 ICONO_REVISADO = TEXTO_PRESENTACION[REVISADA]
+ICONO_CORREGIDO = TEXTO_PRESENTACION[CORREGIDA]
+COLOR_CORREGIDA = "#2F6F6B"
 # (texto, color, fondo) de cada presentación.
 ESTILO_PRESENTACION = {
     VERIFICADA: (QColor(SUCCESS), "#E4F1EA"),
@@ -37,9 +41,11 @@ ESTILO_PRESENTACION = {
     POR_REVISAR: (QColor(WARNING), "#FBEFDC"),
     CON_ERROR: (QColor(DANGER), "#F8E1E1"),
     REVISADA: (QColor(ACCENT), "#E6EFF8"),
+    CORREGIDA: (QColor(COLOR_CORREGIDA), "#E2F1EF"),
 }
 COLOR_CONTADOR = {VERIFICADA: SUCCESS, SIN_VERIFICAR: "#3F5F7F",
-                  REVISADA: ACCENT, POR_REVISAR: WARNING, CON_ERROR: DANGER}
+                  REVISADA: ACCENT, CORREGIDA: COLOR_CORREGIDA,
+                  POR_REVISAR: WARNING, CON_ERROR: DANGER}
 
 _AVISO_EJERCICIOS_ANTIGUO = re.compile(
     r"\s*El PDF mezcla varios ejercicios; se ha archivado en el \d{4}, "
@@ -50,7 +56,6 @@ def _sin_aviso_ejercicios_antiguo(aviso: str) -> str:
     """Quita el aviso global que antes se copiaba en todas las facturas."""
     return _AVISO_EJERCICIOS_ANTIGUO.sub("", str(aviso or "")).strip()
 
-ANCHO_LISTA_BLOQUES = 1280   # por debajo, la lista lateral se oculta
 EXT_FACTURA = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 # Columnas del resumen por bloque (punto de control antes de exportar). Las del
@@ -79,6 +84,39 @@ def _cabeceras_resumen(tipos_iva) -> list:
     else:
         columnas_iva = ["IVA"]
     return [*COLS_RESUMEN_INICIO, *columnas_iva, *COLS_RESUMEN_FIN]
+
+
+class EtiquetaCliente(QLabel):
+    """«NOMBRE  ·  NIF» en una línea: si no cabe, se recorta el nombre con
+    «…» y el NIF se ve siempre entero. El texto completo va en el globo.
+
+    `text()` sigue devolviendo el texto entero (lo usan otras partes)."""
+
+    SEPARADOR = "  ·  "
+
+    def minimumSizeHint(self) -> QSize:
+        alto = super().minimumSizeHint().height()
+        return QSize(min(super().sizeHint().width(), 140), alto)
+
+    def _visible(self, ancho: int) -> str:
+        medida = self.fontMetrics()
+        texto = self.text()
+        if medida.horizontalAdvance(texto) <= ancho:
+            return texto
+        nombre, sep, nif = texto.rpartition(self.SEPARADOR)
+        if not sep:
+            return medida.elidedText(texto, Qt.ElideRight, ancho)
+        cola = sep + nif
+        resto = max(0, ancho - medida.horizontalAdvance(cola))
+        return medida.elidedText(nombre, Qt.ElideRight, resto) + cola
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setPen(self.palette().color(QPalette.WindowText))
+        area = self.contentsRect()
+        pintor.drawText(area, Qt.AlignLeft | Qt.AlignVCenter,
+                        self._visible(area.width()))
+        pintor.end()
 
 
 def ruta_recurso(nombre):

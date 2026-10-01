@@ -72,52 +72,36 @@ QFrame#tarjeta {{ background: {CARD}; border: 1px solid {BORDER}; border-radius:
 QWidget#barraRapida {{
     background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
 }}
-QFrame#grupoCinta {{ border: none; border-right: 1px solid #E4EAF2; }}
-QLabel#etiquetaGrupo {{ color: #7A8BA0; font-size: 11px; padding: 2px 0 4px 0; }}
+QFrame#separadorCinta {{ color: #E4EAF2; }}
 QToolButton#cintaGrande, QToolButton#cintaPrimaria {{
-    min-width: 76px; min-height: 58px; padding: 4px 6px 2px 6px;
+    padding: 3px 6px 2px 6px;
     border: 1px solid transparent; border-radius: 4px; background: transparent;
     color: {INK}; font-size: 12px;
 }}
-QToolButton#cintaPrimaria {{ color: {SUCCESS}; font-weight: 600; }}
-QToolButton#cintaPeque {{
-    min-height: 22px; padding: 1px 8px 1px 4px; border: 1px solid transparent;
-    border-radius: 4px; background: transparent; color: {INK}; font-size: 12px;
+QToolButton#cintaPrimaria {{
+    color: {SUCCESS}; background: #E4F1EA; border-color: #B9DCC7;
+    font-weight: 600; padding: 3px 12px 2px 12px;
 }}
-QToolButton#cintaGrande:hover, QToolButton#cintaPrimaria:hover,
-QToolButton#cintaPeque:hover {{ border-color: #CFDDEC; background: {HOVER}; }}
-QToolButton#cintaGrande:pressed, QToolButton#cintaPrimaria:pressed,
-QToolButton#cintaPeque:pressed {{ background: #D8E6F4; }}
-QToolButton#cintaGrande:disabled, QToolButton#cintaPrimaria:disabled,
-QToolButton#cintaPeque:disabled {{ color: #A3B1C0; }}
-
-QListWidget#listaBloques {{
-    background: {CARD}; border: none; outline: none; font-size: 12px;
-}}
-QListWidget#listaBloques::item {{
-    padding: 6px 6px; border-radius: 4px; margin: 1px 0;
-    border-left: 3px solid transparent;
-}}
-QListWidget#listaBloques::item:selected {{
-    background: #E1ECF8; border-left: 3px solid {ACCENT}; color: {INK};
-}}
-QListWidget#listaBloques::item:hover {{ background: {HOVER}; }}
+QToolButton#cintaPrimaria:hover {{ background: #D3EADC; border-color: {SUCCESS}; }}
+QToolButton#cintaGrande[soloIcono="true"] {{ padding: 3px 5px; }}
+QToolButton#cintaGrande:hover {{ border-color: #CFDDEC; background: {HOVER}; }}
+QToolButton#cintaGrande:pressed {{ background: #D8E6F4; }}
+QToolButton#cintaGrande:disabled {{ color: #A3B1C0; }}
+QToolButton#cintaPrimaria:disabled {{ color: #A3B1C0; background: transparent; border-color: transparent; }}
+QFrame#cajaCliente {{ background: transparent; border: none; }}
 
 QFrame#barraEstado {{
     background: {CARD}; border: none; border-top: 1px solid {BORDER};
 }}
 QLabel#contadores {{ font-size: 11px; }}
 QScrollArea#panelFicha, QWidget#panelFichaContenido {{ background: {CARD}; }}
-QSplitter#splitVisor::handle {{ margin: 2px 4px; border-radius: 2px; }}
-QFrame#barraCliente {{
-    background: {CARD}; border: none; border-bottom: 1px solid {BORDER};
-}}
 QLabel#tituloSeccion {{
     color: {CHROME}; font-size: 12px; font-weight: 700;
     padding-bottom: 3px; border-bottom: 2px solid #E4EAF2;
 }}
-QLabel#marca {{ color: {CHROME}; font-size: 15px; font-weight: 700; }}
-QLabel#marcaIcono {{ background: {CHROME}; color: {CHROME_INK}; border-radius: 6px; font-size: 17px; font-weight: 700; }}
+QLabel#tituloSubseccion {{
+    color: {MUTED}; font-size: 11px; font-weight: 700; padding-top: 2px;
+}}
 QLabel#tituloMesa {{ color: {INK}; font-size: 20px; font-weight: 600; }}
 QLabel#contadorLote {{ color: {MUTED}; font-size: 12px; }}
 QLabel#textoSuave {{ color: {MUTED}; font-size: 11px; }}
@@ -138,6 +122,7 @@ QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; background: {ACCEN
 QPushButton:pressed {{ background: {ACCENT_FAINT}; }}
 QPushButton:focus {{ border-color: {ACCENT}; }}
 QPushButton:disabled {{ background: {SOFT}; color: {MUTED}; border-color: {BORDER}; }}
+QPushButton#filtroTipo {{ padding: 4px 8px; font-size: 11px; border-radius: 5px; }}
 QPushButton#filtroTipo:checked, QPushButton#paso:checked {{ background: {ACCENT_FAINT}; color: {ACCENT}; border-color: {ACCENT}; }}
 QPushButton#paso {{ border-color: transparent; background: transparent; }}
 QPushButton#primario {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}
@@ -173,7 +158,8 @@ QLineEdit, QComboBox {{
     selection-background-color: {ACCENT}; selection-color: white;
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
-QLineEdit#buscadorLote {{ padding: 10px 12px; font-size: 13px; }}
+QLineEdit#buscadorLote {{ padding: 6px 8px; }}
+QTextBrowser#vistaTotales {{ background: {CARD}; border: none; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {BORDER};
     selection-background-color: {ACCENT_FAINT}; selection-color: {ACCENT};
@@ -193,7 +179,7 @@ QHeaderView::section {{
 QTableWidget QComboBox {{ border: none; border-radius: 3px; padding: 3px 5px; background: transparent; }}
 QSplitter::handle {{ background: {BORDER}; }}
 QSplitter#splitRevision::handle {{ margin: 4px 2px; border-radius: 2px; }}
-QSplitter#splitContenido::handle {{ margin: 2px 4px; border-radius: 2px; }}
+QSplitter#splitFactura::handle {{ margin: 2px 40px; border-radius: 2px; }}
 QSplitter::handle:hover {{ background: {ACCENT}; }}
 QProgressBar {{
     background: #E8EDF4; border: none; border-radius: 2px;

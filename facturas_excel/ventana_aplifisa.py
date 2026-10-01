@@ -212,7 +212,8 @@ class AplifisaMixin:
                 excluidas.append((fila, "duplicada"))
             elif estado == ERROR:
                 errores.append(fila)
-            elif estado == REVISAR and not f.revision_confirmada:
+            elif estado == REVISAR and not registro.get("aceptada"):
+                # Ni revisada con el botón ni corregida a mano.
                 pendientes_revision.append(fila)
             else:
                 if registro.get("ya_exportada"):

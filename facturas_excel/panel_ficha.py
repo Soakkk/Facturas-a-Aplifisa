@@ -1,4 +1,4 @@
-"""Ficha de la factura seleccionada, junto al documento original.
+"""Lo que ha leído la IA de la factura seleccionada, debajo de su hoja.
 
 De un vistazo: qué se ha leído, qué está comprobado (✓) y qué hay que mirar
 (!), agrupado como se lee una factura: identificación, importes y
@@ -48,7 +48,18 @@ class PanelFicha(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
         self.botones_discrepancia: list[QPushButton] = []
+        # La caja de una discrepancia de la doble lectura: en un portátil la
+        # ficha es baja y sus botones quedarían fuera de la vista.
+        self._caja_decision = None
+        self.verticalScrollBar().rangeChanged.connect(
+            lambda *_: self._ver_decision())
         self.vacio()
+
+    def _ver_decision(self) -> None:
+        """Baja hasta la caja de la discrepancia si no se ve entera."""
+        caja = self._caja_decision
+        if caja is not None and caja.height() > 0:
+            self.ensureWidgetVisible(caja, 0, 0)
 
     # ------------------------------------------------------------ utilidades
     def _limpiar(self) -> None:
@@ -58,6 +69,7 @@ class PanelFicha(QScrollArea):
         encima hasta que Qt procesaba su borrado diferido.
         """
         self.botones_discrepancia = []
+        self._caja_decision = None
         self._contenido = QWidget()
         self._contenido.setObjectName("panelFichaContenido")
         self._capa = QVBoxLayout(self._contenido)
@@ -170,12 +182,14 @@ class PanelFicha(QScrollArea):
                 linea.addWidget(boton)
                 capa.addLayout(linea)
             self._capa.addWidget(caja)
+            self._caja_decision = caja
 
         otros = d["otros_motivos"]
         if otros:
-            self._seccion("Por revisar")
+            vistos = d.get("avisos_vistos", False)
+            self._seccion("Avisos ya vistos" if vistos else "Por revisar")
             for gravedad, texto in otros:
-                color = ROJO if gravedad == "error" else AMBAR
+                color = MUTED if vistos else ROJO if gravedad == "error" else AMBAR
                 self._capa.addWidget(self._etiqueta(
                     f"• {texto}", f"color: {color}; font-size: 11px;"))
 
@@ -195,7 +209,10 @@ class PanelFicha(QScrollArea):
                 partes = f"Suplido {_eur(linea['base'])} (sin IVA)"
             self._dato("Línea", partes, linea["marcas"])
         if d.get("irpf") is not None:
-            self._dato("Retención", f"− {_eur(d['irpf'])}", marcas.get("cuota_irpf", []))
+            # Resta del total; en un abono ya viene en negativo.
+            irpf = d["irpf"]
+            texto = f"− {_eur(irpf)}" if irpf >= 0 else _eur(-irpf)
+            self._dato("Retención", texto, marcas.get("cuota_irpf", []))
         cuenta = d["cuadre"]
         if cuenta:
             ok = cuenta["ok"]

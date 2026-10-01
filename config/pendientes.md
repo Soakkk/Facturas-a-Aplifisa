@@ -1,9 +1,25 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 1 de octubre de 2026 (versión 1.17.1). Apunta abajo lo que
+Actualizado el 1 de octubre de 2026 (versión 1.18.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.18 (lo que pediste)
+
+**Tres columnas.** Facturas a la izquierda; en el centro la factura (la
+hoja y, debajo, lo que ha leído la IA, todo junto); a la derecha los totales
+a toda la altura, con base, cada IVA, total IVA, recargo, retención,
+suplidos y total, para cuadrar con tu suma a mano. Sin logo ni título
+arriba: botones, cliente, periodo y «Exportar a Aplifisa». Los filtros, a la
+izquierda.
+
+**✎ Corregida.** Si corriges a mano un dato de una factura en ámbar, ya
+cuenta como revisada: no hace falta pulsar «Marcar revisada». Si tras tu
+corrección el total no cuadra, sigue en ámbar.
+
+Dime si el reparto de anchos te va bien en tu pantalla (se puede arrastrar
+cada separador y el programa lo recuerda).
 
 ### Lo nuevo de la 1.17.1 (lo que pediste)
 
@@ -28,7 +44,7 @@ recuadra ese dato; la hoja se acerca sola. Si las dos lecturas no coinciden,
 la ficha te dice cuál de los dos valores está en la hoja y cuál no aparece.
 Para cualquier otra factura, botón «¿De dónde sale?» encima del documento.
 
-**Registro de facturas.** Cinta → Archivo → «Registro». Todas las facturas
+**Registro de facturas.** Botón «Registro» de la barra de arriba. Todas las facturas
 que salen del programa, con su recorrido, su Excel y su PDF. Busca por
 proveedor, NIF, número o importe.
 
@@ -55,12 +71,12 @@ Lo que ya tenías archivado no se ha tocado.
 
 ### Lo nuevo de la 1.15
 
-**Recoger lo suelto.** En la cinta, grupo Archivo → «Recoger sueltos…». Mira
+**Recoger lo suelto.** Botón «Recoger» de la barra de arriba. Mira
 el Escritorio y Descargas, reconoce de qué cliente es cada factura por su NIF
 y te enseña la propuesta antes de mover nada. Lo dudoso sale en ámbar y sin
 marcar. Si algo no te cuadra, «Deshacer la última recogida» (menú Escaneos).
 
-**Expedientes.** Grupo Archivo → «Expedientes…»: por cliente y ejercicio, un
+**Expedientes.** Botón «Expedientes» de la barra de arriba: por cliente y ejercicio, un
 PDF con todos los gastos, otro con los ingresos, los Excel y un resumen con
 los totales, y un ZIP con todo. Se actualiza solo cada vez que exportas.
 

@@ -289,20 +289,47 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert not hasattr(v, "menu_acciones")
     assert not hasattr(v, "btn_mas_acciones")
     assert not hasattr(v, "accion_gestion_manual")
-    assert v.split_contenido.orientation() == Qt.Vertical
-    assert v.split_contenido.count() == 2
+    # Tres columnas: datos extraídos | factura (hoja + lectura) | totales.
+    assert v.split_revision.count() == 3
+    assert v.split_revision.widget(0) is v.tabla.parentWidget()
+    assert v.split_revision.widget(1) is v.factura_card
+    assert v.split_revision.widget(2) is v.lado_card
+    # La hoja y lo leído van juntos en la misma tarjeta, uno encima del otro.
+    assert v.split_factura.orientation() == Qt.Vertical
+    assert v.split_factura.widget(0) is v.visor_scroll
+    assert v.factura_card.isAncestorOf(v.ficha)
+    # Los totales tienen la columna entera para ellos.
+    assert v.lado_card.isAncestorOf(v.vista_totales)
+    assert not v.lado_card.isAncestorOf(v.ficha)
+    assert not hasattr(v, "lista_card")             # sin «Bloques del lote»
     etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
     botones = {boton.text() for boton in v.findChildren(type(v.btn_siguiente))}
     assert "Todo tu lote, a la vista" not in etiquetas
+    # Sin logo, título ni «Mesa de revisión» en la cabecera.
+    assert "fa" not in etiquetas and "Facturas a Aplifisa" not in etiquetas
+    assert not any(e.startswith("Mesa de revisión") for e in etiquetas)
     assert {"Marcar revisada", "Unir hojas", "Limpiar filtros",
             "Quitar bloque", "Eliminar"} <= botones
+    # Cliente y periodo van dentro de la cinta, no en una fila aparte.
+    assert v.barra_rapida.isAncestorOf(v.lbl_cliente)
+    assert v.barra_rapida.isAncestorOf(v.combo_periodo)
 
     v.show()
     _app.processEvents()
     v.resize(1024, 640)
-    _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+    # El reparto de filtros y acciones se rehace en cuanto Qt coloca la
+    # tabla con su ancho nuevo (puede llevar más de una vuelta).
+    for _ in range(3):
+        _app.processEvents()
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
+    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
+    # Ventana estrecha: lo ocasional se queda con el icono, nunca a medias.
+    assert v.btn_cargar.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+    assert v.btn_gastos.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+    for boton in v._botones_secundarios:
+        assert boton.toolButtonStyle() == Qt.ToolButtonIconOnly
+        assert boton.toolTip()
     assert any(fila.indexOf(v.btn_siguiente) >= 0
                for fila in v.filas_herramientas)
     assert not v.btn_unir_hojas.icon().isNull()
@@ -313,14 +340,35 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         assert boton.width() >= boton.sizeHint().width()
         assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
     assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
-    assert not v.lista_card.isVisible()       # la tabla gana el sitio
-    v.resize(1420, 820)
+    # Los filtros, a la izquierda y encima de las acciones.
+    def fila_de(widget):
+        return next(i for i, fila in enumerate(v.filas_herramientas)
+                    if fila.indexOf(widget) >= 0)
+    assert fila_de(v.combo_filtro_estado) == 0
+    assert fila_de(v.combo_filtro_estado) <= fila_de(v.txt_buscar) < fila_de(v.btn_siguiente)
+    assert ((fila_de(v.caja_tipo), v.caja_tipo.x())
+            > (fila_de(v.combo_filtro_estado), v.combo_filtro_estado.x()))
+    v.resize(1920, 1040)
     _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
     assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
-    assert v.txt_buscar.width() >= 260
-    assert v.lista_card.isVisible()
+    # Con sitio de sobra, todos los botones llevan su nombre. Cuánto sitio
+    # hace falta depende de la letra y del escalado de Windows (en las
+    # máquinas de GitHub, algo más de 1920 px), así que se le da un ancho
+    # que siempre sobra: la cinta decide solo con el ancho que se le da.
+    v._actualizar_barra_responsiva(4000)
+    datos = (v.width(), v.minimumWidth(),
+             v.barra_rapida.layout().minimumSize().width(),
+             v.lbl_cliente.sizeHint().width(),
+             v.lbl_cliente.minimumSizeHint().width())
+    for boton in v._botones_grandes:
+        assert boton.toolButtonStyle() == Qt.ToolButtonTextUnderIcon, datos
+    # El buscador tiene tamaño de buscador, no ocupa toda la fila (en una
+    # ventana ancha, ni la mitad de la tabla).
+    assert 260 <= v.txt_buscar.width() <= 320
+    assert v.txt_buscar.width() < v.tabla.width()
+    if v.tabla.width() >= 700:
+        assert v.txt_buscar.width() < v.tabla.width() / 2
 
 
 def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():

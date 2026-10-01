@@ -18,10 +18,11 @@ from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
-from facturas_excel.lote import CAMPOS_NUMERO
+from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
 from facturas_excel.estilo import ACCENT, DANGER, WARNING
 from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
 from facturas_excel.validacion import ERROR, OK, REVISAR
+from facturas_excel.ventana_validacion import MENSAJE_CORREGIDA, MENSAJE_REVISADA
 from facturas_excel.visor import Recuadro
 
 # El zoom se cuenta sobre la hoja entera a la vista (1 = hoja entera). Se
@@ -33,6 +34,14 @@ PASO_ZOOM = 1.25
 # Lo que se espera desde el último cambio de zoom antes de sacar la hoja fina
 # (mientras, se amplía la que ya hay: el zoom responde al momento).
 ESPERA_NITIDA_MS = 90
+# Datos de cabecera de una discrepancia: valen igual en todas las líneas de
+# la factura y se guardan tal como se leen, así que se pueden copiar a todas.
+# El desglose y el suplido van a base_iva (su lectura es un texto o el
+# importe del suplido) y la retención vive en una sola línea.
+CABECERA_DISCREPANCIA = ("num_factura", "fecha", "total_impreso", "nif")
+# Importes que en un abono van en negativo (la lectura los da en positivo).
+IMPORTES_DISCREPANCIA = {"total_impreso", "base_iva", "cuota_iva",
+                         "cuota_requiv", "cuota_irpf"}
 ETIQUETA_DATO = {
     "nif": "NIF", "nombre": "Nombre", "num_factura": "Nº", "fecha": "Fecha",
     "base_iva": "Base", "cuota_iva": "IVA", "pct_iva": "% IVA",
@@ -309,8 +318,6 @@ class FichaMixin:
         registro = self.filas[fila]
         f = registro["factura"]
         tipo = self._tipo_fila(fila)
-        estado = registro.get("estado", OK)
-        confirmada = estado == REVISAR and f.revision_confirmada
         de_linea = {"base_iva", "pct_iva", "cuota_iva", "base_requiv",
                     "pct_requiv", "cuota_requiv"}
 
@@ -320,7 +327,7 @@ class FichaMixin:
                 campos = getattr(m, "campos", None) or ()
                 gravedad = getattr(m, "gravedad", REVISAR)
                 texto = str(m)
-                if texto == "Revisada y confirmada manualmente":
+                if texto in (MENSAJE_REVISADA, MENSAJE_CORREGIDA):
                     continue
                 destino = [c for c in campos if c not in ("total_impreso",)]
                 if not destino:
@@ -359,8 +366,11 @@ class FichaMixin:
                     partes.append(eur(valor).replace(" €", ""))
         if irpf:
             calculado -= irpf
-        formula = " + ".join(partes) + (f" − {eur(irpf).replace(' €', '')}"
-                                         if irpf else "")
+        # La retención resta; en un abono ya es negativa y entonces suma.
+        formula = " + ".join(partes) + (
+            "" if not irpf else
+            f" − {eur(irpf).replace(' €', '')}" if irpf > 0 else
+            f" + {eur(-irpf).replace(' €', '')}")
         impreso = f.total_impreso
         cuadre = {"formula": formula or "—", "calculado": round(calculado, 2),
                   "impreso": impreso,
@@ -373,10 +383,7 @@ class FichaMixin:
         discrepancias = []
         cajas = self._localizaciones.get(localizar.clave_imagen(registro.png))
         for d in getattr(f, "discrepancias", ()) or ():
-            aplicable = d.get("campo_factura") in COLUMNA_DE_CAMPO
-            if d.get("campo") == "lineas_iva":
-                l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
-                aplicable = len(l2) == 1 and len(filas_doc) == 1
+            aplicable = self._destino_discrepancia(d, filas_doc) is not None
             # Si ya se sabe dónde está cada dato: ¿aparece cada valor en la hoja?
             en_hoja = (None, None)
             campo_hoja = localizar.DE_DOBLE_LECTURA.get(d.get("campo"))
@@ -403,7 +410,7 @@ class FichaMixin:
             cuenta += f" · {descripcion}"
         return {
             "fila": fila,
-            "estado": self._presentacion_estado(estado, f, confirmada),
+            "estado": self._estilo_presentacion(registro.presentacion),
             "titulo": f"Línea {fila + 1} · {f.num_factura or 'sin nº'}",
             "rol": "Proveedor" if tipo == "gasto" else "Cliente",
             "nombre": f.nombre or "", "nif": f.nif or "",
@@ -414,6 +421,8 @@ class FichaMixin:
             "cuenta": cuenta, "marcas": marcas, "otros_motivos": otros,
             "lectura": lectura, "doble": verificacion == "doble",
             "discrepancias": discrepancias,
+            # Corregida o revisada: los avisos ya los vio una persona.
+            "avisos_vistos": registro.presentacion in (CORREGIDA, REVISADA),
         }
 
     def _refrescar_ficha(self) -> None:
@@ -425,6 +434,34 @@ class FichaMixin:
             return
         self.ficha.mostrar(self._datos_ficha(r))
 
+    def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
+        """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.
+
+        None si no se puede hacer solo (se corrige en la tabla): copiar un
+        suplido o una retención a todas las líneas de la factura la
+        estropearía.
+        """
+        if d.get("campo_factura") in CABECERA_DISCREPANCIA:
+            return list(filas_doc)
+        campo = d.get("campo")
+        if campo == "lineas_iva":
+            l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
+            return list(filas_doc) if len(l2) == 1 and len(filas_doc) == 1 \
+                else None
+        if campo in ("suplidos", "cuota_irpf"):
+            suplido = campo == "suplidos"
+            lineas = [r for r in filas_doc
+                      if bool(self.filas[r].factura.es_suplido) == suplido]
+            return lineas if len(lineas) == 1 else None
+        return None
+
+    def _con_signo_del_documento(self, campo: str, valor, filas_doc):
+        """En un abono los importes van en negativo, como los dejó procesar."""
+        if campo in IMPORTES_DISCREPANCIA and isinstance(valor, float) and any(
+                (self.filas[r].factura.total_impreso or 0) < 0 for r in filas_doc):
+            return -abs(valor)
+        return valor
+
     def _resolver_discrepancia(self, fila: int, indice: int, lectura: int) -> None:
         """Se queda con una de las dos lecturas de un dato en disputa."""
         if fila >= len(self.filas):
@@ -435,12 +472,41 @@ class FichaMixin:
             return
         d = discrepancias[indice]
         filas_doc = self._filas_del_documento(fila)
+        from facturas_excel.extraccion import _num
+        if lectura == 1 and d.get("campo_factura") in CABECERA_DISCREPANCIA:
+            # La lectura 1 es lo que ya había… salvo que la persona lo haya
+            # cambiado a mano después: entonces se vuelve a poner. Solo los
+            # datos de cabecera: los importes por línea no se tocan.
+            campo = d["campo_factura"]
+            valor = d.get("valor_1")
+            if campo in CAMPOS_NUMERO:
+                valor = _num(valor)
+            elif campo == "nif":
+                valor = normaliza_nif(valor) or None
+            else:
+                valor = None if valor in (None, "") else str(valor)
+            valor = round(valor, 2) if isinstance(valor, float) else valor
+            valor = self._con_signo_del_documento(campo, valor, filas_doc)
+            distintas = [r for r in filas_doc
+                         if getattr(self.filas[r].factura, campo, None) != valor]
+            for r in distintas:
+                setattr(self.filas[r].factura, campo, valor)
+                self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
+            if distintas:
+                self._invalidar_contraste_registro()
+                if campo == "nif":
+                    self._nif_escrito_a_mano(fila)
+                self._marcar_corregida_documento(fila)
         if lectura == 2:
-            from facturas_excel.extraccion import _num
+            destino = self._destino_discrepancia(d, filas_doc)
+            if destino is None:
+                self._avisar("Este dato no se puede copiar solo: corríjalo "
+                             "en la tabla.", AVISO)
+                return
             if d.get("campo") == "lineas_iva":
                 linea = next(x for x in d.get("lineas_2") or []
                              if isinstance(x, dict))
-                cambios = [(fila, campo, _num(linea.get(clave)))
+                cambios = [(destino[0], campo, _num(linea.get(clave)))
                            for campo, clave in (("base_iva", "base"),
                                                 ("pct_iva", "tipo_iva"),
                                                 ("cuota_iva", "cuota_iva"),
@@ -455,15 +521,18 @@ class FichaMixin:
                     valor = normaliza_nif(valor) or None
                 else:
                     valor = None if valor in (None, "") else str(valor)
-                cambios = [(r, campo, valor) for r in filas_doc]
+                cambios = [(r, campo, valor) for r in destino]
             for r, campo, valor in cambios:
+                valor = round(valor, 2) if isinstance(valor, float) else valor
                 setattr(self.filas[r].factura, campo,
-                        round(valor, 2) if isinstance(valor, float) else valor)
+                        self._con_signo_del_documento(campo, valor, filas_doc))
                 self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
             self._invalidar_contraste_registro()
-            self._invalidar_revision_documento(fila)
             if d.get("campo_factura") == "nif":
                 self._nif_escrito_a_mano(fila)
+            # Elegir el otro valor es corregir a mano: la factura queda
+            # «Corregida» (después de propagar, que invalida a las demás).
+            self._marcar_corregida_documento(fila)
         campo = d.get("campo")
         for r in filas_doc:
             registro = self.filas[r]
@@ -615,10 +684,8 @@ class FichaMixin:
             return
         trabajos = {}
         for fila in self.filas:
-            f = fila.factura
-            if fila.estado not in (REVISAR, ERROR):
-                continue
-            if fila.estado == REVISAR and f.revision_confirmada:
+            # Solo lo que aún hay que mirar (no lo revisado ni lo corregido).
+            if fila.presentacion not in PENDIENTES:
                 continue
             if not fila.png:
                 continue

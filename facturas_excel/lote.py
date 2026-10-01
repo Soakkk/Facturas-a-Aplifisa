@@ -30,15 +30,17 @@ CAMPOS_IRPF = ("base_irpf", "pct_irpf", "cuota_irpf")
 # Ya no hay estado «Manual»: lo que antes se apartaba (bien de inversión,
 # suplido, sustituida) queda en «Revisar» con su motivo y se exporta después
 # de «Marcar revisada», como cualquier otro aviso ámbar.
-VERIFICADA, SIN_VERIFICAR, POR_REVISAR, CON_ERROR, REVISADA = (
-    "verificada", "sin_verificar", "revisar", "error", "revisada")
+VERIFICADA, SIN_VERIFICAR, POR_REVISAR, CON_ERROR, REVISADA, CORREGIDA = (
+    "verificada", "sin_verificar", "revisar", "error", "revisada", "corregida")
 TEXTO_PRESENTACION = {
     VERIFICADA: "✓ Verificada", SIN_VERIFICAR: "○ Sin verificar",
     POR_REVISAR: "! Revisar", CON_ERROR: "✕ Error",
-    REVISADA: "✓ Revisada",
+    REVISADA: "✓ Revisada", CORREGIDA: "✎ Corregida",
 }
-ORDEN_PRESENTACION = (VERIFICADA, SIN_VERIFICAR, REVISADA, POR_REVISAR,
-                      CON_ERROR)
+ORDEN_PRESENTACION = (VERIFICADA, SIN_VERIFICAR, REVISADA, CORREGIDA,
+                      POR_REVISAR, CON_ERROR)
+# Lo que todavía impide exportar (o hay que mirar).
+PENDIENTES = (POR_REVISAR, CON_ERROR)
 
 
 def normalizar(f: Factura) -> Factura:
@@ -63,10 +65,19 @@ def normalizar(f: Factura) -> Factura:
     return f
 
 
-def presentacion(estado: str, f: Factura, confirmada: bool) -> str:
-    """El código con el que se enseña una línea."""
+def presentacion(estado: str, f: Factura, confirmada: bool,
+                 corregida: bool = False) -> str:
+    """El código con el que se enseña una línea.
+
+    Un error manda siempre. Después, lo que confirmó una persona: «Revisada»
+    con el botón, «Corregida» si cambió algún dato a mano.
+    """
+    if estado == ERROR:
+        return CON_ERROR
     if confirmada:
         return REVISADA
+    if corregida:
+        return CORREGIDA
     if estado == OK:
         return VERIFICADA if getattr(f, "verificacion", "") == "doble" else SIN_VERIFICAR
     return CON_ERROR if estado == ERROR else POR_REVISAR
@@ -93,6 +104,9 @@ class Fila:
     registro_detalle: Optional[list] = None
     # Dónde está cada dato en la hoja (recuadros del visor).
     localizacion: Optional[dict] = None
+    # Ámbar ya aceptado por una persona (revisada o corregida), sin contar
+    # el aviso de «ya exportada», que la exportación trata aparte.
+    aceptada: bool = False
 
     def __post_init__(self):
         if not self.fuentes:
@@ -148,7 +162,11 @@ def filas_de_bloques(bloques, por_el_total: bool, a_total_factura) -> List[Fila]
             fuentes = [f for f in pr.facturas if not f.eliminada]
             if not fuentes:
                 continue
-            vista = (a_total_factura(replace(pr, facturas=fuentes))
+            # Manda el tipo que ha puesto la persona (gasto/venta), si lo hay:
+            # solo los gastos se resumen por el total.
+            tipo = next((f.tipo_revision for f in fuentes if f.tipo_revision),
+                        None) or pr.tipo
+            vista = (a_total_factura(replace(pr, facturas=fuentes, tipo=tipo))
                      if por_el_total else pr)
             visibles = vista.facturas if por_el_total else fuentes
             for f in visibles:

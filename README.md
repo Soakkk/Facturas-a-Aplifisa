@@ -28,7 +28,14 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
      suplido, posible bien de inversión, factura sustituida…
    - ✕ **Error**: descuadres, tipo de IVA inexistente, fecha futura, faltan
      campos obligatorios.
-   La **ficha de la factura**, junto al documento, agrupa lo leído
+   La pantalla va en **tres columnas**: la tabla de datos extraídos (con los
+   filtros a la izquierda), la factura (la hoja escaneada y, debajo, lo que
+   ha leído la IA) y, a la derecha, la comprobación de totales con el
+   desglose completo (base, cada IVA, total IVA, recargo, retención,
+   suplidos y total; lo que vale cero sale en gris). Corregir a mano un dato
+   de una factura en ámbar la deja en **✎ Corregida**, que cuenta como
+   revisada (salvo que después el total no cuadre).
+   La **lectura de la IA**, debajo de la hoja, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.
    Con la **imagen de la factura al lado** para corregir al vuelo: la hoja se
@@ -112,7 +119,7 @@ Documentación Facturas/
   y se actualizan solos al exportar y al recoger. Su resumen sale del
   registro de facturas: lo exportado, con el PDF de cada una, y lo archivado
   sin exportar.
-- **Registro de facturas** (cinta → Archivo → *Registro*): una ficha por
+- **Registro de facturas** (botón *Registro* de la cinta): una ficha por
   factura con su recorrido (leída → revisada → exportada → archivada), el
   Excel en el que salió y su PDF. Se busca por proveedor, NIF, número o
   importe.
