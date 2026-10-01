@@ -347,25 +347,34 @@ def _medidas(v) -> str:
     return "\n".join(lineas)
 
 
-def test_en_un_portatil_caben_todas(guardado, tema_real):
-    """Con el aspecto del programa, en 1366 caben todas (la 5, con la
-    factura y lo leído al lado, es la única que pide más que un 1024)."""
-    v = _ventana(1366, 740)
-    if v.width() < 1366:
+def _caben_las_piezas(v, clave) -> None:
+    """Las tres piezas caben en su sitio (la cinta de arriba se adapta sola
+    al ancho: no cuenta). Si no, dice qué pide más ancho en cada tarjeta."""
+    v._elegir_distribucion(clave)
+    _procesar()
+    principal = v.split_principal
+    if principal.minimumSizeHint().width() > principal.width():
+        print(clave, principal.minimumSizeHint().width(), principal.width())
+        print(_medidas(v))                 # sale entero en el registro
+    assert principal.minimumSizeHint().width() <= principal.width(), (
+        clave, principal.minimumSizeHint().width(), principal.width())
+
+
+@pytest.mark.parametrize("ancho, claves", [
+    # En un portátil, las cuatro primeras.
+    (1366, ["columnas", "sobre_hoja", "tabla_arriba", "cuadre"]),
+    # La 5 (lista, factura con lo leído al lado y totales) es para
+    # pantallas anchas, como dice su descripción.
+    (1600, ["una_a_una"]),
+])
+def test_cada_distribucion_cabe_en_su_pantalla(guardado, tema_real, ancho, claves):
+    """Con el aspecto del programa."""
+    v = _ventana(ancho, 740)
+    if v.width() < ancho:
         v.close()
-        pytest.skip("la pantalla de esta máquina no llega a 1366 de ancho")
-    for clave in CLAVES:
-        v._elegir_distribucion(clave)
-        _procesar()
-        # Las tres piezas caben en su sitio (la cinta de arriba se adapta
-        # sola al ancho: no cuenta).
-        principal = v.split_principal
-        if principal.minimumSizeHint().width() > principal.width():
-            print(clave, principal.minimumSizeHint().width(), principal.width())
-            print(_medidas(v))                 # sale entero en el registro
-        assert principal.minimumSizeHint().width() <= principal.width(), (
-            clave, principal.minimumSizeHint().width(), principal.width(),
-            _medidas(v))
+        pytest.skip(f"la pantalla de esta máquina no llega a {ancho} de ancho")
+    for clave in claves:
+        _caben_las_piezas(v, clave)
     v.close()
 
 
