@@ -23,13 +23,29 @@ from facturas_excel.clientes import regimen_recargo
 from facturas_excel.conceptos import catalogo
 from facturas_excel.control_facturas import controles_documentos, sin_cuadre_antiguo
 from facturas_excel.consulta import PeriodoLote, facturas_unicas
-from facturas_excel.estilo import ACCENT_FAINT, INK
+from facturas_excel.estilo import ACCENT_FAINT, INK, MUTED
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import normaliza_nif
-from facturas_excel.resumen import eur, resumir, resumir_por_bloque
+from facturas_excel.resumen import eur, porcentaje_iva, resumir, resumir_por_bloque
 from facturas_excel.lote import (
-    ORDEN_PRESENTACION, TEXTO_PRESENTACION, VERIFICADA, presentacion,
+    CON_ERROR, ORDEN_PRESENTACION, POR_REVISAR, TEXTO_PRESENTACION, VERIFICADA,
+    presentacion,
 )
+
+# Mensajes de la casilla de estado cuando una persona ya ha dado el visto
+# bueno (la ficha no los enseña como avisos).
+MENSAJE_REVISADA = "Revisada y confirmada manualmente"
+MENSAJE_CORREGIDA = "Corregida a mano: cuenta como revisada"
+MENSAJE_CORREGIDA_DESCUADRA = (
+    "Corregida a mano, pero el total no cuadra: compruébelo y, si está bien "
+    "así, pulse «Marcar revisada».")
+MENSAJE_CORREGIDA_NUEVOS = (
+    "Corregida a mano, pero la corrección ha traído un aviso nuevo (arriba): "
+    "compruébelo y, si está bien así, pulse «Marcar revisada».")
+# Los que añade el propio programa al dar o negar el visto bueno: no son
+# avisos de la factura.
+MENSAJES_DE_ESTADO = (MENSAJE_REVISADA, MENSAJE_CORREGIDA,
+                      MENSAJE_CORREGIDA_DESCUADRA, MENSAJE_CORREGIDA_NUEVOS)
 from facturas_excel.tabla_facturas import (
     C_BASE, C_BASE_IRPF, C_BASE_RE, C_CUENTA, C_CUOTA, C_CUOTA_IRPF, C_CUOTA_RE,
     C_FECHA, C_GXX, C_NIF, C_NOMBRE, C_NUM, C_PCT, C_PCT_IRPF, C_PCT_RE, C_TIPO,
@@ -107,17 +123,36 @@ class ValidacionMixin:
         # Se guarda el estado SIN el aviso de «ya exportada»: la exportación
         # trata esas filas aparte y pregunta qué hacer con ellas.
         registro["estado_base"] = estado
+        # Corregida a mano: vale como revisada para los avisos que ya tenía
+        # cuando la corrigió. Un aviso nuevo (un NIF o una fecha mal
+        # tecleados) o un total que no cuadra la dejan pendiente.
+        vistos = set(getattr(f, "avisos_vistos", ()) or ())
+        nuevos = [m for m in msgs if str(m) not in vistos]
+        descuadra = any(str(m).startswith("El total no cuadra") for m in msgs)
+        corregida = (getattr(f, "revision_corregida", False)
+                     and estado in (OK, REVISAR) and not nuevos and not descuadra)
+        registro.aceptada = estado == REVISAR and (
+            f.revision_confirmada or corregida)
         ya = pasada["exportadas"].get(r)
         registro["ya_exportada"] = ya
         if ya:
             anadir(historial.texto_aviso(ya), "num_factura")
         confirmada = estado == REVISAR and f.revision_confirmada
         if confirmada:
-            msgs.append("Revisada y confirmada manualmente")
+            msgs.append(MENSAJE_REVISADA)
+        elif corregida:
+            msgs.append(MENSAJE_CORREGIDA)
+        elif getattr(f, "revision_corregida", False) and estado == REVISAR:
+            if descuadra:
+                msgs.append(Incidencia(
+                    MENSAJE_CORREGIDA_DESCUADRA, ("total_impreso",)))
+            else:
+                msgs.append(MENSAJE_CORREGIDA_NUEVOS)
         registro["estado"] = estado
         registro["mensajes"] = msgs
-        registro.presentacion = presentacion(estado, f, confirmada)
-        texto, color, fondo = self._presentacion_estado(estado, f, confirmada)
+        registro.presentacion = presentacion(estado, f, confirmada, corregida)
+        texto, color, fondo = self._presentacion_estado(
+            estado, f, confirmada, corregida)
         self.tabla.pintar_estado(
             r, texto, color, fondo,
             _ayuda_estado(estado, msgs) if msgs else
@@ -129,9 +164,16 @@ class ValidacionMixin:
             self._resumen()
 
     @staticmethod
-    def _presentacion_estado(estado, f: Factura, confirmada: bool):
+    def _estilo_presentacion(codigo: str):
+        """(texto, color, fondo) de un código de presentación."""
+        color, fondo = ESTILO_PRESENTACION[codigo]
+        return TEXTO_PRESENTACION[codigo], color, fondo
+
+    @staticmethod
+    def _presentacion_estado(estado, f: Factura, confirmada: bool,
+                             corregida: bool = False):
         """(texto, color, fondo) de la casilla de estado."""
-        codigo = presentacion(estado, f, confirmada)
+        codigo = presentacion(estado, f, confirmada, corregida)
         color, fondo = ESTILO_PRESENTACION[codigo]
         return TEXTO_PRESENTACION[codigo], color, fondo
 
@@ -330,7 +372,6 @@ class ValidacionMixin:
         if hasattr(self, "combo_filtro_estado"):
             self._aplicar_filtro()
         self._refrescar_ficha()
-        self._pintar_lista_bloques()
         self._timer_muestras.start()
 
     def _pintar_alerta(self):
@@ -399,18 +440,18 @@ class ValidacionMixin:
         self.lbl_lote.setText(
             f"Lote completo · {facturas_unicas(facturas)} facturas · "
             f"{len(facturas)} líneas fiscales")
-        estados = []
-        for r in range(self.tabla.rowCount()):
-            f = self.filas[r]["factura"]
-            e = self.filas[r].get("estado", validar(f).estado)
-            estados.append(e)
+        # Por cómo se ve cada línea: una revisada o corregida ya no cuenta
+        # como «por revisar».
+        vistas = [self.filas[r].presentacion
+                  for r in range(self.tabla.rowCount())]
         n_g = sum(1 for r in range(self.tabla.rowCount()) if self._tipo_fila(r) == "gasto")
         self._pintar_contadores()
+        revisar, errores = vistas.count(POR_REVISAR), vistas.count(CON_ERROR)
         self.lbl_estado.setText(
-            "Lote vacío. Cargue o escanee facturas para empezar." if not estados else
-            f"{len(estados)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(estados) - n_g}  ·  "
-            f"Correctas: {estados.count(OK)} · Revisar: {estados.count(REVISAR)} · "
-            f"Errores: {estados.count(ERROR)}")
+            "Lote vacío. Cargue o escanee facturas para empezar." if not vistas else
+            f"{len(vistas)} líneas  ·  Gastos: {n_g}  ·  Ventas: {len(vistas) - n_g}  ·  "
+            f"Correctas: {len(vistas) - revisar - errores} · Revisar: {revisar} · "
+            f"Errores: {errores}")
         self._pintar_resumen()
 
     def _pintar_contadores(self) -> None:
@@ -508,6 +549,76 @@ class ValidacionMixin:
                 self.tabla_resumen.setItem(r, c, item)
         # Con un lote vacío no se reserva una gran tabla en blanco.
         self._ajustar_altura_resumen()
+        self._pintar_vista_totales(lineas, recargo, tipos_iva)
+
+    # Cómo se llama cada fila en la tarjeta de la derecha (más claro que en
+    # la tabla, que se conserva tal cual para Copiar y el listado PDF).
+    @staticmethod
+    def _nombre_ambito(ambito: str) -> str:
+        if ambito == "TOTAL LOTE":
+            return "Todo el lote"
+        if ambito == "FILTRO ACTUAL":
+            return "Lo que se ve (filtro)"
+        if ambito.startswith("DENTRO "):
+            return "Dentro del " + ambito[len("DENTRO "):]
+        if ambito.startswith("FUERA "):
+            return "Fuera del " + ambito[len("FUERA "):]
+        return ambito
+
+    def _pintar_vista_totales(self, lineas, recargo, tipos_iva) -> None:
+        """Los totales en vertical, para la columna estrecha de la derecha.
+
+        Un bloque por cada fila del resumen: título, nº de facturas y una
+        línea por importe (base, cada IVA, recargo, retención, suplidos y el
+        total en negrita). Lo que se ve con filtro va resaltado.
+        """
+        if not hasattr(self, "vista_totales"):
+            return
+        if not lineas:
+            self.vista_totales.setHtml(
+                f"<p style='color:{MUTED}'>Sin facturas cargadas.</p>")
+            return
+        bloques = []
+        for ambito, tipo, t, es_total in lineas:
+            solo_total = recargo and tipo == "Gastos"
+            importes = []
+            if not solo_total:
+                importes.append(("Base", eur(t.base)))
+                if tipos_iva:
+                    for p in tipos_iva:
+                        if p in t.iva_por_tipo:
+                            importes.append(
+                                (f"IVA {porcentaje_iva(p)}%", eur(t.iva_por_tipo[p])))
+                else:
+                    importes.append(("IVA", eur(t.iva)))
+                if t.tiene_requiv:
+                    importes.append(("Recargo", eur(t.requiv)))
+            if t.tiene_irpf:
+                importes.append(("Retención", f"−{eur(t.irpf)}"))
+            if t.tiene_suplidos and not solo_total:
+                importes.append(("Suplidos (sin IVA)", eur(t.suplidos)))
+            filas = "".join(
+                f"<tr><td>{html.escape(nombre)}</td>"
+                f"<td align='right'>{html.escape(valor)}</td></tr>"
+                for nombre, valor in importes)
+            fondo = (f" bgcolor='{ACCENT_FAINT}'" if ambito == "FILTRO ACTUAL"
+                     else "")
+            titulo = f"{tipo} · {self._nombre_ambito(ambito)}"
+            # El total en la primera línea: es lo que se mira y en una
+            # pantalla baja puede no caber el desglose entero.
+            bloques.append(
+                f"<table width='100%' cellspacing='0' cellpadding='2'{fondo}>"
+                f"<tr><td><b style='color:{INK}'>{html.escape(titulo)}</b></td>"
+                f"<td align='right'><b>{html.escape(eur(t.total))}</b></td></tr>"
+                f"<tr><td colspan='2' style='color:{MUTED}'>{t.facturas} "
+                f"factura(s) · {t.lineas} línea(s)</td></tr>{filas}</table>")
+        # Al teclear en el buscador se repinta: que no salte arriba.
+        barra = self.vista_totales.verticalScrollBar()
+        posicion = barra.value()
+        self.vista_totales.setHtml(
+            f"<div style='font-size:12px; color:{INK}'>"
+            + "<div style='height:8px'></div>".join(bloques) + "</div>")
+        barra.setValue(min(posicion, barra.maximum()))
 
     def _copiar_resumen(self):
         """El resumen al portapapeles, para pegarlo al comprobar los totales."""

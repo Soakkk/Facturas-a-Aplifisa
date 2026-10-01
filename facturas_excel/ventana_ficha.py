@@ -18,10 +18,11 @@ from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
-from facturas_excel.lote import CAMPOS_NUMERO
+from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
 from facturas_excel.estilo import ACCENT, DANGER, WARNING
 from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
 from facturas_excel.validacion import ERROR, OK, REVISAR
+from facturas_excel.ventana_validacion import MENSAJE_CORREGIDA, MENSAJE_REVISADA
 from facturas_excel.visor import Recuadro
 
 # El zoom se cuenta sobre la hoja entera a la vista (1 = hoja entera). Se
@@ -309,8 +310,6 @@ class FichaMixin:
         registro = self.filas[fila]
         f = registro["factura"]
         tipo = self._tipo_fila(fila)
-        estado = registro.get("estado", OK)
-        confirmada = estado == REVISAR and f.revision_confirmada
         de_linea = {"base_iva", "pct_iva", "cuota_iva", "base_requiv",
                     "pct_requiv", "cuota_requiv"}
 
@@ -320,7 +319,7 @@ class FichaMixin:
                 campos = getattr(m, "campos", None) or ()
                 gravedad = getattr(m, "gravedad", REVISAR)
                 texto = str(m)
-                if texto == "Revisada y confirmada manualmente":
+                if texto in (MENSAJE_REVISADA, MENSAJE_CORREGIDA):
                     continue
                 destino = [c for c in campos if c not in ("total_impreso",)]
                 if not destino:
@@ -403,7 +402,7 @@ class FichaMixin:
             cuenta += f" · {descripcion}"
         return {
             "fila": fila,
-            "estado": self._presentacion_estado(estado, f, confirmada),
+            "estado": self._estilo_presentacion(registro.presentacion),
             "titulo": f"Línea {fila + 1} · {f.num_factura or 'sin nº'}",
             "rol": "Proveedor" if tipo == "gasto" else "Cliente",
             "nombre": f.nombre or "", "nif": f.nif or "",
@@ -414,6 +413,8 @@ class FichaMixin:
             "cuenta": cuenta, "marcas": marcas, "otros_motivos": otros,
             "lectura": lectura, "doble": verificacion == "doble",
             "discrepancias": discrepancias,
+            # Corregida o revisada: los avisos ya los vio una persona.
+            "avisos_vistos": registro.presentacion in (CORREGIDA, REVISADA),
         }
 
     def _refrescar_ficha(self) -> None:
@@ -435,8 +436,30 @@ class FichaMixin:
             return
         d = discrepancias[indice]
         filas_doc = self._filas_del_documento(fila)
+        from facturas_excel.extraccion import _num
+        if lectura == 1 and d.get("campo_factura") in COLUMNA_DE_CAMPO:
+            # La lectura 1 es lo que ya había… salvo que la persona lo haya
+            # cambiado a mano después: entonces se vuelve a poner.
+            campo = d["campo_factura"]
+            valor = d.get("valor_1")
+            if campo in CAMPOS_NUMERO:
+                valor = _num(valor)
+            elif campo == "nif":
+                valor = normaliza_nif(valor) or None
+            else:
+                valor = None if valor in (None, "") else str(valor)
+            valor = round(valor, 2) if isinstance(valor, float) else valor
+            distintas = [r for r in filas_doc
+                         if getattr(self.filas[r].factura, campo, None) != valor]
+            for r in distintas:
+                setattr(self.filas[r].factura, campo, valor)
+                self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
+            if distintas:
+                self._invalidar_contraste_registro()
+                if campo == "nif":
+                    self._nif_escrito_a_mano(fila)
+                self._marcar_corregida_documento(fila)
         if lectura == 2:
-            from facturas_excel.extraccion import _num
             if d.get("campo") == "lineas_iva":
                 linea = next(x for x in d.get("lineas_2") or []
                              if isinstance(x, dict))
@@ -461,9 +484,11 @@ class FichaMixin:
                         round(valor, 2) if isinstance(valor, float) else valor)
                 self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
             self._invalidar_contraste_registro()
-            self._invalidar_revision_documento(fila)
             if d.get("campo_factura") == "nif":
                 self._nif_escrito_a_mano(fila)
+            # Elegir el otro valor es corregir a mano: la factura queda
+            # «Corregida» (después de propagar, que invalida a las demás).
+            self._marcar_corregida_documento(fila)
         campo = d.get("campo")
         for r in filas_doc:
             registro = self.filas[r]
@@ -615,10 +640,8 @@ class FichaMixin:
             return
         trabajos = {}
         for fila in self.filas:
-            f = fila.factura
-            if fila.estado not in (REVISAR, ERROR):
-                continue
-            if fila.estado == REVISAR and f.revision_confirmada:
+            # Solo lo que aún hay que mirar (no lo revisado ni lo corregido).
+            if fila.presentacion not in PENDIENTES:
                 continue
             if not fila.png:
                 continue

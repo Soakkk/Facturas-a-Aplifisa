@@ -134,15 +134,18 @@ def test_un_clic_ya_no_abre_una_ventana_que_lo_tape_todo(tmp_path, monkeypatch):
 
 def test_el_zoom_deja_quieto_el_punto_senalado(tmp_path):
     v, _pdf_ = _ventana(tmp_path)
-    v._zoom_en(1.0, zoom=4.0)          # la hoja ya no cabe a lo ancho ni a lo alto
+    v._zoom_en(1.0, zoom=2.0)
     horizontal = v.visor_scroll.horizontalScrollBar()
     vertical = v.visor_scroll.verticalScrollBar()
     antes = v.lbl_img.rect_imagen()
+    vista = v.visor_scroll.viewport().size()
+    # La hoja ya no cabe ni a lo ancho ni a lo alto: el punto puede quedarse.
+    assert antes.width() > vista.width() and antes.height() > vista.height()
     punto = QPointF(antes.x() + antes.width() * 0.7, antes.y() + antes.height() * 0.8)
     en_vista = (punto.x() - horizontal.value(), punto.y() - vertical.value())
     v.lbl_img.zoom_pedido.emit(1.25, punto)            # Ctrl + rueda
     despues = v.lbl_img.rect_imagen()
-    assert v._zoom_visor == pytest.approx(5.0)
+    assert v._zoom_visor == pytest.approx(2.5)
     x = despues.x() + despues.width() * 0.7 - horizontal.value()
     y = despues.y() + despues.height() * 0.8 - vertical.value()
     assert abs(x - en_vista[0]) <= 2 and abs(y - en_vista[1]) <= 2

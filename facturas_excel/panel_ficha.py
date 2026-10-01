@@ -173,9 +173,10 @@ class PanelFicha(QScrollArea):
 
         otros = d["otros_motivos"]
         if otros:
-            self._seccion("Por revisar")
+            vistos = d.get("avisos_vistos", False)
+            self._seccion("Avisos ya vistos" if vistos else "Por revisar")
             for gravedad, texto in otros:
-                color = ROJO if gravedad == "error" else AMBAR
+                color = MUTED if vistos else ROJO if gravedad == "error" else AMBAR
                 self._capa.addWidget(self._etiqueta(
                     f"• {texto}", f"color: {color}; font-size: 11px;"))
 

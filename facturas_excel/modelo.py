@@ -59,6 +59,13 @@ class Factura:
     es_suplido: bool = False                # esta linea es el suplido de su factura
     confianza_ia: Optional[str] = None      # alta/media/baja informada por Gemini
     revision_confirmada: bool = False       # una persona comprobo el aviso ambar
+    # Una persona corrigió a mano un dato de la factura: cuenta como revisada
+    # («✎ Corregida»), salvo que tras la corrección el total no cuadre.
+    revision_corregida: bool = False
+    # Los avisos que tenía la factura cuando la corrigió: solo esos se dan
+    # por vistos. Uno NUEVO (un NIF mal tecleado, una fecha fuera del
+    # trimestre…) la deja otra vez pendiente.
+    avisos_vistos: tuple = ()
     # Motivo por el que conviene mirarla antes de exportar (bien de inversión,
     # suplido, sustituida…). Desde la 1.17.1 NO la aparta: queda en ámbar con
     # ese motivo y, tras «Marcar revisada», se exporta como las demás. El
@@ -82,7 +89,8 @@ class Factura:
         excluidos = {"original_id", "edicion_manual", "documento_id", "total_impreso", "origen_imagen", "pagina_origen",
                      "ultima_pagina_origen", "lineas_factura",
                      "subclave", "descripcion_concepto", "es_suplido",
-                     "confianza_ia", "revision_confirmada",
+                     "confianza_ia", "revision_confirmada", "revision_corregida",
+                     "avisos_vistos",
                      "tratamiento_manual", "iva_incluido_en_base", "eliminada",
                      "tipo_revision", "verificacion", "discrepancias",
                      "paginas_documento"}

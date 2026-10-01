@@ -289,20 +289,40 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert not hasattr(v, "menu_acciones")
     assert not hasattr(v, "btn_mas_acciones")
     assert not hasattr(v, "accion_gestion_manual")
+    # Tres columnas: datos extraídos | documento | ficha con los totales.
+    assert v.split_revision.count() == 3
+    assert v.split_revision.widget(0) is v.tabla.parentWidget()
+    assert v.split_revision.widget(1) is v.visor_scroll.parentWidget()
+    assert v.split_revision.widget(2) is v.lado_card
     assert v.split_contenido.orientation() == Qt.Vertical
     assert v.split_contenido.count() == 2
+    assert v.split_contenido.widget(1) is v.resumen_card
+    assert not hasattr(v, "lista_card")             # sin «Bloques del lote»
     etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
     botones = {boton.text() for boton in v.findChildren(type(v.btn_siguiente))}
     assert "Todo tu lote, a la vista" not in etiquetas
+    # Sin logo, título ni «Mesa de revisión» en la cabecera.
+    assert "fa" not in etiquetas and "Facturas a Aplifisa" not in etiquetas
+    assert not any(e.startswith("Mesa de revisión") for e in etiquetas)
     assert {"Marcar revisada", "Unir hojas", "Limpiar filtros",
             "Quitar bloque", "Eliminar"} <= botones
+    # Cliente y periodo van dentro de la cinta, no en una fila aparte.
+    assert v.barra_rapida.isAncestorOf(v.lbl_cliente)
+    assert v.barra_rapida.isAncestorOf(v.combo_periodo)
 
     v.show()
     _app.processEvents()
     v.resize(1024, 640)
     _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is v.barra_rapida
+    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
+    assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
+    # Ventana estrecha: lo ocasional se queda con el icono, nunca a medias.
+    assert v.btn_cargar.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+    assert v.btn_gastos.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+    for boton in v._botones_secundarios:
+        assert boton.toolButtonStyle() == Qt.ToolButtonIconOnly
+        assert boton.toolTip()
     assert any(fila.indexOf(v.btn_siguiente) >= 0
                for fila in v.filas_herramientas)
     assert not v.btn_unir_hojas.icon().isNull()
@@ -313,14 +333,23 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         assert boton.width() >= boton.sizeHint().width()
         assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
     assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
-    assert not v.lista_card.isVisible()       # la tabla gana el sitio
-    v.resize(1420, 820)
+    # Los filtros, a la izquierda y encima de las acciones.
+    def fila_de(widget):
+        return next(i for i, fila in enumerate(v.filas_herramientas)
+                    if fila.indexOf(widget) >= 0)
+    assert fila_de(v.combo_filtro_estado) == 0
+    assert fila_de(v.combo_filtro_estado) <= fila_de(v.txt_buscar) < fila_de(v.btn_siguiente)
+    assert ((fila_de(v.caja_tipo), v.caja_tipo.x())
+            > (fila_de(v.combo_filtro_estado), v.combo_filtro_estado.x()))
+    v.resize(1920, 1040)
     _app.processEvents()
-    assert v.menuBar().cornerWidget(Qt.TopRightCorner) is None
     assert v.barra_rapida.parentWidget() is v.fila_barra_estrecha
     assert v.barra_rapida.isVisible()
-    assert v.txt_buscar.width() >= 260
-    assert v.lista_card.isVisible()
+    for boton in v._botones_grandes:
+        assert boton.toolButtonStyle() == Qt.ToolButtonTextUnderIcon
+    # El buscador tiene tamaño de buscador, no ocupa toda la fila.
+    assert 260 <= v.txt_buscar.width() <= 320
+    assert v.txt_buscar.width() < v.tabla.width() / 2
 
 
 def test_irpf_visible_y_ordenacion_por_fecha_y_retencion():

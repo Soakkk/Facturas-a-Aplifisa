@@ -275,3 +275,28 @@ def test_cambiar_de_regimen_rehace_el_lote_sin_volver_a_leer(monkeypatch, tmp_pa
 
     assert v.tabla.item(0, C_BASE).text() == "145,11"
     assert v._hay_recargo
+
+
+def test_por_el_total_lo_corregido_no_se_pierde_ni_queda_corregido_sin_dato(
+        monkeypatch, tmp_path):
+    """La línea a la vista es un resumen que se rehace desde las originales:
+    el nº corregido tiene que llegar a ellas, y un importe (que no tiene a
+    qué línea ir) no puede dejar la factura «Corregida» con el dato leído."""
+    from facturas_excel.app import C_BASE, C_NUM
+    from facturas_excel.clientes import TOTAL
+    v = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
+    v.tabla.item(0, C_NUM).setText("NUEVO-1")
+    v._rellenar_tabla()
+    v._revalidar_todo()
+    assert v.tabla.item(0, C_NUM).text() == "NUEVO-1"
+    assert v.filas[0]["factura"].revision_corregida
+
+    # Otra factura igual, corrigiendo solo un importe: tras rehacer la tabla
+    # vuelve el importe leído, así que no puede quedar «Corregida».
+    otra = _ventana_con_recargo(monkeypatch, tmp_path, TOTAL)
+    otra.tabla.item(0, C_BASE).setText("150,00")
+    otra._rellenar_tabla()
+    otra._revalidar_todo()
+    assert otra.tabla.item(0, C_BASE).text() == "145,11"   # se rehízo
+    assert not otra.filas[0]["factura"].revision_corregida
+    assert otra.filas[0].presentacion != "corregida"

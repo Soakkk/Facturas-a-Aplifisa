@@ -1,8 +1,11 @@
-"""La cinta de botones de arriba, por grupos, como en el resto de la suite.
+"""La cinta de botones de arriba: una sola fila, todo a la vista.
 
-Lo de cada día a la vista y en grande (Abrir, Escanear, Cuadrar, Exportar);
-lo ocasional en pequeño al lado. En pantallas bajas la ventana la compacta y
-la sube a la barra de menús (`_actualizar_barra_responsiva`).
+Desde la 1.18 no lleva logo, título ni rótulos de grupo (el usuario lo pidió:
+ocupaban altura y no servían para nada). Lo que se usa a diario va a la
+izquierda, el cliente y el periodo en el centro (antes era una fila aparte)
+y «Exportar a Aplifisa» a la derecha. Lo ocasional (modelos, API key…) está
+en los menús. Si no cabe todo con su nombre, los de uso ocasional se quedan solo con el
+icono (`_actualizar_barra_responsiva`); nunca se corta un texto.
 """
 
 from __future__ import annotations
@@ -10,165 +13,135 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QPushButton, QSizePolicy, QToolButton, QWidget,
 )
 
-from facturas_excel import __version__
 from facturas_excel.ventana_comun import ruta_recurso
+
+ICONO_CINTA = 22
+# Ancho mínimo de un botón con nombre: así los cortos no quedan apretados.
+ANCHO_BOTON = 76
+
+
+class BotonCinta(QToolButton):
+    """Botón de la cinta que nunca se estrecha por debajo de su texto.
+
+    El mínimo va en el propio botón y no en la hoja de estilo: un
+    «min-width» de QSS deja al layout encoger el botón hasta ese mínimo
+    aunque el texto no quepa, y la cinta calcularía mal cuándo pasar a
+    solo icono.
+    """
+
+    def sizeHint(self) -> QSize:
+        tam = super().sizeHint()
+        if self.toolButtonStyle() != Qt.ToolButtonIconOnly:
+            tam.setWidth(max(tam.width(), ANCHO_BOTON))
+        return tam
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
 
 
 def crear_cinta(v) -> None:
-    """Crea `v.barra_rapida` con sus grupos y deja los botones en la ventana."""
-    # Cinta de herramientas por grupos, como en el resto de la suite
-    # (Generador de avisos 1.6): lo de cada día a la vista, en grande, y lo
-    # ocasional en pequeño al lado. En pantallas bajas la cinta se compacta
-    # y se sube a la barra de menús.
+    """Crea `v.barra_rapida` y deja los botones en la ventana.
+
+    `v.layout_cinta` y `v.posicion_cliente` dicen dónde va la caja del
+    cliente y el periodo, que monta la ventana después.
+    """
     v.barra_rapida = QWidget()
     v.barra_rapida.setObjectName("barraRapida")
     accesos = QHBoxLayout(v.barra_rapida)
-    accesos.setContentsMargins(16, 6, 16, 0)
-    accesos.setSpacing(0)
-    marca_icono = QLabel("fa")
-    marca_icono.setObjectName("marcaIcono")
-    marca_icono.setAlignment(Qt.AlignCenter)
-    marca_icono.setFixedSize(36, 36)
-    marca_caja = QHBoxLayout()
-    marca_caja.setContentsMargins(0, 0, 14, 6)
-    marca_caja.setSpacing(10)
-    marca_caja.addWidget(marca_icono)
-    marca = QVBoxLayout()
-    marca.setSpacing(0)
-    titulo = QLabel("Facturas a Aplifisa")
-    titulo.setObjectName("marca")
-    subtitulo = QLabel(f"Mesa de revisión  ·  v{__version__}")
-    subtitulo.setObjectName("textoSuave")
-    marca.addWidget(titulo)
-    marca.addWidget(subtitulo)
-    marca_caja.addLayout(marca)
-    v._marcas_barra = [marca_icono, titulo, subtitulo]
-    accesos.addLayout(marca_caja)
-
+    accesos.setContentsMargins(10, 4, 10, 4)
+    accesos.setSpacing(2)
+    v.layout_cinta = accesos
     v._botones_grandes = []
+    # Compatibilidad: ya no hay marca, pilas ni rótulos que ocultar.
+    v._marcas_barra = []
     v._pilas_cinta = []
     v._etiquetas_grupo = []
 
-    def grande(texto, icono, accion, ayuda, nombre="cintaGrande"):
-        boton = QToolButton()
-        boton.setObjectName(nombre)
-        boton.setText(texto)
-        boton.setIcon(QIcon(ruta_recurso(icono)))
-        boton.setIconSize(QSize(26, 26))
-        boton.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        boton.setToolTip(ayuda)
-        boton.setAutoRaise(True)
-        boton.clicked.connect(accion)
-        v._botones_grandes.append(boton)
-        return boton
-
-    def pequeno(texto, icono, accion, ayuda=""):
-        boton = QToolButton()
-        boton.setObjectName("cintaPeque")
-        boton.setText(texto)
+    def boton(texto, icono, accion, ayuda, nombre="cintaGrande"):
+        b = BotonCinta()
+        b.setObjectName(nombre)
+        b.setText(texto)
         if icono:
-            boton.setIcon(QIcon(ruta_recurso(icono)))
-        boton.setIconSize(QSize(16, 16))
-        boton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        boton.setToolTip(ayuda or texto)
-        boton.setAutoRaise(True)
-        boton.clicked.connect(accion)
-        return boton
+            b.setIcon(QIcon(ruta_recurso(icono)))
+        b.setIconSize(QSize(ICONO_CINTA, ICONO_CINTA))
+        b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        b.setToolTip(ayuda)
+        b.setAutoRaise(True)
+        # Nunca más estrecho que su texto: si falta sitio, la cinta pasa
+        # los ocasionales a solo icono (no se cortan a «Exp…isa»).
+        b.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        b.clicked.connect(accion)
+        v._botones_grandes.append(b)
+        accesos.addWidget(b)
+        return b
 
-    def grupo(etiqueta, grandes, pequenos=()):
-        caja = QFrame()
-        caja.setObjectName("grupoCinta")
-        capa = QVBoxLayout(caja)
-        capa.setContentsMargins(8, 0, 8, 0)
-        capa.setSpacing(0)
-        fila = QHBoxLayout()
-        fila.setSpacing(2)
-        for boton in grandes:
-            fila.addWidget(boton)
-        if pequenos:
-            pila = QWidget()
-            capa_pila = QVBoxLayout(pila)
-            capa_pila.setContentsMargins(2, 0, 0, 0)
-            capa_pila.setSpacing(0)
-            for boton in pequenos:
-                capa_pila.addWidget(boton)
-            capa_pila.addStretch(1)
-            fila.addWidget(pila)
-            v._pilas_cinta.append(pila)
-        capa.addLayout(fila)
-        lbl = QLabel(etiqueta)
-        lbl.setObjectName("etiquetaGrupo")
-        lbl.setAlignment(Qt.AlignCenter)
-        capa.addWidget(lbl)
-        v._etiquetas_grupo.append(lbl)
-        accesos.addWidget(caja)
-        return caja
+    def separador():
+        linea = QFrame()
+        linea.setObjectName("separadorCinta")
+        linea.setFrameShape(QFrame.VLine)
+        accesos.addSpacing(4)
+        accesos.addWidget(linea)
+        accesos.addSpacing(4)
 
-    v.btn_cargar = grande(
-        "Abrir PDF", "open-large.svg", v._cargar,
-        "Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
-    v.btn_escanear = grande(
-        "Escanear", "scan-large.svg", v._escanear,
-        "Escanea el taco y lo añade al lote completo.  (Ctrl+E)")
+    # Botones ocultos que usan otras partes (y las pruebas) como gatillo.
     v.btn_revisar_gemini = QPushButton("Revisar Gemini", v)
     v.btn_revisar_gemini.clicked.connect(v._preparar_revision_gemini)
     v.btn_revisar_gemini.hide()
     v.btn_vaciar = QPushButton("Vaciar todo", v)
     v.btn_vaciar.clicked.connect(v._vaciar_todo)
     v.btn_vaciar.hide()
-    grupo("Documentos", [v.btn_cargar, v.btn_escanear], [
-        pequeno("Vaciar todo", "trash.svg", v.btn_vaciar.click,
-                "Empieza un lote nuevo."),
-    ])
-    v.btn_registro_facturas = grande(
+
+    # Documentos
+    v.btn_cargar = boton(
+        "Abrir PDF", "open-large.svg", v._cargar,
+        "Abrir un PDF ya escaneado o fotos.  (Ctrl+O)")
+    v.btn_escanear = boton(
+        "Escanear", "scan-large.svg", v._escanear,
+        "Escanea el taco y lo añade al lote completo.  (Ctrl+E)")
+    v.btn_vaciar_cinta = boton(
+        "Vaciar todo", "trash.svg", v.btn_vaciar.click,
+        "Quita todo lo cargado y empieza un lote nuevo.")
+    separador()
+    # Archivo
+    v.btn_registro_facturas = boton(
         "Registro", "registro-large.svg", v._ver_registro_facturas,
         "Todas las facturas que han salido del programa: en qué paso "
         "están, en qué Excel salieron y dónde está su PDF.")
-    grupo("Archivo", [v.btn_registro_facturas], [
-        pequeno("Escaneos guardados", "folder.svg", v._ver_escaneos,
-                "Los PDF ya escaneados y archivados.  (Ctrl+L)"),
-        pequeno("Recoger sueltos…", "open.svg", v._recoger_sueltos,
-                "Lleva a su carpeta los PDF de facturas y los Excel de "
-                "Aplifisa que haya sueltos en el Escritorio y Descargas."),
-        pequeno("Expedientes…", "printer.svg", v._ver_expedientes,
-                "Un PDF de gastos, otro de ingresos, los Excel y un "
-                "resumen por cliente y ejercicio."),
-    ])
-
-    v.btn_cuadrar = grande(
-        "Cuadrar con Aplifisa", "balance.svg",
-        lambda: v.btn_registro.trigger(),
-        "Contrasta el lote con el listado de Aplifisa en PDF.  (Ctrl+R)")
+    # Los de uso ocasional se quedan solo con el icono si falta ancho.
+    v._botones_secundarios = [
+        boton("Escaneos", "folder.svg", v._ver_escaneos,
+              "Escaneos guardados: los PDF ya escaneados y archivados.  (Ctrl+L)"),
+        boton("Recoger", "open.svg", v._recoger_sueltos,
+              "Recoger sueltos: lleva a su carpeta los PDF de facturas y los "
+              "Excel de Aplifisa que haya en el Escritorio y Descargas."),
+        boton("Expedientes", "expediente.svg", v._ver_expedientes,
+              "Expedientes: un PDF de gastos, otro de ingresos, los Excel y "
+              "un resumen por cliente y ejercicio."),
+    ]
+    separador()
+    # Comprobar
+    v.btn_cuadrar = boton(
+        "Cuadrar", "balance.svg", lambda: v.btn_registro.trigger(),
+        "Cuadrar con Aplifisa: contrasta el lote con el listado de Aplifisa "
+        "en PDF.  (Ctrl+R)")
     v.btn_registro.changed.connect(
         lambda: v.btn_cuadrar.setEnabled(v.btn_registro.isEnabled()))
     v.btn_cuadrar.setEnabled(v.btn_registro.isEnabled())
-    v.btn_cambiar_cliente_cinta = pequeno(
-        "Cambiar cliente…", "user.svg", lambda: v._cambiar_cliente(),
-        "Si el cliente del lote se detectó mal, se rehace sin volver a "
-        "pagar la lectura.")
-    grupo("Comprobar", [v.btn_cuadrar], [
-        v.btn_cambiar_cliente_cinta,
-        pequeno("Listado PDF de totales", "printer.svg",
-                lambda: v._guardar_listado_totales(),
-                "Listado imprimible para puntear con Aplifisa."),
-    ])
-    grupo("Configurar", [], [
-        pequeno("Modelos de lectura…", "settings.svg",
-                v._configurar_modelos,
-                "Modelo principal, respaldo y doble lectura."),
-        pequeno("API key de Gemini…", "key.svg", v._configurar_key),
-        pequeno("Revisar Gemini", "", v.btn_revisar_gemini.click,
-                "Prepara una orden para revisar si conviene otro modelo."),
-    ])
-    accesos.addStretch(1)
+    v._botones_secundarios.append(
+        boton("Listado PDF", "listado.svg", lambda: v._guardar_listado_totales(),
+              "Listado PDF: listado imprimible de totales para puntear con "
+              "Aplifisa."))
+    separador()
+    # Aquí la ventana pone el cliente y el periodo (antes una fila aparte),
+    # que se queda con el sitio que sobre.
+    v.posicion_cliente = accesos.count()
 
-    v.btn_gastos = grande(
+    v.btn_gastos = boton(
         "Exportar a Aplifisa", "export-large.svg", v._exportar_todo,
         "Exporta el lote completo, no solo el resultado de la búsqueda. "
         "(Ctrl+G)", nombre="cintaPrimaria")
     v.btn_gastos.setEnabled(False)
-    grupo("Aplifisa", [v.btn_gastos])
     v.btn_ventas = v.btn_gastos

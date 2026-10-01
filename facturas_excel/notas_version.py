@@ -6,6 +6,30 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.18.0": """
+<h2>Novedades de la versión 1.18.0</h2>
+<ul>
+  <li><b>Pantalla en tres columnas.</b> A la izquierda, las facturas leídas;
+      en el centro, el documento original; a la derecha, la ficha de la
+      factura y, debajo, los totales del lote en vertical (base, cada IVA,
+      suplidos y total). La franja de totales de abajo y la columna «Bloques
+      del lote» desaparecen: el bloque se sigue eligiendo en su desplegable.</li>
+  <li><b>Arriba, solo lo que se usa.</b> Fuera el logo y el título: una fila
+      de botones con el cliente y el periodo en el centro y «Exportar a
+      Aplifisa» a la derecha. Modelos de lectura y API key siguen en el menú
+      Configuración. En ventanas pequeñas, los botones de uso ocasional se
+      quedan solo con el icono (su nombre sale al pasar el ratón).</li>
+  <li><b>Filtros a la izquierda</b> y buscador de tamaño normal; Todos /
+      Gastos / Ingresos, más pequeños, al lado.</li>
+  <li><b>✎ Corregida.</b> Si corrige a mano un dato de una factura en ámbar
+      (o elige «Usar este» en la ficha, o cambia gasto/ingreso), toda la
+      factura pasa a «✎ Corregida»: cuenta como revisada y se exporta sin
+      pulsar «Marcar revisada». Si después de su corrección el total no
+      cuadra, sigue en ámbar para que no se escape un dígito mal tecleado.
+      Las facturas a las que el programa copia ese dato (mismo proveedor)
+      siguen pendientes: esas no las ha mirado nadie.</li>
+</ul>
+""",
     "1.17.2": """
 <h2>Novedades de la versión 1.17.2</h2>
 <ul>

@@ -37,14 +37,19 @@ CAMPO_DE_COLUMNA = {c: campo for campo, c in COLUMNA_DE_CAMPO.items()}
 COLUMNAS_IMPORTE = (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE,
                     C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL)
 COLUMNAS_DATO = tuple(sorted(CAMPO_DE_COLUMNA))
+# Algo más estrechas desde la 1.18: la tabla comparte la pantalla con el
+# documento y la ficha (tres columnas) y así cabe sin desplazarse en 1920.
 ANCHOS = {
-    C_ESTADO: 112, C_TIPO: 88, C_CUENTA: 64, C_GXX: 55,
-    C_FECHA: 92, C_NUM: 100, C_NOMBRE: 172, C_NIF: 104,
-    C_BASE: 82, C_PCT: 55, C_CUOTA: 74,
-    C_BASE_RE: 82, C_PCT_RE: 55, C_CUOTA_RE: 76,
-    C_BASE_IRPF: 82, C_PCT_IRPF: 62, C_CUOTA_IRPF: 78,
-    C_TOTAL: 86,
+    C_ESTADO: 108, C_TIPO: 78, C_CUENTA: 58, C_GXX: 50,
+    C_FECHA: 86, C_NUM: 100, C_NOMBRE: 160, C_NIF: 96,
+    C_BASE: 78, C_PCT: 50, C_CUOTA: 70,
+    C_BASE_RE: 78, C_PCT_RE: 50, C_CUOTA_RE: 72,
+    C_BASE_IRPF: 78, C_PCT_IRPF: 56, C_CUOTA_IRPF: 74,
+    C_TOTAL: 82,
 }
+# Si con recargo o retenciones no queda sitio, el nombre no baja de aquí
+# (la tabla se desplaza en horizontal antes que dejarlo en «PRO…»).
+ANCHO_MIN_NOMBRE = 140
 
 
 def parse_numero(texto):
@@ -145,6 +150,35 @@ class TablaFacturas(QTableWidget):
             self.setColumnHidden(columna, True)
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        cabecera.sectionResized.connect(self._al_redimensionar_columna)
+
+    # ------------------------------------------------------- ancho nombre
+    def setColumnHidden(self, columna: int, oculta: bool) -> None:
+        super().setColumnHidden(columna, oculta)
+        self.ajustar_nombre()
+
+    def resizeEvent(self, evento):
+        super().resizeEvent(evento)
+        self.ajustar_nombre()
+
+    def _al_redimensionar_columna(self, columna, _antes, _ahora) -> None:
+        if columna != C_NOMBRE:
+            self.ajustar_nombre()
+
+    def ajustar_nombre(self) -> None:
+        """El nombre ocupa lo que sobra, pero nunca menos de ANCHO_MIN_NOMBRE."""
+        cabecera = self.horizontalHeader()
+        otras = sum(self.columnWidth(c) for c in range(self.columnCount())
+                    if c != C_NOMBRE and not self.isColumnHidden(c))
+        if self.viewport().width() - otras >= ANCHO_MIN_NOMBRE:
+            modo = QHeaderView.Stretch
+        else:
+            modo = QHeaderView.Interactive
+        if cabecera.sectionResizeMode(C_NOMBRE) != modo:
+            cabecera.setSectionResizeMode(C_NOMBRE, modo)
+        if modo == QHeaderView.Interactive \
+                and self.columnWidth(C_NOMBRE) < ANCHO_MIN_NOMBRE:
+            self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
 
     # ------------------------------------------------------------ filas
     def insertar(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
