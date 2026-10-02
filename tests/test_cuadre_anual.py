@@ -383,10 +383,14 @@ def test_la_ventana_carga_el_listado_cuadra_y_guarda_el_informe(tmp_path):
     # Por defecto, solo lo que falla.
     assert {l.estado for l in dialogo.lineas_visibles()} == {FALTA_APLIFISA, FALTA_PROGRAMA}
     assert dialogo.tabla.rowCount() == 2
+    # Lo que lleva el informe (el texto del PDF depende de las fuentes de
+    # la máquina: en las de GitHub, sin pantalla, no se puede leer).
+    contenido = dialogo.html_informe()
+    assert "PROVEEDOR CINCO SL" in contenido and "Falta en Aplifisa" in contenido
     informe = dialogo.guardar_informe(str(tmp_path / "informe"))
-    assert informe.endswith(".pdf") and os.path.getsize(informe) > 0
+    assert informe.endswith(".pdf") and os.path.getsize(informe) > 1000
     with fitz.open(informe) as doc:
-        assert "PROVEEDOR CINCO SL" in doc[0].get_text()
+        assert doc.page_count >= 1
     dialogo.close()
 
 
