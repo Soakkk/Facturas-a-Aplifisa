@@ -98,7 +98,7 @@ def test_se_puede_incluir_otra_vez_a_proposito(monkeypatch, tmp_path):
     escritos.clear()
 
     def incluir(caja):
-        next(b for b in caja.buttons() if b.text() == "Incluirlas otra vez").click()
+        next(b for b in caja.buttons() if b.text() == "Incluirlas todas otra vez").click()
     monkeypatch.setattr(QMessageBox, "exec", incluir)
     _ventana(["F-1"])._exportar_todo()
     assert escritos == [["F-1"]]
@@ -110,3 +110,100 @@ def test_olvidar_quita_del_historial():
     assert historial.buscar("12345678Z", _factura("F-9"), "gasto")
     assert historial.olvidar("12345678Z", {"gasto": [_factura("F-9")]}) == 1
     assert not historial.buscar("12345678Z", _factura("F-9"), "gasto")
+
+
+# --- Exportar las que faltaban en Aplifisa -------------------------------
+# Una factura cuenta como exportada en cuanto se crea su Excel. Si la
+# importación en Aplifisa se cancela o se queda a medias, faltan en Aplifisa
+# pero el programa las da por exportadas: antes, «Exportar sin ellas» no
+# dejaba nada y el programa se quedaba ahí, sin pasar a elegir el orden.
+
+def _listado(v, estados):
+    """Como si se hubiera comprobado el listado de Aplifisa."""
+    def contrastar(*_a):
+        v._informe_registro = object()
+        for fila, estado in enumerate(estados):
+            v.filas[fila]["registro_estado"] = estado
+    return contrastar
+
+
+def _contar_orden(monkeypatch):
+    veces = []
+    original = ventana_aplifisa.DialogoOrden
+
+    class Contado(original):
+        def exec(self):
+            veces.append(1)
+            return super().exec()
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Contado)
+    return veces
+
+
+def test_todo_exportado_ofrece_comprobar_y_exporta_solo_las_que_faltan(
+        monkeypatch, tmp_path):
+    escritos, botones = [], []
+    _preparar_exportacion(monkeypatch, tmp_path, escritos)
+    _ventana(["F-1", "F-2", "F-3"])._exportar_todo()
+    escritos.clear()
+
+    v = _ventana(["F-1", "F-2", "F-3"])        # todas ya exportadas
+    v._contrastar_registro = _listado(v, ["cuadra", "sin_registrar", "sin_registrar"])
+    orden = _contar_orden(monkeypatch)
+
+    def pulsar_el_de_siempre(caja):
+        botones.append([b.text() for b in caja.buttons()])
+        caja.defaultButton().click()
+    monkeypatch.setattr(QMessageBox, "exec", pulsar_el_de_siempre)
+    v._exportar_todo()
+    # Sin nada nuevo no se ofrece «solo las nuevas»: no quedaría nada.
+    assert not any(t.startswith("Exportar solo las nuevas") for t in botones[0])
+    assert "Comprobar con el listado de Aplifisa…" in botones[0]
+    assert "Exportar las que faltan (2)" in botones[1]
+    # Pasa a elegir el orden y el Excel lleva solo las que faltaban.
+    assert orden == [1]
+    assert escritos == [["F-2", "F-3"]]
+
+
+def test_con_el_listado_ya_comprobado_salen_las_nuevas_y_las_que_faltan(
+        monkeypatch, tmp_path):
+    escritos = []
+    _preparar_exportacion(monkeypatch, tmp_path, escritos)
+    _ventana(["F-1", "F-2"])._exportar_todo()
+    escritos.clear()
+
+    v = _ventana(["F-1", "F-2", "F-3"])        # F-3 es nueva
+    _listado(v, ["cuadra", "sin_registrar", "sin_registrar"])()
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: self.defaultButton().click())
+    v._exportar_todo()
+    assert escritos == [["F-2", "F-3"]]
+
+
+def test_si_todo_esta_en_aplifisa_no_se_exporta_sin_querer(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_exportacion(monkeypatch, tmp_path, escritos)
+    _ventana(["F-1"])._exportar_todo()
+    escritos.clear()
+    v = _ventana(["F-1"])
+    _listado(v, ["cuadra"])()
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: self.defaultButton().click())
+    v._exportar_todo()
+    assert escritos == []                       # por defecto, Cancelar
+
+    def todas(caja):
+        next(b for b in caja.buttons()
+             if b.text() == "Exportarlas todas otra vez").click()
+    monkeypatch.setattr(QMessageBox, "exec", todas)
+    v._exportar_todo()
+    assert escritos == [["F-1"]]
+
+
+def test_sin_elegir_el_listado_no_se_exporta_nada(monkeypatch, tmp_path):
+    escritos = []
+    _preparar_exportacion(monkeypatch, tmp_path, escritos)
+    _ventana(["F-1"])._exportar_todo()
+    escritos.clear()
+    v = _ventana(["F-1"])
+    v._contrastar_registro = lambda *a: None    # cerró el diálogo de archivo
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: self.defaultButton().click())
+    v._exportar_todo()
+    assert escritos == []

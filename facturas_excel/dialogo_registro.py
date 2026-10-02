@@ -45,6 +45,11 @@ class DialogoRegistro(QDialog):
             "qué dato cambia o qué apunte sobra en Aplifisa.")
         titulo.setWordWrap(True)
         raiz.addWidget(titulo)
+        if getattr(informe, "ambito", ""):
+            ambito = QLabel(informe.ambito)
+            ambito.setObjectName("textoSuave")
+            ambito.setWordWrap(True)
+            raiz.addWidget(ambito)
 
         self.tabla_totales = QTableWidget(0, 4)
         self.tabla_totales.setHorizontalHeaderLabels(

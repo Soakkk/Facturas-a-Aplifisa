@@ -6,6 +6,42 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.20.1": """
+<h2>Novedades de la versión 1.20.1</h2>
+<ul>
+  <li><b>Exportar las facturas que faltan en Aplifisa.</b> Una factura cuenta
+      como exportada en cuanto se crea su Excel, aunque luego la importación
+      en Aplifisa se cancele o se quede a medias. Antes, al volver a exportar,
+      «Exportar sin ellas» las quitaba todas, no quedaba nada y el programa
+      se paraba sin llegar a elegir el orden. Ahora:
+      <ul>
+        <li>Si todo el lote ya salió, el botón principal es <b>«Comprobar con
+            el listado de Aplifisa…»</b>: elija el PDF del listado y el
+            programa ve cuáles faltan.</li>
+        <li>Con el listado comprobado (aquí o con Comprobar → Comprobar
+            registro de Aplifisa), se ofrece <b>«Exportar las que faltan»</b>:
+            el Excel lleva solo esas (y las nuevas), y se pasa a elegir el
+            orden como siempre.</li>
+        <li>Si según el listado ya está todo en Aplifisa, por defecto no se
+            exporta nada (se puede forzar con «Exportarlas todas otra
+            vez»).</li>
+      </ul></li>
+  <li>Si no queda nada que exportar, ahora lo dice una ventana (antes era un
+      aviso discreto y parecía que «Exportar» no hacía nada).</li>
+  <li><b>Comprobar con Aplifisa: gastos con gastos e ingresos con
+      ingresos.</b> Un listado de compras se compara solo con los gastos del
+      lote (y uno de ventas, con los ingresos), y solo con las fechas que
+      cubre el listado (del primer mes al último). Antes se comparaba todo el
+      lote y los ingresos y las facturas de otros meses salían como «no
+      registradas». La ventana dice qué se ha comparado y cuántas quedan
+      fuera.</li>
+  <li><b>El listado de apuntes desglosados se lee entero.</b> Si una factura
+      no lleva número en Aplifisa, antes se desfasaba la lectura (el total de
+      la línea anterior pasaba a ser su número) y salía «el propio listado no
+      cuadra». Ahora se lee línea a línea por columnas, y las facturas se
+      cuentan bien aunque Aplifisa repita un número.</li>
+</ul>
+""",
     "1.20.0": """
 <h2>Novedades de la versión 1.20.0</h2>
 <ul>
