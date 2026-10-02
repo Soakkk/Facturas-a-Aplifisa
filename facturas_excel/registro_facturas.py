@@ -409,6 +409,18 @@ def consultar(texto: str = "", ejercicio: Optional[int] = None,
         return []
 
 
+def clientes() -> List[Tuple[str, str]]:
+    """(NIF, nombre) de los clientes con alguna factura guardada."""
+    try:
+        with _con() as con:
+            filas = con.execute(
+                "SELECT cliente_nif, MAX(cliente_nombre) FROM facturas "
+                "GROUP BY cliente ORDER BY MAX(cliente_nombre)").fetchall()
+    except sqlite3.Error:
+        return []
+    return [(f[0] or "", f[1] or "") for f in filas if f[0] or f[1]]
+
+
 def ejercicios() -> List[int]:
     try:
         with _con() as con:

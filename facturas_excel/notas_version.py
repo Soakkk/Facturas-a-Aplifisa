@@ -6,6 +6,34 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.21.0": """
+<h2>Novedades de la versión 1.21.0</h2>
+<ul>
+  <li><b>Cuadre con Aplifisa de lo guardado</b> (botón <b>«Cuadre año»</b>,
+      Comprobar → Cuadre con Aplifisa, o Ctrl+Mayús+R). Saque de Aplifisa el
+      listado de lo que quiere comprobar (del 1 de enero a hoy, 6 o 9 meses,
+      el año entero; compras, ventas o los dos) y el programa le dice si es
+      lo que tiene guardado en PDF de ese cliente, factura a factura:
+      <ul>
+        <li><b>Todo bien</b>: está en Aplifisa y su PDF está guardado.</li>
+        <li><b>Falta en Aplifisa</b>: el programa la tiene y no está
+            registrada.</li>
+        <li><b>Falta en el programa</b>: está en Aplifisa pero no hay PDF
+            guardado: hay que buscarla y escanearla.</li>
+        <li><b>Falta el PDF</b>: registrada, pero su PDF no está en la
+            carpeta del cliente.</li>
+        <li><b>Duplicada</b>: la misma factura dos veces (mismo proveedor,
+            número, fecha e importes).</li>
+        <li><b>Dato distinto</b>: la misma factura con otra fecha o
+            importe.</li>
+      </ul>
+      Mira todo lo que el programa tiene de ese cliente (todos los lotes ya
+      exportados, con su PDF) y el lote abierto. El periodo sale del listado
+      y se puede corregir. Con totales por trimestre (programa frente a
+      Aplifisa), filtro de «solo lo que falla», «Abrir su PDF», «Ver en el
+      lote» e informe en PDF para guardar o imprimir. Sin IA ni coste.</li>
+</ul>
+""",
     "1.20.1": """
 <h2>Novedades de la versión 1.20.1</h2>
 <ul>

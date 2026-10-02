@@ -130,6 +130,12 @@ def crear_cinta(v) -> None:
     v.btn_registro.changed.connect(
         lambda: v.btn_cuadrar.setEnabled(v.btn_registro.isEnabled()))
     v.btn_cuadrar.setEnabled(v.btn_registro.isEnabled())
+    v.btn_cuadre_anual = boton(
+        "Cuadre año", "registro-large.svg", lambda: v._cuadre_anual(),
+        "Cuadre con Aplifisa de lo guardado: el listado de Aplifisa del "
+        "periodo que quiera (del 1 de enero a hoy, el año entero…) frente a "
+        "todo lo que el programa tiene en PDF de ese cliente.  (Ctrl+Shift+R)")
+    v._botones_secundarios.append(v.btn_cuadre_anual)
     v._botones_secundarios.append(
         boton("Listado PDF", "listado.svg", lambda: v._guardar_listado_totales(),
               "Listado PDF: listado imprimible de totales para puntear con "

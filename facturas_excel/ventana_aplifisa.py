@@ -108,6 +108,22 @@ class AplifisaMixin:
             + (f" {len(informe.no_comprobadas)} sin comprobar (otro tipo u "
                "otras fechas)." if informe.no_comprobadas else ""))
 
+    def _cuadre_anual(self) -> None:
+        """El listado de Aplifisa del periodo que se quiera frente a todo lo
+        que el programa tiene guardado en PDF del cliente (y el lote)."""
+        from facturas_excel.dialogo_cuadre import DialogoCuadre
+        lote = [(self._leer_fila(r), self._tipo_fila(r), r)
+                for r in range(self.tabla.rowCount())]
+        dialogo = DialogoCuadre(
+            self, (getattr(self, "_cliente_nif", ""),
+                   getattr(self, "_cliente_nombre", "")), lote)
+        dialogo.exec()
+        fila = dialogo.fila_seleccionada()
+        if 0 <= fila < self.tabla.rowCount():
+            self._limpiar_filtros()
+            self.tabla.selectRow(fila)
+            self.tabla.scrollToItem(self.tabla.item(fila, C_ESTADO))
+
     def _aplicar_informe_registro(self, informe) -> None:
         self._informe_registro = informe
         for fila, estado in informe.resultados.items():
