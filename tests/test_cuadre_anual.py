@@ -573,8 +573,12 @@ def test_numeros_de_factura_escritos_de_otra_forma():
                  ("0001/A", "0001/B"), ("2026/001-R", "2026/001"), ("1/2026", "2026"),
                  ("0001/A", "1"), ("12/2026", "2026"),
                  # Revisión 4: la «R» de rectificativa delante.
-                 ("R-12", "12"), ("FR-0012", "12")):
+                 ("R-12", "12"), ("FR-0012", "12"),
+                 # Revisión 5: a un número que parece un año solo se le quitan letras.
+                 ("2026/12", "2026"), ("2025/2026", "2026")):
         assert not mismo(a, b), (a, b)
+    for a, b in (("2045", "F-2045"), ("A-1987", "1987")):
+        assert mismo(a, b), (a, b)
 
 
 def test_un_numero_distinto_veta_pero_deja_la_pista(tmp_path):
@@ -735,7 +739,7 @@ def test_nombres_por_palabras_enteras_y_el_proveedor_que_no_consta():
     assert emisor("", "S.L.", "", "S.L.") is None
     assert emisor("B12345674", "", "B-12345674", "OTRO NOMBRE") is True
     assert emisor("B12345674", "ORANGE", "A12345674", "ORANGE") is False
-    assert emisor("B1234567", "ORANGE SA", "B12345674", "ORANGE ESPAGNE") is True
+    assert emisor("B1234567", "ORANGE", "B12345674", "ORANGE ESPAGNE SAU") is True
 
 
 def test_dos_lineas_al_mismo_tipo_con_centimos_redondeados_son_dos_tiques(tmp_path):
@@ -955,3 +959,65 @@ def test_muchas_facturas_el_mismo_dia_en_poco_tiempo(tmp_path):
                                                           date(2026, 12, 31))})
     assert time.perf_counter() - inicio < 8          # aquí, en torno a un segundo
     assert len(cuadre.lineas) == 2000
+
+
+# --------------------------------------- lo que encontró la quinta revisión
+
+def test_una_comunidad_o_una_inicial_no_son_esa_persona():
+    parecidos = cuadre_anual.nombres_parecidos
+    for a, b in (("GARCIA LOPEZ C.B.", "GARCIA LOPEZ JOSE"),
+                 ("M. GARCIA LOPEZ", "GARCIA LOPEZ JOSE"),
+                 ("J. GARCIA", "GARCIA PEREZ ANA"),
+                 ("LOPEZ Y GARCIA SL", "GARCIA LOPEZ JOSE"),
+                 ("GARCIA LOPEZ SL", "GARCIA LOPEZ CB"),
+                 ("M. GARCIA LOPEZ", "J. GARCIA LOPEZ")):
+        assert not parecidos(a, b), (a, b)
+    for a, b in (("M. GARCIA LOPEZ", "GARCIA LOPEZ MARIA"),
+                 ("GARCIA LOPEZ CB", "GARCIA LOPEZ C.B."),
+                 ("ORANGE ESPAGNE SAU", "ORANGE, S.A."),
+                 ("LOPEZ Y GARCIA SL", "LOPEZ GARCIA, S.L.")):
+        assert parecidos(a, b), (a, b)
+
+
+def test_la_comunidad_de_bienes_no_es_todo_bien_con_la_persona(tmp_path):
+    _guardar(tmp_path, [_f("3/2026", "01/03/2026", "GARCIA LOPEZ C.B.", 300.0, 63.0,
+                           nif="")])
+    cuadre = _cuadrar([_apunte("12", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0)])
+    assert _por_estado(cuadre) == {FALTA_APLIFISA: ["3/2026"], FALTA_PROGRAMA: ["12"]}
+
+
+def test_el_lote_solo_se_junta_con_lo_guardado_del_mismo_titular(tmp_path):
+    """El de «GARCIA LOPEZ» sin NIF del lote no se da por el ya guardado de
+    «GARCIA LOPEZ JOSE» (puede ser otro con los mismos apellidos)."""
+    _guardar(tmp_path, [_f("3/2026", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0,
+                           nif="12345678Z")])
+    lote = [(_f("3/2026", "01/03/2026", "GARCIA LOPEZ", 300.0, 63.0, nif=""), "gasto", 4)]
+    cuadre = _cuadrar([_apunte("12", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0)],
+                      lote=lote)
+    assert _por_estado(cuadre) == {BIEN: ["3/2026"], FALTA_APLIFISA: ["3/2026"]}
+    falta = next(l for l in cuadre.lineas if l.estado == FALTA_APLIFISA)
+    assert falta.programa.fila == 4 and not cuadre.todo_bien
+
+
+def test_la_primera_factura_del_anio_no_es_un_numero_largo(tmp_path):
+    fuerte = cuadre_anual._numero_fuerte
+    assert not fuerte("2026-0001", "2026-0001") and not fuerte("F2026/1", "F2026/1")
+    assert fuerte("2026-0046", "2026-0046")
+    _guardar(tmp_path, [_f("2026-0001", "02/01/2026", "", 100.0, 21.0, nif="")])
+    cuadre = _cuadrar([_apunte_con("2026-0001", "02/01/2026", "OTRO PROVEEDOR SL",
+                                   100.0, 21.0, nif="")])
+    assert BIEN not in _por_estado(cuadre) and not cuadre.todo_bien
+
+
+def test_la_retencion_del_listado_leido_como_texto_no_se_compara():
+    """Leído como texto seguido, el listado no sabe en qué columna va cada
+    importe: una retención que cae en «recargo» no es un dato distinto."""
+    programa = [cuadre_anual.FacturaPrograma(
+        "gasto", "10/02/2026", "F-7", "ABOGADO PRUEBA", "B12345674", 100.0, 21.0, 106.0,
+        irpf=15.0, recargo=0.0, pdf=__file__)]
+    texto = Registro(tipo="gasto", formato="texto", apuntes=[
+        _apunte_con("F-7", "10/02/2026", "ABOGADO PRUEBA", 100.0, 21.0)])
+    texto.apuntes[0].recargo = 15.0                  # la columna equivocada
+    cuadre = cuadre_anual.cuadrar(programa, cuadre_anual.facturas_aplifisa(texto),
+                                  {"gasto": (DESDE, HASTA)})
+    assert [l.estado for l in cuadre.lineas] == [BIEN]

@@ -35,8 +35,8 @@ NOTAS = {
       se comprueban, y si el listado no se ha leído entero (o no trae sus
       totales) no dice «todo bien». Para dar dos facturas por la misma tiene
       que constar que son del mismo proveedor: su NIF, o su nombre entero
-      (compartir un apellido o una palabra no basta); un NIF o un nombre
-      vacío no cuentan. Dos facturas con distinto número o NIF
+      (compartir un apellido o una palabra no basta, ni una C.B. es la
+      persona que le da nombre); un NIF o un nombre vacío no cuentan. Dos facturas con distinto número o NIF
       nunca se dan por la misma: lo dudoso sale como «falta» con una pista
       de cuál podría ser. Para el cuadre más seguro de las compras, use el
       listado de <b>facturas recibidas</b> (trae el número de cada factura).

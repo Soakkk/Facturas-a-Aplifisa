@@ -188,19 +188,37 @@ def _palabras(nombre) -> frozenset:
     return _palabras_de(str(nombre or ""))
 
 
+# Familias de formas jurídicas: una S.L. y una C.B. son dos titulares.
+_FAMILIA = {"SA": "SA", "SAU": "SA", "SAL": "SA", "ANONIMA": "SA",
+            "SL": "SL", "SLU": "SL", "SLL": "SL", "SLNE": "SL", "LIMITADA": "SL",
+            "CB": "CB", "SC": "SC", "SCOOP": "COOP", "COOP": "COOP",
+            "COOPERATIVA": "COOP"}
+# Una «Y» suelta es «y» («LOPEZ Y GARCIA»), no una inicial.
+_CONJUNCIONES = {"Y"}
+
+
+@dataclass(frozen=True)
+class _Nombre:
+    palabras: frozenset     # sin forma jurídica, artículos ni letras sueltas
+    propias: frozenset      # las que dicen quién es (sin las genéricas)
+    iniciales: frozenset    # letras sueltas («M. GARCIA»)
+    formas: frozenset       # forma jurídica (S.L., C.B.…)
+    familias: frozenset
+
+
 @lru_cache(maxsize=None)
-def _palabras_todas(nombre: str) -> Tuple[frozenset, frozenset]:
-    """(sus palabras, las que dicen quién es): sin forma jurídica, artículos
-    ni letras sueltas. Las genéricas («SERVICIOS», «GRUPO»…) van en las
-    primeras, no en las segundas."""
-    todas = frozenset(p for p in _palabras_nombre(nombre)
-                      if len(p) >= 2 and p not in _FORMAS_JURIDICAS
-                      and p not in _PALABRAS_VACIAS)
-    return todas, todas - _PALABRAS_GENERICAS
+def _nombre(nombre: str) -> _Nombre:
+    piezas = _palabras_nombre(nombre)
+    palabras = frozenset(p for p in piezas if len(p) >= 2
+                         and p not in _FORMAS_JURIDICAS and p not in _PALABRAS_VACIAS)
+    formas = frozenset(p for p in piezas if p in _FORMAS_JURIDICAS)
+    return _Nombre(palabras, palabras - _PALABRAS_GENERICAS,
+                   frozenset(p for p in piezas if len(p) == 1 and p not in _CONJUNCIONES),
+                   formas, frozenset(_FAMILIA[p] for p in formas if p in _FAMILIA))
 
 
 def _propias(nombre) -> frozenset:
-    return _palabras_todas(str(nombre or ""))[1]
+    return _nombre(str(nombre or "")).propias
 
 
 @lru_cache(maxsize=None)
@@ -224,14 +242,29 @@ def nombres_parecidos(a, b) -> bool:
     dentro del otro con las palabras juntas o separadas («AQUASERVICE» y
     «VIVA AQUA SERVICE»), siempre por palabras enteras. Compartir una
     palabra no basta: «GARCIA LOPEZ JOSE» no es «GARCIA LOPEZ MARIA», ni
-    «BAR ESQUINA» es «BAR CENTRAL», ni «MARTIN» es «MARTINEZ». Un nombre sin
-    ninguna palabra que diga quién es (vacío, solo la forma jurídica o solo
-    genéricas) no se parece a nada."""
-    ta, pa = _palabras_todas(str(a or ""))
-    tb, pb = _palabras_todas(str(b or ""))
-    if not pa or not pb:
+    «BAR ESQUINA» es «BAR CENTRAL», ni «MARTIN» es «MARTINEZ». Tampoco son
+    el mismo titular «GARCIA LOPEZ C.B.» y «GARCIA LOPEZ JOSE» (una sociedad
+    o comunidad no es la persona que le da nombre), una S.L. y una C.B., ni
+    «M. GARCIA» y «GARCIA JOSE» (la inicial no es de ese nombre). Un nombre
+    sin ninguna palabra que diga quién es (vacío, solo la forma jurídica o
+    solo genéricas) no se parece a nada."""
+    na, nb = _nombre(str(a or "")), _nombre(str(b or ""))
+    if not na.propias or not nb.propias:
         return False
-    if ta <= tb or tb <= ta:
+    if na.familias and nb.familias and not (na.familias & nb.familias):
+        return False
+    if na.iniciales and nb.iniciales and not (na.iniciales & nb.iniciales):
+        return False
+    if na.palabras <= nb.palabras or nb.palabras <= na.palabras:
+        corto, largo = (na, nb) if na.palabras <= nb.palabras else (nb, na)
+        de_mas = largo.palabras - corto.palabras
+        if corto.formas and not largo.formas and de_mas - _PALABRAS_GENERICAS:
+            return False
+        for uno, otro in ((na, nb), (nb, na)):
+            sobran = otro.palabras - uno.palabras
+            if sobran and any(not any(p.startswith(i) for p in sobran)
+                              for i in uno.iniciales):
+                return False
         return True
     corto, largo = sorted((_seguidas(str(a or "")), _seguidas(str(b or ""))),
                           key=lambda s: len(s[0]))
@@ -331,13 +364,18 @@ def _mismo_numero(a, b) -> bool:
     if ta == tb:
         return True
     corto, largo = sorted((ta, tb), key=len)
-    # Tiene que quedar el número: una serie o un año solos no lo son.
-    if len(corto) == len(largo) or not any(
-            t.isdigit() and not _es_anio(t) for t in corto):
+    if len(corto) == len(largo) or not any(t.isdigit() for t in corto):
         return False
+    # Si lo que queda parece un año («2045»), solo se le quitan letras: «F-2045»
+    # es «2045», pero «1/2026» o «2026/12» no son «2026».
+    solo_anio = all(_es_anio(t) for t in corto if t.isdigit())
     sobra = len(largo) - len(corto)
     if largo[sobra:] == corto:                  # «F-2026-0012» y «12»
+        if solo_anio:
+            return all(t.isalpha() and t not in _RECTIFICATIVA for t in largo[:sobra])
         return all(_serie(t) for t in largo[:sobra])
+    if solo_anio:
+        return False
     if largo[:len(corto)] == corto:             # «12/2026» y «12»
         return all(_es_anio(t) for t in largo[len(corto):])
     # «F-2026-12» y «F-12»: el mismo con el año en medio.
@@ -354,12 +392,15 @@ def _numeros_distintos(a, b) -> bool:
 
 def _numero_fuerte(a, b) -> bool:
     """El mismo número, idéntico y con al menos cuatro cifras que cuentan
-    (sin los ceros de delante: «0001» no vale): basta para saber que es la
-    misma factura aunque no conste el proveedor."""
+    (sin los ceros de delante) y dos que no son el año: basta para saber
+    que es la misma factura aunque no conste el proveedor. «0001» o
+    «2026-0001» (la primera del año, la tiene cualquiera) no valen."""
     na = _id(str(a or ""))
     if not na or na != _id(str(b or "")):
         return False
-    return len("".join(t for t in _tramos(str(a)) if t.isdigit())) >= 4
+    cifras = [t for t in _tramos(str(a)) if t.isdigit()]
+    return (len("".join(cifras)) >= 4
+            and len("".join(t for t in cifras if not _es_anio(t))) >= 2)
 
 
 # ---------------------------------------------------------------- entradas
@@ -500,14 +541,24 @@ def facturas_del_lote(filas: Iterable[Tuple[object, str, int]]) -> List[FacturaP
     return list(por_clave.values()) + sueltas
 
 
+def _mismo_titular_seguro(q: FacturaPrograma, p: FacturaPrograma) -> bool:
+    """Para dejar de contar una de dos del programa hace falta más que un
+    nombre parecido: el mismo NIF o, si falta en una, el mismo nombre."""
+    nq, np_ = normaliza_nif(q.nif), normaliza_nif(p.nif)
+    if nq and np_:
+        return nq == np_
+    a, b = _nombre(str(q.nombre or "")), _nombre(str(p.nombre or ""))
+    return (bool(a.propias) and a.palabras == b.palabras
+            and a.iniciales == b.iniciales and a.familias == b.familias)
+
+
 def _misma_guardada(q: FacturaPrograma, p: FacturaPrograma) -> bool:
     """Dos del programa que son la misma factura: mismo día, número,
-    importes y proveedor, y que conste (dos tiques sin NIF del mismo
-    número y día, de dos tiendas, son dos)."""
+    importes y titular, y que conste (dos tiques sin NIF del mismo número y
+    día, de dos tiendas, son dos; y dos con el mismo apellido, también)."""
     return (q.tipo == p.tipo and q.dia is not None and q.dia == p.dia
             and bool(p.num_factura) and _mismo_numero(q.num_factura, p.num_factura)
-            and _mismos_importes(q, p)
-            and mismo_emisor(q.nif, q.nombre, p.nif, p.nombre) is True)
+            and _mismos_importes(q, p) and _mismo_titular_seguro(q, p))
 
 
 def juntar(registro: List[FacturaPrograma],
@@ -568,7 +619,7 @@ def _euros(valor) -> str:
 def _nombre_distinto(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
     """Los dos tienen nombre y no es el mismo (aunque se parezca)."""
     return bool(p.nombre and a.nombre) and \
-        _palabras_todas(str(p.nombre))[0] != _palabras_todas(str(a.nombre))[0]
+        _nombre(str(p.nombre)).palabras != _nombre(str(a.nombre)).palabras
 
 
 def _otro_nombre(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
@@ -576,9 +627,18 @@ def _otro_nombre(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
     return bool(p.nombre and a.nombre) and not nombres_parecidos(p.nombre, a.nombre)
 
 
+def _retenciones_comparables(a: FacturaAplifisa) -> bool:
+    """El listado leído como texto seguido (cuando no se pudo por columnas)
+    no sabe en qué columna va cada importe: su retención y recargo no
+    sirven para comparar."""
+    return a.formato != "texto"
+
+
 def _mismas_retenciones(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
     """La retención de IRPF y el recargo, si la ficha los sabe (las fichas
     antiguas no los guardaban)."""
+    if not _retenciones_comparables(a):
+        return True
     return ((p.irpf is None or _cerca(p.irpf, a.irpf))
             and (p.recargo is None or _cerca(p.recargo, a.recargo)))
 
@@ -600,9 +660,10 @@ def _diferencias(p: FacturaPrograma, a: FacturaAplifisa) -> str:
         partes.append(f"base: programa {_euros(p.base)}, Aplifisa {_euros(a.base)}")
     if not _cerca(p.cuota, a.cuota):
         partes.append(f"IVA: programa {_euros(p.cuota)}, Aplifisa {_euros(a.cuota)}")
-    if p.irpf is not None and not _cerca(p.irpf, a.irpf):
+    comparables = _retenciones_comparables(a)
+    if comparables and p.irpf is not None and not _cerca(p.irpf, a.irpf):
         partes.append(f"IRPF: programa {_euros(p.irpf)}, Aplifisa {_euros(a.irpf)}")
-    if p.recargo is not None and not _cerca(p.recargo, a.recargo):
+    if comparables and p.recargo is not None and not _cerca(p.recargo, a.recargo):
         partes.append(f"recargo: programa {_euros(p.recargo)}, "
                       f"Aplifisa {_euros(a.recargo)}")
     if p.total is not None and not _cerca(p.total, a.neto):
