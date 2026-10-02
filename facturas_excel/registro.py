@@ -99,8 +99,25 @@ class Registro:
 
     @property
     def facturas(self) -> int:
-        numeros = {a.numero for a in self.apuntes if a.numero}
-        return len(numeros) if numeros else len(self.apuntes)
+        """Aplifisa repite número en facturas distintas (las metidas después
+        toman uno ya usado) y alguna no lleva ninguno: cuenta número y fecha,
+        y cada línea sin número como una factura."""
+        numeros = {(a.numero, a.fecha) for a in self.apuntes if a.numero}
+        sueltas = sum(1 for a in self.apuntes if not a.numero)
+        return len(numeros) + sueltas if numeros else len(self.apuntes)
+
+    @property
+    def periodo(self):
+        """(desde, hasta): del primer día del mes de la primera factura al
+        último del mes de la última. El listado de apuntes no lo imprime y
+        sin él se darían por «no registradas» las del lote de otros meses."""
+        fechas = [d for d in (fecha_de(a.fecha) for a in self.apuntes) if d]
+        if not fechas:
+            return None, None
+        primera, ultima = min(fechas), max(fechas)
+        import calendar
+        fin = calendar.monthrange(ultima.year, ultima.month)[1]
+        return primera.replace(day=1), ultima.replace(day=fin)
 
     @property
     def diferencias_totales(self) -> List[str]:
@@ -132,10 +149,22 @@ def leer_registro(ruta_pdf: str) -> Registro:
         formato = _formato_posicional(doc)
         if formato:
             return _leer_posicional(doc, formato)
+        tipo = _tipo_listado_apuntes(doc)
+        por_filas = _leer_apuntes_por_filas(doc, tipo)
         for pagina in doc:
             lineas += [t.strip() for t in pagina.get_text().splitlines()
                        if t.strip()]
+    registro = _leer_por_texto(lineas)
+    registro.tipo = tipo
+    # Por filas no depende de que cada apunte traiga número (sin él, el
+    # texto seguido se desfasaba: el total de una línea pasaba a ser el
+    # número de la siguiente y se perdía su IVA).
+    if por_filas.apuntes and (por_filas.bien_leido or not registro.bien_leido):
+        return por_filas
+    return registro
 
+
+def _leer_por_texto(lineas: List[str]) -> Registro:
     registro = Registro()
     i = 0
     while i < len(lineas):
@@ -162,6 +191,120 @@ def leer_registro(ruta_pdf: str) -> Registro:
         _rellenar(apunte, trozos)
         if apunte.base is not None:
             registro.apuntes.append(apunte)
+    return registro
+
+
+# ------------------------- «LISTADO DE APUNTES DE COMPRAS/VENTAS DESGLOSADOS» --
+# Una línea por apunte: fecha, nº (no siempre), concepto, cuenta, nombre e
+# importes en sus columnas. Se lee por filas y cada importe va a la columna
+# cuya cabecera tiene más cerca.
+
+def _tipo_listado_apuntes(doc) -> str:
+    if not doc.page_count:
+        return ""
+    texto = _texto_simple(doc[0].get_text())
+    if "APUNTES DE COMPRAS" in texto or "APUNTES DE GASTOS" in texto:
+        return "gasto"
+    if "APUNTES DE VENTAS" in texto or "APUNTES DE INGRESOS" in texto:
+        return "venta"
+    return ""
+
+
+def _cabecera_apuntes(palabras, simples) -> Optional[dict]:
+    if not ("FECHA" in simples and "CUOTA" in simples and "BASE" in simples):
+        return None
+
+    def tramo(indice, hasta=None):
+        fin = palabras[hasta if hasta is not None else indice][1]
+        return palabras[indice][0], fin
+
+    columnas = {}
+    for i, s in enumerate(simples):
+        siguiente = simples[i + 1] if i + 1 < len(simples) else ""
+        if s == "BASE" and "base" not in columnas:
+            columnas["base"] = tramo(i, i + 1 if siguiente.startswith("I.V.A") else i)
+        elif s == "CUOTA" and "cuota" not in columnas:
+            columnas["cuota"] = tramo(i)
+        elif s == "RECARGO":
+            columnas["recargo"] = tramo(i)
+        elif s.replace(".", "") == "IRPF":
+            columnas["irpf"] = tramo(i)
+        elif s in ("IMP.", "NETO") and "total" not in columnas:
+            # «Imp. Neto GD»: hasta la última palabra de la cabecera.
+            columnas["total"] = (palabras[i][0], palabras[-1][1])
+    if "base" not in columnas:
+        return None
+    cto = next((palabras[i][0] for i, s in enumerate(simples)
+                if s.startswith("CTO") or s == "CONCEPTO"), None)
+    return {"centros": {c: (a + b) / 2 for c, (a, b) in columnas.items()},
+            "x_cto": cto}
+
+
+def _apunte_por_fila(palabras, col) -> Optional[Apunte]:
+    if not palabras or not FECHA.match(palabras[0][2]):
+        return None
+    valores, resto = {}, []
+    for x0, x1, t in palabras[1:]:
+        valor = _num(t)
+        if valor is not None:
+            valores[_columna_de(x0, x1, col["centros"])] = valor
+        else:
+            resto.append((x0, t))
+    if "base" not in valores:
+        return None
+    numero = ""
+    if resto and resto[0][1].isdigit() and col["x_cto"] is not None \
+            and resto[0][0] < col["x_cto"]:
+        numero = resto.pop(0)[1]
+    concepto = resto.pop(0)[1] if resto and resto[0][1].isdigit() else ""
+    if resto and resto[0][1].isdigit():
+        resto.pop(0)                     # la subcuenta del proveedor
+    neto = valores.get("total")
+    if neto is None:
+        neto = round(valores["base"] + (valores.get("cuota") or 0)
+                     + (valores.get("recargo") or 0) - (valores.get("irpf") or 0), 2)
+    return Apunte(numero=numero, fecha=palabras[0][2], concepto=concepto,
+                  nombre=" ".join(t for _, t in resto), base=valores["base"],
+                  cuota=valores.get("cuota"), recargo=valores.get("recargo"),
+                  irpf=valores.get("irpf"), neto=neto)
+
+
+def _leer_apuntes_por_filas(doc, tipo: str) -> Registro:
+    registro = Registro(tipo=tipo)
+    for pagina in doc:
+        col = None
+        filas = _filas(pagina)
+        for i, (_, fila) in enumerate(filas):
+            palabras = sorted(fila, key=lambda p: p[0])
+            simples = [_texto_simple(t) for _, _, t in palabras]
+            cabecera = _cabecera_apuntes(palabras, simples)
+            if cabecera:
+                col = cabecera
+                continue
+            if col is None:
+                continue
+            if any("ACUMULADO" in s for s in simples):
+                origen = palabras if any(_num(t) is not None for _, _, t in palabras) \
+                    else sorted(filas[max(i - 1, 0)][1], key=lambda p: p[0])
+                for x0, x1, t in origen:
+                    valor = _num(t)
+                    if valor is None:
+                        continue
+                    campo = _columna_de(x0, x1, col["centros"])
+                    if campo == "base":
+                        registro.total_base = valor
+                    elif campo == "cuota":
+                        registro.total_cuota = valor
+                    elif campo == "recargo":
+                        registro.total_recargo = valor
+                    elif campo == "irpf":
+                        registro.total_irpf = valor
+                    elif campo == "total":
+                        registro.total_neto = valor
+                continue
+            apunte = _apunte_por_fila(palabras, col)
+            if apunte:
+                registro.apuntes.append(apunte)
     return registro
 
 
@@ -468,6 +611,9 @@ class Informe:
     facturas_registro: int = 0
     lineas_programa: int = 0
     lineas_registro: int = 0
+    # Qué parte del lote se ha comparado (el tipo y las fechas del listado).
+    ambito: str = ""
+    no_comprobadas: List[int] = field(default_factory=list)
 
     @property
     def todo_cuadra(self) -> bool:
@@ -675,6 +821,45 @@ def contrastar(facturas, registro: Registro) -> Informe:
     informe.facturas_registro = registro.facturas
     informe.lineas_programa = len(facturas)
     informe.lineas_registro = len(registro.apuntes)
+    return informe
+
+
+def contrastar_listado(facturas, tipos, registro: Registro) -> Informe:
+    """Como `contrastar`, pero solo con lo que cubre el listado: un listado
+    de compras, con los gastos del lote (y uno de ventas, con los ingresos),
+    y de sus fechas. Antes se comparaba todo el lote: los ingresos y las
+    facturas de otros meses salían como «no registradas»."""
+    facturas = list(facturas)
+    indices = list(range(len(facturas)))
+    otro_tipo: List[int] = []
+    if registro.tipo in ("gasto", "venta"):
+        otro_tipo = [i for i in indices if tipos[i] != registro.tipo]
+        indices = [i for i in indices if tipos[i] == registro.tipo]
+    desde, hasta = registro.periodo
+    fuera: List[int] = []
+    if desde:
+        for i in indices:
+            dia = fecha_de(getattr(facturas[i], "fecha", ""))
+            if dia and not desde <= dia <= hasta:
+                fuera.append(i)
+        indices = [i for i in indices if i not in set(fuera)]
+    informe = contrastar([facturas[i] for i in indices], registro)
+    informe.resultados = {indices[k]: v for k, v in informe.resultados.items()}
+    informe.detalles = {indices[k]: v for k, v in informe.detalles.items()}
+    informe.no_comprobadas = sorted(otro_tipo + fuera)
+    clase = {"gasto": "gastos", "venta": "ingresos"}.get(registro.tipo, "facturas")
+    partes = [f"Se comparan los {clase} del lote"
+              + (f" del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y} (las fechas del "
+                 "listado)" if desde else "") + "."]
+    if otro_tipo:
+        otra = "ingresos" if registro.tipo == "gasto" else "gastos"
+        listado = "ventas" if registro.tipo == "gasto" else "compras"
+        partes.append(f"Los {len(otro_tipo)} {otra} no entran: compárelos con "
+                      f"el listado de {listado}.")
+    if fuera:
+        partes.append(f"{len(fuera)} {clase} del lote son de otras fechas y "
+                      "tampoco entran.")
+    informe.ambito = " ".join(partes)
     return informe
 
 

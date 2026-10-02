@@ -28,7 +28,7 @@ from facturas_excel.exportar import (
     exportar_excel, ordenar_para_exportar, totales_del_excel, verificar_excel,
 )
 from facturas_excel.procesar import aprender_nifs_exportados
-from facturas_excel.registro import contrastar, leer_registro
+from facturas_excel.registro import contrastar_listado, leer_registro
 from facturas_excel.resumen import eur
 from facturas_excel.rutas import ruta_config
 from facturas_excel.tabla_facturas import C_ESTADO
@@ -86,8 +86,12 @@ class AplifisaMixin:
                 "Tiene que ser el listado que imprime Aplifisa. Un PDF de papel "
                 "escaneado no sirve: hay que sacarlo del propio programa.")
             return
-        facturas = [self._leer_fila(r) for r in range(self.tabla.rowCount())]
-        informe = contrastar(facturas, registro)
+        filas = range(self.tabla.rowCount())
+        facturas = [self._leer_fila(r) for r in filas]
+        # Gastos con un listado de compras e ingresos con uno de ventas, y
+        # solo las fechas que cubre el listado.
+        informe = contrastar_listado(
+            facturas, [self._tipo_fila(r) for r in filas], registro)
         self._aplicar_informe_registro(informe)
         dialogo = DialogoRegistro(informe, registro, self, facturas=facturas)
         dialogo.exec()
@@ -100,7 +104,9 @@ class AplifisaMixin:
             f"Contraste con Aplifisa: {informe.emparejadas} cuadran, "
             f"{len(informe.sin_registrar)} sin registrar, "
             f"{len(informe.de_mas)} de más, {len(informe.distintas)} distintas, "
-            f"{len(informe.dudosas)} dudosas.")
+            f"{len(informe.dudosas)} dudosas."
+            + (f" {len(informe.no_comprobadas)} sin comprobar (otro tipo u "
+               "otras fechas)." if informe.no_comprobadas else ""))
 
     def _aplicar_informe_registro(self, informe) -> None:
         self._informe_registro = informe
@@ -201,6 +207,7 @@ class AplifisaMixin:
         errores = []
         pendientes_revision = []
         self._ya_exportadas_export = []
+        self._filas_export = []        # (fila, factura) de lo exportable
         for fila in range(self.tabla.rowCount()):
             f = self._leer_fila(fila)
             registro = self.filas[fila]
@@ -218,44 +225,130 @@ class AplifisaMixin:
             else:
                 if registro.get("ya_exportada"):
                     self._ya_exportadas_export.append((fila, f))
+                self._filas_export.append((fila, f))
                 por_tipo[self._tipo_fila(fila)].append(f)
         return por_tipo, excluidas, errores, pendientes_revision
 
-    def _decidir_ya_exportadas(self, por_tipo) -> bool:
-        """Pregunta qué hacer con las facturas que ya salieron en otro lote.
+    def _lineas_texto(self, pares, detalle=None) -> str:
+        """«· Línea 3: F-12 de PROVEEDOR» de las primeras ocho."""
+        lineas = "\n".join(
+            f"  · Línea {fila + 1}: {f.num_factura or 's/n'} de {f.nombre or '?'}"
+            + (detalle(fila) if detalle else "")
+            for fila, f in pares[:8])
+        if len(pares) > 8:
+            lineas += f"\n  · … y {len(pares) - 8} más"
+        return lineas
 
-        Devuelve False si se cancela la exportación. Por defecto se QUITAN:
-        volver a importarlas las registraría dos veces.
+    @staticmethod
+    def _quedarse_con(por_tipo, pares) -> None:
+        dentro = {id(f) for _fila, f in pares}
+        for tipo in por_tipo:
+            por_tipo[tipo] = [f for f in por_tipo[tipo] if id(f) in dentro]
+
+    def _decidir_ya_exportadas(self, por_tipo) -> bool:
+        """Qué hacer con lo que ya salió hacia Aplifisa. False: se cancela.
+
+        Una factura cuenta como exportada en cuanto se crea su Excel, aunque
+        luego la importación en Aplifisa se cancele o se quede a medias. Por
+        eso nunca se deja un callejón sin salida: si todo el lote ya salió,
+        no se ofrece «solo las nuevas» (no quedaría nada que exportar) sino
+        comprobar con el listado de Aplifisa cuáles faltan y exportar esas.
         """
+        if getattr(self, "_informe_registro", None) is not None:
+            return self._decidir_con_listado(por_tipo)
         ya = getattr(self, "_ya_exportadas_export", [])
         if not ya:
             return True
-        lineas = "\n".join(
-            f"  · Línea {fila + 1}: {f.num_factura or 's/n'} de "
-            f"{f.nombre or '?'} — exportada el "
-            f"{self.filas[fila]['ya_exportada'].get('exportada', '?')}"
-            for fila, f in ya[:8])
-        if len(ya) > 8:
-            lineas += f"\n  · … y {len(ya) - 8} más"
+        fuera = {id(f) for _fila, f in ya}
+        nuevas = [(fila, f) for fila, f in getattr(self, "_filas_export", [])
+                  if id(f) not in fuera]
         caja = QMessageBox(self)
         caja.setIcon(QMessageBox.Warning)
         caja.setWindowTitle("Facturas ya exportadas")
-        caja.setText(f"{len(ya)} línea(s) ya salieron hacia Aplifisa en otro "
-                     "lote. Si se vuelven a importar, quedarán registradas "
-                     "dos veces.")
-        caja.setInformativeText(lineas)
-        quitar = caja.addButton("Exportar sin ellas", QMessageBox.AcceptRole)
-        incluir = caja.addButton("Incluirlas otra vez", QMessageBox.DestructiveRole)
+        caja.setText(
+            (f"{len(ya)} línea(s) ya salieron hacia Aplifisa en otro lote."
+             if nuevas else
+             f"Todas las líneas del lote ({len(ya)}) ya salieron hacia "
+             "Aplifisa.")
+            + " Si se vuelven a importar, quedarán registradas dos veces.")
+        caja.setInformativeText(
+            self._lineas_texto(ya, lambda fila: " — exportada el "
+                               f"{self.filas[fila]['ya_exportada'].get('exportada', '?')}")
+            + "\n\n¿Alguna no llegó a entrar en Aplifisa (se canceló la "
+            "importación o la rechazó)? «Comprobar con el listado de "
+            "Aplifisa…» mira cuáles faltan y exporta solo esas.")
+        solo_nuevas = (caja.addButton(f"Exportar solo las nuevas ({len(nuevas)})",
+                                      QMessageBox.AcceptRole) if nuevas else None)
+        comprobar = caja.addButton("Comprobar con el listado de Aplifisa…",
+                                   QMessageBox.ActionRole)
+        incluir = caja.addButton("Incluirlas todas otra vez",
+                                 QMessageBox.DestructiveRole)
         caja.addButton("Cancelar", QMessageBox.RejectRole)
-        caja.setDefaultButton(quitar)
+        caja.setDefaultButton(solo_nuevas or comprobar)
         caja.exec()
         pulsado = caja.clickedButton()
-        if pulsado is quitar:
-            fuera = {id(f) for _fila, f in ya}
-            for tipo in por_tipo:
-                por_tipo[tipo] = [f for f in por_tipo[tipo] if id(f) not in fuera]
+        if pulsado is not None and pulsado is solo_nuevas:
+            self._quedarse_con(por_tipo, nuevas)
             return True
+        if pulsado is comprobar:
+            self._contrastar_registro()
+            if getattr(self, "_informe_registro", None) is None:
+                return False           # no se eligió el listado
+            return self._decidir_con_listado(por_tipo)
         return pulsado is incluir
+
+    def _decidir_con_listado(self, por_tipo) -> bool:
+        """Con el listado de Aplifisa ya comprobado se sabe lo que falta:
+        se exporta eso (lo nuevo y lo que salió pero no llegó a entrar)."""
+        exportables = getattr(self, "_filas_export", [])
+        ya = {id(f) for _fila, f in getattr(self, "_ya_exportadas_export", [])}
+
+        def estado(fila):
+            return self.filas[fila].get("registro_estado")
+        # Lo que el listado no cubre (otro tipo, otras fechas, cargado
+        # después): falta si no salió; si ya salió, se queda fuera.
+        faltan = [(fila, f) for fila, f in exportables
+                  if estado(fila) == "sin_registrar"
+                  or (estado(fila) is None and id(f) not in ya)]
+        sin_comprobar = sum(1 for fila, f in exportables
+                            if estado(fila) is None and id(f) in ya)
+        estan = len(exportables) - len(faltan) - sin_comprobar
+        if not estan and not sin_comprobar:
+            return True
+        raras = sum(1 for fila, _f in exportables
+                    if estado(fila) in ("distinta", "dudosa"))
+        caja = QMessageBox(self)
+        caja.setIcon(QMessageBox.Question if faltan else QMessageBox.Warning)
+        caja.setWindowTitle("Lo que ya está en Aplifisa")
+        if faltan:
+            caja.setText(f"Según el listado de Aplifisa, {estan} línea(s) del "
+                         f"lote ya están registradas y faltan {len(faltan)}.")
+            texto = "Se exportarán solo las que faltan:\n" + self._lineas_texto(faltan)
+        else:
+            caja.setText("Según el listado de Aplifisa no falta ninguna: "
+                         f"{estan} línea(s) del lote ya están registradas.")
+            texto = "Si se vuelven a importar, quedarán registradas dos veces."
+        if sin_comprobar:
+            texto += (f"\n\n{sin_comprobar} ya exportada(s) no entran en el "
+                      "listado (son del otro tipo o de otras fechas): no se "
+                      "exportan otra vez.")
+        if raras:
+            texto += (f"\n\n{raras} están en Aplifisa con otro importe o con "
+                      "una coincidencia dudosa: no se exportan otra vez. "
+                      "Revíselas con el filtro «Aplifisa: solo diferencias».")
+        caja.setInformativeText(texto)
+        boton_faltan = (caja.addButton(f"Exportar las que faltan ({len(faltan)})",
+                                       QMessageBox.AcceptRole) if faltan else None)
+        todas = caja.addButton("Exportarlas todas otra vez",
+                               QMessageBox.DestructiveRole)
+        cancelar = caja.addButton("Cancelar", QMessageBox.RejectRole)
+        caja.setDefaultButton(boton_faltan or cancelar)
+        caja.exec()
+        pulsado = caja.clickedButton()
+        if pulsado is not None and pulsado is boton_faltan:
+            self._quedarse_con(por_tipo, faltan)
+            return True
+        return pulsado is todas
 
     def _nombre_cliente_archivo(self) -> str:
         nombre = (getattr(self, "_cliente_nombre", "") or
@@ -307,10 +400,13 @@ class AplifisaMixin:
         if not self._decidir_ya_exportadas(por_tipo):
             return
         if not any(por_tipo.values()):
-            self._avisar(
-                "No hay facturas nuevas para exportar: las "
+            # Con una ventana, no en la banda: si no, parece que «Exportar»
+            # no hace nada.
+            QMessageBox.information(
+                self, "Nada que exportar",
+                "No queda ninguna factura para el Excel: las "
                 f"{len(excluidas) + len(self._ya_exportadas_export)} línea(s) "
-                "que quedan están duplicadas o ya se exportaron.", INFO)
+                "del lote están duplicadas o ya se exportaron.")
             return
 
         # El orden manda: Aplifisa renumera las facturas recibidas segun entran,

@@ -396,3 +396,109 @@ def test_el_irpf_del_listado_de_ingresos_cuadra_tambien_el_total(
     assert informe.todo_cuadra
     assert informe.descuadre_irpf == informe.descuadre_total == 0
     assert (informe.facturas_programa, informe.lineas_programa) == (2, 2)
+
+
+# --- «Listado de apuntes de compras desglosados», leído por filas ----------
+# Como lo imprime Aplifisa: una línea por apunte, importes alineados a la
+# derecha en su columna y alguna factura sin número (se metió después).
+
+def _derecha(pagina, x_fin, y, texto, tam=7):
+    pagina.insert_text((x_fin - fitz.get_text_length(texto, fontsize=tam), y),
+                       texto, fontsize=tam)
+
+
+def _listado_por_filas(ruta, filas, totales, titulo="COMPRAS"):
+    doc = fitz.open()
+    pagina = doc.new_page()
+    pagina.insert_text((112, 125), f"LISTADO DE APUNTES DE {titulo} DESGLOSADOS",
+                       fontsize=9)
+    for x, texto in ((30, "Fecha"), (86, "Factura"), (136, "Cto."),
+                     (218, "Cuenta"), (317, "Base"), (341, "I.V.A."),
+                     (377, "Cuota"), (419, "Recargo"), (469, "I.R.P.F."),
+                     (514, "Imp."), (535, "Neto"), (561, "GD")):
+        pagina.insert_text((x, 152), texto, fontsize=7)
+    y = 168
+    for numero, fecha, cto, cuenta, nombre, base, cuota, neto in filas:
+        pagina.insert_text((17, y), fecha, fontsize=7)
+        if numero:
+            _derecha(pagina, 137, y, numero)
+        pagina.insert_text((139, y), cto, fontsize=7)
+        pagina.insert_text((169, y), cuenta, fontsize=7)
+        pagina.insert_text((179, y), nombre, fontsize=7)
+        _derecha(pagina, 369, y, base)
+        if cuota:
+            _derecha(pagina, 415, y, cuota)
+        _derecha(pagina, 563, y, neto)
+        y += 14
+    for desplazamiento, etiqueta in ((0, "TOTAL DE PAGINA .........."),
+                                     (18, "TOTAL ACUMULADO .......")):
+        for x_fin, valor in zip((366, 413, 561), totales):
+            _derecha(pagina, x_fin, y + 10 + desplazamiento, valor)
+        pagina.insert_text((209, y + 13 + desplazamiento), etiqueta, fontsize=7)
+    doc.save(str(ruta))
+    doc.close()
+    return str(ruta)
+
+
+FILAS = [
+    ("29", "02/06/2026", "622", "51", "PROVEEDOR UNO SL", "400,00", "84,00", "484,00"),
+    ("44", "08/06/2026", "628", "89", "TELECOM PRUEBA SA", "90,00", "18,90", "108,90"),
+    ("44", "08/06/2026", "628", "89", "TELECOM PRUEBA SA", "12,00", "", "12,00"),
+    ("40", "20/06/2026", "628", "18", "GASOLINERA PRUEBA", "30,00", "3,00", "33,00"),
+    ("", "23/06/2026", "681", "89", "TELECOM PRUEBA SA", "700,00", "147,00", "847,00"),
+    ("7", "09/07/2026", "628", "89", "TELECOM PRUEBA SA", "80,00", "16,80", "96,80"),
+    ("7", "17/07/2026", "628", "28", "COMBUSTIBLES PRUEBA SL", "1.500,00", "315,00", "1.815,00"),
+    ("23", "20/09/2026", "628", "18", "GASOLINERA PRUEBA", "20,00", "4,20", "24,20"),
+]
+TOTALES = ("2.832,00", "588,90", "3.420,90")
+
+
+def test_listado_por_filas_con_una_factura_sin_numero(tmp_path):
+    """La del 23/06 no lleva número: antes el total de la línea anterior
+    (33,00) pasaba a ser su número y a esa le faltaba el IVA, y el propio
+    listado «no cuadraba»."""
+    r = leer_registro(_listado_por_filas(tmp_path / "compras.pdf", FILAS, TOTALES))
+    assert r.tipo == "gasto"
+    assert len(r.apuntes) == len(FILAS)
+    assert r.bien_leido, r.diferencias_totales
+    assert (r.suma_base, r.suma_cuota, r.suma_neto) == (2832.0, 588.9, 3420.9)
+    gasolinera = r.apuntes[3]
+    assert (gasolinera.numero, gasolinera.cuota, gasolinera.neto) == ("40", 3.0, 33.0)
+    sin_numero = r.apuntes[4]
+    assert (sin_numero.numero, sin_numero.fecha, sin_numero.base) == ("", "23/06/2026", 700.0)
+    assert sin_numero.concepto == "681" and sin_numero.nombre == "TELECOM PRUEBA SA"
+    assert r.apuntes[2].cuota is None and r.apuntes[2].neto == 12.0
+    # Mismo número en facturas distintas (7) y dos líneas de una (44).
+    assert r.facturas == 7
+    from datetime import date
+    assert r.periodo == (date(2026, 6, 1), date(2026, 9, 30))
+
+
+def test_un_listado_de_ventas_es_de_ventas(tmp_path):
+    r = leer_registro(_listado_por_filas(tmp_path / "ventas.pdf", FILAS[:1],
+                                         ("400,00", "84,00", "484,00"),
+                                         titulo="VENTAS"))
+    assert r.tipo == "venta" and r.bien_leido
+
+
+def test_se_comparan_los_gastos_de_las_fechas_del_listado(tmp_path):
+    from facturas_excel.registro import contrastar_listado
+    r = leer_registro(_listado_por_filas(tmp_path / "compras.pdf", FILAS, TOTALES))
+    lote = [factura(a.fecha, a.base, a.cuota, a.nombre) for a in r.apuntes]
+    tipos = ["gasto"] * len(lote)
+    lote.append(factura("30/06/2026", 500.0, 105.0, "CLIENTE PRUEBA SL"))
+    tipos.append("venta")                       # un ingreso
+    lote.append(factura("31/05/2026", 200.0, 42.0, "OTRO PROVEEDOR SL"))
+    tipos.append("gasto")                       # de antes del listado
+    lote.append(factura("15/08/2026", 60.0, 12.6, "FALTA PRUEBA SL"))
+    tipos.append("gasto")                       # esta sí falta en Aplifisa
+
+    informe = contrastar_listado(lote, tipos, r)
+    assert informe.sin_registrar and len(informe.sin_registrar) == 1
+    assert informe.resultados[len(lote) - 1] == "sin_registrar"
+    assert informe.no_comprobadas == [len(FILAS), len(FILAS) + 1]
+    assert len(FILAS) not in informe.resultados
+    assert informe.emparejadas == len(FILAS)
+    assert "del 01/06/2026 al 30/09/2026" in informe.ambito
+    assert "1 ingresos no entran" in informe.ambito.replace("Los ", "")
+    assert "1 gastos del lote son de otras fechas" in informe.ambito
