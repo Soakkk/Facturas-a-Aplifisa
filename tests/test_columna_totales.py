@@ -189,15 +189,22 @@ def test_el_ancho_de_los_totales_se_guarda_aunque_esten_ocultos(monkeypatch):
     assert abs(v.split_revision.sizes()[2] - ancho) <= 10
 
 
-def test_el_nombre_vuelve_a_su_minimo_al_estrechar_de_golpe():
+def test_el_nombre_mide_su_contenido_y_vuelve_a_su_minimo_al_estrechar():
+    """Desde la 1.19.1 el nombre ya no se queda con todo el hueco: mide su
+    texto (ver test_anchos_columnas.py) y, sin sitio, baja a su mínimo."""
+    from PySide6.QtWidgets import QTableWidgetItem
+
     from facturas_excel.tabla_facturas import (
         ANCHO_MIN_NOMBRE, C_NOMBRE, TablaFacturas,
     )
     t = TablaFacturas()
+    t.setRowCount(1)
+    t.setItem(0, C_NOMBRE, QTableWidgetItem("COMERCIAL DE SUMINISTROS INDUSTRIALES SL"))
     t.resize(2200, 300)
     t.show()
     _app.processEvents()
-    assert t.columnWidth(C_NOMBRE) > ANCHO_MIN_NOMBRE
+    # Antes se estiraba a más de 1000 px con esta tabla tan ancha.
+    assert ANCHO_MIN_NOMBRE < t.columnWidth(C_NOMBRE) < 600
     t.resize(900, 300)
     _app.processEvents()
     assert t.columnWidth(C_NOMBRE) == ANCHO_MIN_NOMBRE

@@ -158,6 +158,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_divisores.setSingleShot(True)
         self._timer_divisores.setInterval(350)
         self._timer_divisores.timeout.connect(self._guardar_divisores)
+        self._timer_anchos_columnas = QTimer(self)
+        self._timer_anchos_columnas.setSingleShot(True)
+        self._timer_anchos_columnas.setInterval(350)
+        self._timer_anchos_columnas.timeout.connect(self._guardar_anchos_columnas)
         central = QWidget()
         raiz = QVBoxLayout(central)
         raiz.setContentsMargins(0, 0, 0, 0)
@@ -450,6 +454,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # Excel pulsa Intro sin pensar). Ctrl+Intro: correcta y siguiente.
         self.tabla.intro.connect(lambda: self._siguiente_incidencia())
         self.tabla.ctrl_intro.connect(self._correcta_y_siguiente)
+        # Las columnas miden lo que su contenido; las que se ensanchan o
+        # estrechan arrastrando el borde se recuerdan de una vez para otra.
+        self.tabla.poner_anchos_usuario(ajustes.leer("anchos_columnas", {}))
+        self.tabla.anchos_cambiados.connect(
+            lambda *_: self._timer_anchos_columnas.start())
         lt.addWidget(self.tabla, 1)
 
         split.addWidget(tabla_card)
@@ -910,6 +919,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._distribuir_herramientas(self.width())
         self._timer_divisores.start()
 
+    def _guardar_anchos_columnas(self):
+        self._timer_anchos_columnas.stop()
+        ajustes.guardar("anchos_columnas", self.tabla.anchos_usuario())
+
     def _guardar_divisores(self):
         # Claves nuevas en la 1.18: los tamaños de antes eran de otras
         # columnas (con la lista de bloques) y no deben heredarse.
@@ -1030,6 +1043,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.accion_todas_columnas.setChecked(
             bool(ajustes.leer("ver_todas_columnas", False)))
         self.accion_todas_columnas.toggled.connect(self._ver_todas_columnas)
+        # Deshace los anchos fijados a mano (también: doble clic en un borde).
+        self.accion_ajustar_columnas = ver.addAction(
+            "Ajustar las columnas al contenido")
+        self.accion_ajustar_columnas.triggered.connect(
+            lambda: self.tabla.restablecer_anchos())
         config =self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
@@ -1365,6 +1383,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.esperar_hilos()
         try:
             self._guardar_divisores()
+            if self._timer_anchos_columnas.isActive():
+                self._guardar_anchos_columnas()
             self._guardar_sesion()
         except Exception:
             pass

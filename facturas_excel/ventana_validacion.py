@@ -353,6 +353,7 @@ class ValidacionMixin:
     def _menu_columnas(self, posicion) -> None:
         menu = QMenu(self)
         menu.addAction(self.accion_todas_columnas)
+        menu.addAction(self.accion_ajustar_columnas)
         menu.exec(self.tabla.horizontalHeader().mapToGlobal(posicion))
 
     def _revalidar_todo(self):

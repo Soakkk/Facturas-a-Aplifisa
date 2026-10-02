@@ -6,10 +6,11 @@ una celda, dice qué dato de la factura ha cambiado (`valor_de_celda`).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem,
+    QToolTip,
 )
 
 from .conceptos import SUBCLAVES_628
@@ -39,19 +40,26 @@ CAMPO_DE_COLUMNA = {c: campo for campo, c in COLUMNA_DE_CAMPO.items()}
 COLUMNAS_IMPORTE = (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE,
                     C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL)
 COLUMNAS_DATO = tuple(sorted(CAMPO_DE_COLUMNA))
-# Algo más estrechas desde la 1.18: la tabla comparte la pantalla con el
-# documento y la ficha (tres columnas) y así cabe sin desplazarse en 1920.
-ANCHOS = {
-    C_ESTADO: 108, C_TIPO: 78, C_CUENTA: 58, C_GXX: 50,
-    C_FECHA: 86, C_NUM: 100, C_NOMBRE: 160, C_NIF: 96,
-    C_BASE: 78, C_PCT: 50, C_CUOTA: 70,
-    C_BASE_RE: 78, C_PCT_RE: 50, C_CUOTA_RE: 72,
-    C_BASE_IRPF: 78, C_PCT_IRPF: 56, C_CUOTA_IRPF: 74,
-    C_TOTAL: 82,
+# Anchos desde la 1.19.1: cada columna mide lo que su texto más largo, con
+# aire a los lados, entre un mínimo y un máximo. Antes el nombre se quedaba
+# con todo el hueco (más de 500 px para «WÜRTH ESPAÑA, S.A.») mientras el
+# número de factura salía cortado a 100 px. El ancho que se fija arrastrando
+# un borde manda y se recuerda; doble clic en el borde vuelve al automático.
+AIRE_CELDA = 18   # px que se suman al texto: ni pegado al borde ni hueco de sobra
+LIMITES_ANCHO = {  # (mínimo, máximo) en px
+    C_ESTADO: (96, 150), C_TIPO: (72, 110), C_CUENTA: (52, 90), C_GXX: (46, 70),
+    C_FECHA: (80, 110), C_NUM: (90, 200), C_NOMBRE: (140, 380), C_NIF: (88, 130),
+    C_BASE: (64, 130), C_PCT: (50, 74), C_CUOTA: (60, 120),
+    C_BASE_RE: (64, 130), C_PCT_RE: (50, 74), C_CUOTA_RE: (60, 120),
+    C_BASE_IRPF: (64, 130), C_PCT_IRPF: (50, 80), C_CUOTA_IRPF: (64, 120),
+    C_TOTAL: (68, 130), C_BLOQUE: (80, 260),
 }
 # Si con recargo o retenciones no queda sitio, el nombre no baja de aquí
 # (la tabla se desplaza en horizontal antes que dejarlo en «PRO…»).
-ANCHO_MIN_NOMBRE = 140
+ANCHO_MIN_NOMBRE = LIMITES_ANCHO[C_NOMBRE][0]
+# Si no cabe todo, se estrechan estas (hasta su mínimo, en proporción a lo
+# que les sobra) antes de que la tabla tenga que desplazarse en horizontal.
+COLUMNAS_ELASTICAS = (C_NOMBRE, C_NUM)
 
 
 def parse_numero(texto):
@@ -136,9 +144,16 @@ class TablaFacturas(QTableWidget):
     # Ctrl+Intro: dar por buena la que se ve y pasar a la siguiente.
     intro = Signal()
     ctrl_intro = Signal()
+    # Los anchos fijados a mano cambiaron: {título de columna: px}.
+    anchos_cambiados = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(0, len(COLS), parent)
+        self._listo = False
+        self._anchos_usuario: dict[int, int] = {}   # columna -> px (a mano)
+        self._contenido: dict[int, int] = {}        # columna -> px que pide
+        self._contenido_sucio = True
+        self._ajustando = False
         self.setAlternatingRowColors(True)
         self.setHorizontalHeaderLabels(COLS)
         self.setShowGrid(False)
@@ -146,10 +161,8 @@ class TablaFacturas(QTableWidget):
         self.verticalHeader().setDefaultSectionSize(38)
         cabecera = self.horizontalHeader()
         cabecera.setSectionResizeMode(QHeaderView.Interactive)
-        cabecera.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
         cabecera.setSectionsClickable(True)
-        for columna, ancho in ANCHOS.items():
-            self.setColumnWidth(columna, ancho)
+        cabecera.setMinimumSectionSize(40)
         # Bloque ya está en el filtro; recargo y retenciones se enseñan solo
         # cuando tocan (ver `columnas_visibles`).
         self.setColumnHidden(C_BLOQUE, True)
@@ -157,7 +170,20 @@ class TablaFacturas(QTableWidget):
             self.setColumnHidden(columna, True)
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # Cualquier cambio de texto o de letra (negrita de un aviso) puede
+        # pedir otro ancho: se recalcula una vez, al volver al bucle de eventos.
+        self._timer_anchos = QTimer(self)
+        self._timer_anchos.setSingleShot(True)
+        self._timer_anchos.setInterval(0)
+        self._timer_anchos.timeout.connect(self.ajustar_anchos)
+        modelo = self.model()
+        for senal in (modelo.dataChanged, modelo.rowsInserted,
+                      modelo.rowsRemoved, modelo.modelReset):
+            senal.connect(self._programar_anchos)
         cabecera.sectionResized.connect(self._al_redimensionar_columna)
+        cabecera.sectionHandleDoubleClicked.connect(self._ancho_automatico)
+        self._listo = True
+        self.ajustar_anchos()
 
     def keyPressEvent(self, evento):
         # Mientras se edita una celda, Intro lo recibe el editor (confirma lo
@@ -175,37 +201,153 @@ class TablaFacturas(QTableWidget):
                 return
         super().keyPressEvent(evento)
 
-    # ------------------------------------------------------- ancho nombre
+    # ----------------------------------------------------------- anchos
     def setColumnHidden(self, columna: int, oculta: bool) -> None:
-        super().setColumnHidden(columna, oculta)
-        self.ajustar_nombre()
+        # Ocultar deja la sección a 0 px (y mostrarla la devuelve): eso no es
+        # un ancho elegido por la persona y no debe recordarse.
+        previo, self._ajustando = self._ajustando, True
+        try:
+            super().setColumnHidden(columna, oculta)
+        finally:
+            self._ajustando = previo
+        self.ajustar_anchos()
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)
-        self.ajustar_nombre()
+        self.ajustar_anchos()
 
-    def _al_redimensionar_columna(self, columna, _antes, _ahora) -> None:
-        if columna != C_NOMBRE:
-            self.ajustar_nombre()
+    def _programar_anchos(self, *_) -> None:
+        self._contenido_sucio = True
+        self._timer_anchos.start()
 
-    def ajustar_nombre(self) -> None:
-        """El nombre ocupa lo que sobra, pero nunca menos de ANCHO_MIN_NOMBRE."""
-        cabecera = self.horizontalHeader()
-        otras = sum(self.columnWidth(c) for c in range(self.columnCount())
-                    if c != C_NOMBRE and not self.isColumnHidden(c))
-        if self.viewport().width() - otras >= ANCHO_MIN_NOMBRE:
-            modo = QHeaderView.Stretch
-        else:
-            modo = QHeaderView.Interactive
-        if cabecera.sectionResizeMode(C_NOMBRE) != modo:
-            cabecera.setSectionResizeMode(C_NOMBRE, modo)
-            if modo == QHeaderView.Interactive:
-                # El reparto del Stretch es diferido: sin esto se quedaría el
-                # ancho estirado de antes y empujaría los importes fuera.
-                self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
-        if modo == QHeaderView.Interactive \
-                and self.columnWidth(C_NOMBRE) < ANCHO_MIN_NOMBRE:
-            self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
+    def _ancho_contenido(self, columna: int) -> int:
+        """Lo que pide el texto más largo de la columna, cabecera incluida.
+
+        Cuenta también las filas que esconde un filtro: así las columnas no
+        bailan al filtrar por mes o por estado.
+        """
+        base = self.font()
+        metricas = {}
+        ancho = self.horizontalHeader().sectionSizeHint(columna) + 4
+        for r in range(self.rowCount()):
+            control = self.cellWidget(r, columna)
+            if control is not None:
+                ancho = max(ancho, control.sizeHint().width() + 6)
+                continue
+            item = self.item(r, columna)
+            texto = item.text() if item is not None else ""
+            if not texto:
+                continue
+            fuente = item.font().resolve(base)   # negrita de un aviso, etc.
+            clave = fuente.key()
+            if clave not in metricas:
+                metricas[clave] = QFontMetrics(fuente)
+            ancho = max(ancho, metricas[clave].horizontalAdvance(texto)
+                        + AIRE_CELDA)
+        return ancho
+
+    def ajustar_anchos(self) -> None:
+        """Cada columna a lo que pide su contenido (o a lo fijado a mano).
+
+        Si no cabe todo, se estrechan las COLUMNAS_ELASTICAS hasta su mínimo,
+        en proporción a lo que les sobra; si ni así cabe, la tabla se desplaza.
+        """
+        if not getattr(self, "_listo", False):
+            return
+        self._timer_anchos.stop()
+        if self._contenido_sucio:
+            self.ensurePolished()   # la letra de la hoja de estilos
+            self._contenido = {c: self._ancho_contenido(c)
+                               for c in range(self.columnCount())}
+            self._contenido_sucio = False
+        anchos = {}
+        for c in range(self.columnCount()):
+            if self.isColumnHidden(c):
+                continue
+            if c in self._anchos_usuario:
+                anchos[c] = self._anchos_usuario[c]
+            else:
+                minimo, maximo = LIMITES_ANCHO.get(c, (48, 300))
+                anchos[c] = max(minimo, min(maximo, self._contenido.get(c, 0)))
+        falta = sum(anchos.values()) - self.viewport().width()
+        elasticas = [c for c in COLUMNAS_ELASTICAS
+                     if c in anchos and c not in self._anchos_usuario]
+        holgura = {c: anchos[c] - LIMITES_ANCHO[c][0] for c in elasticas}
+        total = sum(holgura.values())
+        if falta > 0 and total > 0:
+            quitar = restante = min(falta, total)
+            for i, c in enumerate(elasticas):
+                parte = (restante if i == len(elasticas) - 1
+                         else round(quitar * holgura[c] / total))
+                parte = min(parte, holgura[c], restante)
+                anchos[c] -= parte
+                restante -= parte
+        self._ajustando = True
+        try:
+            for c, ancho in anchos.items():
+                if self.columnWidth(c) != ancho:
+                    self.setColumnWidth(c, ancho)
+        finally:
+            self._ajustando = False
+
+    def _al_redimensionar_columna(self, columna, _antes, ahora) -> None:
+        if (self._ajustando or not self._listo or ahora <= 0
+                or self.isColumnHidden(columna)):
+            return
+        # La ha movido la persona arrastrando el borde: ese ancho manda (las
+        # demás no se recolocan, para que no salten mientras arrastra).
+        self._anchos_usuario[columna] = ahora
+        self.anchos_cambiados.emit(self.anchos_usuario())
+
+    def _ancho_automatico(self, columna: int) -> None:
+        """Doble clic en el borde: esa columna vuelve a medir su contenido."""
+        self._anchos_usuario.pop(columna, None)
+        self.anchos_cambiados.emit(self.anchos_usuario())
+        self.ajustar_anchos()
+
+    def anchos_usuario(self) -> dict:
+        """Los anchos fijados a mano, por título de columna (para guardarlos)."""
+        return {COLS[c]: ancho for c, ancho in sorted(self._anchos_usuario.items())}
+
+    def poner_anchos_usuario(self, anchos) -> None:
+        """Recupera lo guardado con `anchos_usuario` (ignora lo que no encaje)."""
+        self._anchos_usuario = {}
+        if isinstance(anchos, dict):
+            for titulo, ancho in anchos.items():
+                if (titulo in COLS and isinstance(ancho, int)
+                        and not isinstance(ancho, bool) and 20 <= ancho <= 2000):
+                    self._anchos_usuario[COLS.index(titulo)] = ancho
+        self.ajustar_anchos()
+
+    def restablecer_anchos(self) -> None:
+        """Todas las columnas vuelven a ajustarse a su contenido."""
+        self._anchos_usuario = {}
+        self.anchos_cambiados.emit({})
+        self.ajustar_anchos()
+
+    def texto_recortado(self, indice) -> str:
+        """El texto entero de una celda que no cabe en su ancho ('' si cabe)."""
+        item = self.itemFromIndex(indice) if indice.isValid() else None
+        texto = item.text() if item is not None else ""
+        if not texto:
+            return ""
+        metricas = QFontMetrics(item.font().resolve(self.font()))
+        # Unos px de margen: los que deja el propio dibujo de la celda.
+        cabe = metricas.horizontalAdvance(texto) + 8 <= self.columnWidth(indice.column())
+        return "" if cabe else texto
+
+    def viewportEvent(self, evento):
+        # Una celda cortada («ESCAYOLAS LÓPEZ OTROS…») enseña su texto entero
+        # al pasar el ratón, salvo que ya tenga su propia ayuda (un aviso).
+        if evento.type() == QEvent.ToolTip:
+            indice = self.indexAt(evento.pos())
+            item = self.itemFromIndex(indice) if indice.isValid() else None
+            entero = self.texto_recortado(indice)
+            if entero and item is not None and not item.toolTip():
+                QToolTip.showText(evento.globalPos(), entero, self.viewport(),
+                                  self.visualRect(indice))
+                return True
+        return super().viewportEvent(evento)
 
     # ------------------------------------------------------------ filas
     def insertar(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
