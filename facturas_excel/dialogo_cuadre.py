@@ -99,33 +99,40 @@ class DialogoCuadre(QDialog):
         fila_cliente.addWidget(self.combo_cliente, 1)
         raiz.addLayout(fila_cliente)
 
-        fila_listados = QHBoxLayout()
+        # Cada listado con su periodo: el que se pidió a Aplifisa.
         self.botones_listado, self.etiquetas_listado = {}, {}
+        self.desde, self.hasta = {}, {}
+        hoy = date.today()
         for tipo, texto in (("gasto", "Listado de compras…"),
                             ("venta", "Listado de ventas…")):
+            fila = QHBoxLayout()
             boton = QPushButton(texto)
             boton.clicked.connect(lambda _c=False, t=tipo: self._elegir_listado(t))
             etiqueta = QLabel("Sin cargar")
             etiqueta.setObjectName("textoSuave")
             self.botones_listado[tipo] = boton
             self.etiquetas_listado[tipo] = etiqueta
-            fila_listados.addWidget(boton)
-            fila_listados.addWidget(etiqueta, 1)
-        raiz.addLayout(fila_listados)
+            fila.addWidget(boton)
+            fila.addWidget(etiqueta, 1)
+            fila.addWidget(QLabel("del"))
+            self.desde[tipo] = QDateEdit(_qdate(date(hoy.year, 1, 1)))
+            self.hasta[tipo] = QDateEdit(_qdate(hoy))
+            for editor in (self.desde[tipo], self.hasta[tipo]):
+                editor.setCalendarPopup(True)
+                editor.setDisplayFormat("dd/MM/yyyy")
+                editor.setEnabled(False)
+                editor.dateChanged.connect(lambda *_: self._invalidar())
+            fila.addWidget(self.desde[tipo])
+            fila.addWidget(QLabel("al"))
+            fila.addWidget(self.hasta[tipo])
+            raiz.addLayout(fila)
 
         fila_periodo = QHBoxLayout()
-        fila_periodo.addWidget(QLabel("Periodo: del"))
-        hoy = date.today()
-        self.desde = QDateEdit(_qdate(date(hoy.year, 1, 1)))
-        self.hasta = QDateEdit(_qdate(hoy))
-        for editor in (self.desde, self.hasta):
-            editor.setCalendarPopup(True)
-            editor.setDisplayFormat("dd/MM/yyyy")
-        fila_periodo.addWidget(self.desde)
-        fila_periodo.addWidget(QLabel("al"))
-        fila_periodo.addWidget(self.hasta)
-        ayuda = QLabel("Ponga las mismas fechas que pidió a Aplifisa.")
+        ayuda = QLabel("Ponga en cada listado las mismas fechas que pidió a "
+                       "Aplifisa: lo guardado de esas fechas que no esté en "
+                       "Aplifisa saldrá como «falta».")
         ayuda.setObjectName("textoSuave")
+        ayuda.setWordWrap(True)
         fila_periodo.addWidget(ayuda, 1)
         self.boton_cuadrar = QPushButton("Cuadrar")
         self.boton_cuadrar.setObjectName("primario")
@@ -229,71 +236,90 @@ class DialogoCuadre(QDialog):
         registro.tipo = tipo
         self._listados[tipo] = registro
         self._rutas[tipo] = ruta
-        desde, hasta = registro.periodo
         aviso = "" if registro.bien_leido else " · ⚠ sus totales no cuadran"
         self.etiquetas_listado[tipo].setText(
-            f"{os.path.basename(ruta)}: {registro.facturas} facturas"
-            + (f", {desde:%d/%m/%Y}–{hasta:%d/%m/%Y}" if desde else "") + aviso)
-        inicio, fin = cuadre_anual.periodo_de_listados(self._listados.values())
+            f"{os.path.basename(ruta)}: {registro.facturas} facturas" + aviso)
+        inicio, fin = cuadre_anual.periodo_de_listado(registro)
         if inicio:
-            self.desde.setDate(_qdate(inicio))
-            self.hasta.setDate(_qdate(fin))
+            self.desde[tipo].setDate(_qdate(inicio))
+            self.hasta[tipo].setDate(_qdate(fin))
+        self.desde[tipo].setEnabled(True)
+        self.hasta[tipo].setEnabled(True)
         self.boton_cuadrar.setEnabled(True)
         self._invalidar()
         return True
+
+    def periodos(self) -> dict:
+        salida = {}
+        for tipo in self._listados:
+            desde = _pydate(self.desde[tipo].date())
+            hasta = _pydate(self.hasta[tipo].date())
+            salida[tipo] = (min(desde, hasta), max(desde, hasta))
+        return salida
 
     # ------------------------------------------------------------ cuadrar
     def cuadrar(self) -> None:
         if not self._listados:
             return
-        desde, hasta = _pydate(self.desde.date()), _pydate(self.hasta.date())
-        if desde > hasta:
-            desde, hasta = hasta, desde
-        nif, nombre = self.cliente()
-        programa = cuadre_anual.facturas_del_registro(nif, nombre, desde, hasta)
-        if self._lote and cuadre_anual.mismo_cliente((nif, nombre), self._cliente_lote):
-            programa = cuadre_anual.juntar(
-                programa, cuadre_anual.facturas_del_lote(self._lote))
+        periodos = self.periodos()
         aplifisa = []
         for tipo, registro in self._listados.items():
             aplifisa += cuadre_anual.facturas_aplifisa(registro, tipo)
-        self.cuadre = cuadre_anual.cuadrar(
-            programa, aplifisa, desde, hasta, tuple(self._listados))
+        # Todas las líneas del listado se comprueban: se leen los años de
+        # todas, no solo los del periodo.
+        primero, ultimo = cuadre_anual.anios_a_cargar(periodos, aplifisa)
+        nif, nombre = self.cliente()
+        programa = cuadre_anual.facturas_del_registro(nif, nombre, primero, ultimo)
+        if self._lote and cuadre_anual.mismo_cliente((nif, nombre), self._cliente_lote):
+            programa = cuadre_anual.juntar(
+                programa, cuadre_anual.facturas_del_lote(self._lote))
+        self.cuadre = cuadre_anual.cuadrar(programa, aplifisa, periodos)
+        for registro in self._listados.values():
+            self.cuadre.avisos += cuadre_anual.avisos_de_listado(registro)
+            self.cuadre.notas += cuadre_anual.notas_de_listado(registro)
         self._pintar()
+
+    def _texto_periodo(self) -> str:
+        c = self.cuadre
+        return " y ".join(f"{CLASE[t].lower()} del {d:%d/%m/%Y} al {h:%d/%m/%Y}"
+                          for t, (d, h) in c.periodos.items())
 
     def _pintar(self) -> None:
         c = self.cuadre
         cuenta = c.cuenta()
-        clases = " y ".join(CLASE[t].lower() for t in c.tipos)
+        periodo = self._texto_periodo()
         if not c.lineas:
-            cabecera = (f"No hay {clases} del {c.desde:%d/%m/%Y} al "
-                        f"{c.hasta:%d/%m/%Y} ni en el listado ni en el programa: "
-                        "compruebe el periodo y el cliente.")
+            cabecera = (f"No hay facturas ({periodo}) ni en el listado ni en el "
+                        "programa: compruebe el periodo y el cliente.")
         elif c.todo_bien:
-            cabecera = (f"<b style='color:#19724E'>✓ Todo bien.</b> Los {clases} "
-                        f"del {c.desde:%d/%m/%Y} al {c.hasta:%d/%m/%Y}: lo de "
-                        "Aplifisa es lo que tiene guardado en PDF.")
+            cabecera = (f"<b style='color:#19724E'>✓ Todo bien.</b> {periodo.capitalize()}: "
+                        "lo de Aplifisa es lo que tiene guardado en PDF.")
         else:
             partes = [f"<b>{cuenta[e]}</b> {EN_FRASE[e][cuenta[e] > 1]}"
                       for e in ORDEN_ESTADO if cuenta[e]]
-            cabecera = (f"{clases.capitalize()} del {c.desde:%d/%m/%Y} al "
-                        f"{c.hasta:%d/%m/%Y}: " + " · ".join(partes) + ".")
+            cabecera = f"{periodo.capitalize()}: " + " · ".join(partes) + "."
+        for aviso in c.avisos:
+            cabecera += f"<br><span style='color:#B43737'>⚠ {html.escape(aviso)}</span>"
+        if c.sin_fecha:
+            cabecera += (f"<br><span style='color:#B43737'>⚠ {c.sin_fecha} del "
+                         "programa sin fecha legible: corríjala en el lote para "
+                         "poder cuadrarla.</span>")
+        for nota in c.notas:
+            cabecera += f"<br><span style='color:#86500A'>{html.escape(nota)}</span>"
         otros = [CLASE[t].lower() for t in ("gasto", "venta") if t not in c.tipos]
         if otros:
             cabecera += (f"<br><span style='color:#5D7084'>Los {otros[0]} no se "
                          "comprueban: cargue también su listado.</span>")
-        fuera = []
+        informacion = []
         if c.fuera_de_periodo:
-            fuera.append(f"{c.fuera_de_periodo} del listado")
+            informacion.append(f"{c.fuera_de_periodo} línea(s) del listado son de "
+                               "fuera del periodo (se han comprobado igual)")
         if c.fuera_programa:
-            fuera.append(f"{c.fuera_programa} guardada(s) en el programa")
-        if fuera:
-            cabecera += ("<br><span style='color:#5D7084'>Fuera del periodo, y "
-                         "sin comprobar: " + " y ".join(fuera) + ".</span>")
-        if c.sin_fecha:
-            cabecera += (f"<br><span style='color:#B43737'>{c.sin_fecha} del "
-                         "programa sin fecha legible: corríjala en el lote para "
-                         "poder cuadrarla.</span>")
+            informacion.append(f"{c.fuera_programa} guardada(s) en el programa de "
+                               "otras fechas no se reclaman")
+        if informacion:
+            cabecera += ("<br><span style='color:#5D7084'>" + "; ".join(informacion)
+                         + ".</span>")
         self.resumen.setText(cabecera)
         self._pintar_trimestres()
         self.combo_filtro.blockSignals(True)
@@ -441,8 +467,7 @@ class DialogoCuadre(QDialog):
         return (
             "<html><body style='font-family:sans-serif; font-size:9pt'>"
             f"<h2>Cuadre con Aplifisa · {html.escape(nombre or nif or 'Cliente')}</h2>"
-            f"<p>Del {c.desde:%d/%m/%Y} al {c.hasta:%d/%m/%Y} · "
-            f"{' y '.join(CLASE[t].lower() for t in c.tipos)} · "
+            f"<p>{html.escape(self._texto_periodo().capitalize())} · "
             f"hecho el {date.today():%d/%m/%Y}</p>"
             f"<p>{self.resumen.text()}</p>"
             "<table border=1 cellspacing=0 cellpadding=3>"
@@ -471,9 +496,11 @@ class DialogoCuadre(QDialog):
         from .ventana_comun import ESCRITORIO
         nif, nombre = self.cliente()
         limpio = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", nombre or nif or "CLIENTE").strip()
+        desde = min(d for d, _h in self.cuadre.periodos.values())
+        hasta = max(h for _d, h in self.cuadre.periodos.values())
         sugerido = os.path.join(
             ESCRITORIO, f"CUADRE APLIFISA {limpio} "
-            f"{self.cuadre.desde:%d-%m-%Y} a {self.cuadre.hasta:%d-%m-%Y}.pdf")
+            f"{desde:%d-%m-%Y} a {hasta:%d-%m-%Y}.pdf")
         ruta, _ = QFileDialog.getSaveFileName(
             self, "Guardar informe del cuadre", sugerido, "Documento PDF (*.pdf)")
         if ruta:

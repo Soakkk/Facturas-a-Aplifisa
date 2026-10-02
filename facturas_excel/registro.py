@@ -68,6 +68,9 @@ class Apunte:
 class Registro:
     apuntes: List[Apunte] = field(default_factory=list)
     tipo: str = ""
+    # «columnas» (facturas recibidas/emitidas, con nº del proveedor y NIF),
+    # «apuntes» (desglosado, una fila por línea) o «texto».
+    formato: str = ""
     total_base: Optional[float] = None
     total_cuota: Optional[float] = None
     total_recargo: Optional[float] = None
@@ -165,7 +168,7 @@ def leer_registro(ruta_pdf: str) -> Registro:
 
 
 def _leer_por_texto(lineas: List[str]) -> Registro:
-    registro = Registro()
+    registro = Registro(formato="texto")
     i = 0
     while i < len(lineas):
         if not FECHA.match(lineas[i]):
@@ -270,7 +273,7 @@ def _apunte_por_fila(palabras, col) -> Optional[Apunte]:
 
 
 def _leer_apuntes_por_filas(doc, tipo: str) -> Registro:
-    registro = Registro(tipo=tipo)
+    registro = Registro(tipo=tipo, formato="apuntes")
     for pagina in doc:
         col = None
         filas = _filas(pagina)
@@ -534,7 +537,7 @@ def _apunte_de_fila(fila, col) -> Optional[Apunte]:
 
 
 def _leer_posicional(doc, tipo: str) -> Registro:
-    registro = Registro(tipo=tipo)
+    registro = Registro(tipo=tipo, formato="columnas")
     for pagina in doc:
         col = None
         filas = _filas(pagina)

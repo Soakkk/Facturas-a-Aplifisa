@@ -28,10 +28,16 @@ NOTAS = {
             importe.</li>
       </ul>
       Mira todo lo que el programa tiene de ese cliente (todos los lotes ya
-      exportados, con su PDF) y el lote abierto. El periodo sale del listado
-      y se puede corregir. Con totales por trimestre (programa frente a
-      Aplifisa), filtro de «solo lo que falla», «Abrir su PDF», «Ver en el
-      lote» e informe en PDF para guardar o imprimir. Sin IA ni coste.</li>
+      exportados, con su PDF) y el lote abierto. Cada listado lleva su
+      periodo (sale del listado por trimestres; póngale las fechas que pidió
+      a Aplifisa). Todas las líneas del listado se comprueban, y si el
+      listado no se ha leído entero no dice «todo bien». Dos facturas con
+      distinto número o NIF nunca se dan por la misma: lo dudoso sale como
+      «falta» con una pista de cuál podría ser. Para el cuadre más seguro de
+      las compras, use el listado de <b>facturas recibidas</b> (trae el
+      número de cada factura). Con totales por trimestre, filtro de «solo lo
+      que falla», «Abrir su PDF», «Ver en el lote» e informe en PDF. Sin IA
+      ni coste.</li>
 </ul>
 """,
     "1.20.1": """
