@@ -221,7 +221,13 @@ class TablaFacturas(QTableWidget):
 
     # ------------------------------------------------------------ anchos
     def setColumnHidden(self, columna: int, oculta: bool) -> None:
-        super().setColumnHidden(columna, oculta)
+        # Lo que cambia Qt al ocultar o enseñar no es «a mano», aunque haya
+        # un botón apretado sobre la cabecera.
+        anterior, self._ajustando = self._ajustando, True
+        try:
+            super().setColumnHidden(columna, oculta)
+        finally:
+            self._ajustando = anterior
         self.repartir()
 
     def resizeEvent(self, evento):
@@ -246,7 +252,8 @@ class TablaFacturas(QTableWidget):
         return super().eventFilter(objeto, evento)
 
     def _al_redimensionar_columna(self, columna, _antes, ahora) -> None:
-        if self._ajustando or not self._arrastrando:
+        if (self._ajustando or not self._arrastrando or ahora <= 0
+                or self.isColumnHidden(columna)):
             return
         self._a_mano[columna] = ahora
         self._soltar_a_mano = True
@@ -331,9 +338,18 @@ class TablaFacturas(QTableWidget):
             holgura = {c: anchos[c] - MINIMO[c] for c in libres
                        if c in MINIMO and anchos[c] > MINIMO[c]}
             if holgura:
-                parte = min(1.0, (total - sitio) / sum(holgura.values()))
+                # Hacia abajo y lo que quede, del nombre: redondeando, dos
+                # medios píxeles se quedaban en nada y salía la barra.
+                falta = min(total - sitio, sum(holgura.values()))
+                parte = falta / sum(holgura.values())
                 for c, h in holgura.items():
-                    anchos[c] -= round(h * parte)
+                    quitar = int(h * parte)
+                    anchos[c] -= quitar
+                    falta -= quitar
+                for c in sorted(holgura, key=lambda c: c != C_NOMBRE):
+                    quitar = min(falta, anchos[c] - MINIMO[c])
+                    anchos[c] -= quitar
+                    falta -= quitar
         elif libres:
             sobra = sitio - total
             aire = min(AIRE_MAXIMO, sobra // len(libres))

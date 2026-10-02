@@ -54,8 +54,14 @@ def guardar(clave: str, nif: str, nombre: str = "", manual: bool = False) -> boo
     ficha = todo.get(clave)
     if isinstance(ficha, dict) and ficha.get("manual") and not manual:
         return False
-    todo[clave] = {"nif": nif, "nombre": nombre or (ficha or {}).get("nombre", ""),
-                   "manual": bool(manual) or bool((ficha or {}).get("manual"))}
+    # Se completa la ficha, no se rehace: el nombre que puso una persona, su
+    # cuenta y su subclave siguen ahí aunque se guarde otra vez el NIF.
+    nueva = dict(ficha) if isinstance(ficha, dict) else {}
+    nueva["nif"] = nif
+    if not nueva.get("nombre_manual"):
+        nueva["nombre"] = nombre or nueva.get("nombre", "")
+    nueva["manual"] = bool(manual) or bool(nueva.get("manual"))
+    todo[clave] = nueva
     return _col().guardar(clave, todo[clave])
 
 

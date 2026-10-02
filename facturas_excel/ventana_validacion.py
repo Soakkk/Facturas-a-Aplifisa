@@ -75,19 +75,20 @@ from facturas_excel.ventana_comun import (
 
 
 def _otro_nombre_del_mismo_nif(facturas) -> dict:
-    """{fila: (otro nombre, su fila)} de las que comparten NIF con otra que
-    se llama distinto (lo que se parece ya lo unifica la lectura)."""
+    """{fila: [otros nombres, en orden]} de las que comparten NIF con otra
+    que se llama distinto (lo que se parece ya lo unifica la lectura). Sin
+    números de línea: el aviso tiene que decir lo mismo aunque se ordene la
+    tabla, o una factura ya revisada volvería a pendiente."""
     por_nif = {}
-    for r, f in enumerate(facturas):
+    for f in facturas:
         nif, nombre = normaliza_nif(f.nif), str(f.nombre or "").strip()
         if nombre and validar_nif(nif):
-            por_nif.setdefault(nif, {}).setdefault(nombre, r)
+            por_nif.setdefault(nif, set()).add(nombre)
     otro = {}
     for r, f in enumerate(facturas):
-        nombres = por_nif.get(normaliza_nif(f.nif)) or {}
+        nombres = por_nif.get(normaliza_nif(f.nif)) or set()
         if len(nombres) > 1:
-            propio = str(f.nombre or "").strip()
-            otro[r] = next((n, k) for n, k in nombres.items() if n != propio)
+            otro[r] = sorted(nombres - {str(f.nombre or "").strip()})
     return otro
 
 
@@ -128,13 +129,13 @@ class ValidacionMixin:
             anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
         for texto in pasada["errores_documento"].get(r, []):
             anadir(texto, gravedad=ERROR)
-        otro = pasada.get("otro_nombre", {}).get(r)
-        if otro:
-            nombre, linea = otro
-            anadir(f"Este NIF está en la línea {linea + 1} a nombre de «{nombre}». "
-                   f"En Aplifisa un NIF es un solo proveedor: escriba aquí el "
-                   f"nombre bueno (se pone en todas las de ese NIF) o corrija "
-                   f"el NIF si está mal leído.", "nombre", "nif")
+        otros = pasada.get("otro_nombre", {}).get(r)
+        if otros:
+            anadir("Este NIF también está a nombre de "
+                   + ", ".join(f"«{n}»" for n in otros)
+                   + ". En Aplifisa un NIF es un solo proveedor: escriba aquí "
+                   "el nombre bueno (se pone en todas las de ese NIF) o "
+                   "corrija el NIF si está mal leído.", "nombre", "nif")
         lado = "gasto" if pasada["tipos"][r] == "gasto" else "ingreso"
         if f.concepto and not any(
                 c == str(f.concepto).strip() and (not f.subclave or g == f.subclave)

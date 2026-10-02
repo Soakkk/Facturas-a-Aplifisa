@@ -54,7 +54,8 @@ from facturas_excel import distribucion
 from facturas_excel.su_suma import ALTO_FILA_COLUMNA, TablaSuSuma, TablaTotales
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
-    a_total_factura, clave_proveedor, construir, nombres_guardados, normaliza_nif,
+    a_total_factura, clave_proveedor, construir, nombre_preferido,
+    nombres_guardados, normaliza_nif,
     quitar_aviso_cuenta, recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
@@ -1701,7 +1702,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._actualizar_combo_bloques()
             self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
             # Lotes de antes: el mismo NIF podía quedarse con dos nombres.
-            unificar_nombres_por_nif(
+            unificadas = unificar_nombres_por_nif(
                 [x for fila in datos.get("filas", [])
                  for x in (fila["factura"], *(fila.get("fuentes") or ()))]
                 + [f for bloque in self._bloques
@@ -1727,9 +1728,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self.btn_cliente.setEnabled(bool(self._bloques))
             if hay_datos:
                 self.tabla.selectRow(0)
+            cambiadas = {id(f) for f, _antes, _despues in unificadas}
+            n_nombres = sum(1 for fila in datos.get("filas", [])
+                            if id(fila["factura"]) in cambiadas)
             self.lbl_estado.setText(
                 f"Sesión recuperada: {len(self._bloques)} bloque(s) y "
-                f"{self.tabla.rowCount()} línea(s).")
+                f"{self.tabla.rowCount()} línea(s)."
+                + (f"  {n_nombres} línea(s) con el nombre unificado por NIF."
+                   if n_nombres else ""))
         except Exception:
             # Una sesión antigua o dañada nunca debe impedir abrir el programa.
             self._bloques = []
@@ -2134,6 +2140,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         filas = filas_de_bloques(
             self._bloques, self._por_el_total(), a_total_factura)
         self._conservar_resumenes_corregidos(filas)
+        # Una línea resumen conservada (recargo «por el total») trae el
+        # nombre de antes: con el de sus líneas y el resto del NIF.
+        unificar_nombres_por_nif(
+            [x for fila in filas for x in (fila.factura, *(fila.fuentes or ()))],
+            nombres_guardados(solo_a_mano=True))
         self._poner_filas(filas)
 
     def _conservar_resumenes_corregidos(self, filas) -> None:
@@ -2291,7 +2302,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                         a_las_fuentes = False
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
-            self._unificar_nombres_en_tabla()
         elif columna == C_NOMBRE:
             aviso = self._nombre_escrito_a_mano(item.row())
         elif columna in (C_CUENTA, C_GXX):
@@ -2366,17 +2376,43 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f"{cuenta}{f' ({gxx})' if gxx else ''} "
                 f"{descripcion_de(cuenta, gxx) or ''}".strip())
 
-    def _unificar_nombres_en_tabla(self) -> int:
-        """Un NIF, un nombre en todo el lote (al corregir un NIF, la línea
-        toma el nombre con el que ya está ese NIF)."""
+    def _unificar_nombres_en_tabla(self, fila_editada: int | None = None) -> str:
+        """Un NIF, un nombre en todo el lote. Al corregir el NIF de una
+        factura, es ella la que toma el nombre con el que ya está ese NIF (o
+        el que se puso a mano); si cambia alguna otra, vuelve a pendiente,
+        como al copiar un dato desde otra factura."""
+        preferidos = nombres_guardados(solo_a_mano=True)
+        editadas = set()
+        if fila_editada is not None and 0 <= fila_editada < len(self.filas):
+            clave = clave_documento(self.filas[fila_editada].factura)
+            editadas = {r for r, registro in enumerate(self.filas)
+                        if clave_documento(registro.factura) == clave}
+            nif = normaliza_nif(self.filas[fila_editada].factura.nif)
+            otros = [str(registro.factura.nombre).strip()
+                     for r, registro in enumerate(self.filas)
+                     if r not in editadas
+                     and normaliza_nif(registro.factura.nif) == nif
+                     and str(registro.factura.nombre or "").strip()]
+            if nif and otros and nif not in preferidos:
+                preferidos = {**preferidos, nif: nombre_preferido(otros)}
         facturas = [x for registro in self.filas
                     for x in (registro.factura, *(registro.get("fuentes") or ()))]
         cambiadas = {id(f) for f, _antes, _despues in
-                     unificar_nombres_por_nif(facturas, nombres_guardados(solo_a_mano=True))}
-        for r, registro in enumerate(self.filas):
-            if id(registro.factura) in cambiadas:
-                self.tabla.pintar(r, registro, (C_NOMBRE,))
-        return len(cambiadas)
+                     unificar_nombres_por_nif(facturas, preferidos)}
+        filas = [r for r, registro in enumerate(self.filas)
+                 if any(id(x) in cambiadas for x in
+                        (registro.factura, *(registro.get("fuentes") or ())))]
+        otras = [r for r in filas if r not in editadas]
+        for r in filas:
+            self.tabla.pintar(r, self.filas[r], (C_NOMBRE,))
+        for r in otras:
+            self._invalidar_revision_documento(r)
+        if not filas:
+            return ""
+        nombre = self.filas[filas[0]].factura.nombre
+        return (f"Nombre unificado por NIF: «{nombre}»."
+                + (f" {len(otras)} línea(s) más cambian de nombre y quedan "
+                   f"pendientes de revisar." if otras else ""))
 
     def _poner_en_las_del_mismo_nif(self, r, nif, columna, valor) -> int:
         """Aplica un valor al resto de facturas del mismo proveedor del lote."""
@@ -2395,7 +2431,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _nif_escrito_a_mano(self, r) -> str:
         """Un NIF escrito por una persona vale mas que cualquier lectura: se
         guarda para siempre y se pone ya en el resto de facturas de ese mismo
-        proveedor que esten sin el, aqui y en los proximos lotes."""
+        proveedor que esten sin el, aqui y en los proximos lotes. Y con ese
+        NIF, el nombre con el que ya está en el lote."""
+        aviso = self._guardar_nif_escrito(r)
+        unificado = self._unificar_nombres_en_tabla(r) if r < len(self.filas) else ""
+        return "  ".join(x for x in (aviso, unificado) if x)
+
+    def _guardar_nif_escrito(self, r) -> str:
         if r >= len(self.filas):
             return ""
         f = self._leer_fila(r)

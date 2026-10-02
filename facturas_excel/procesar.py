@@ -1066,7 +1066,18 @@ _FORMAS_JURIDICAS = {
     "SA", "SL", "SLU", "SAU", "SLL", "SLNE", "SC", "CB", "SCOOP", "COOP",
     "SAL", "SOCIEDAD", "LIMITADA", "ANONIMA", "UNIPERSONAL", "COOPERATIVA",
 }
-_PALABRAS_VACIAS = {"DEL", "LOS", "LAS", "THE", "AND", "CIA"}
+_PALABRAS_VACIAS = {"DE", "LA", "EL", "EN", "LO", "AL", "DEL", "LOS", "LAS",
+                    "THE", "AND", "CIA"}
+# Las comparten empresas que no tienen nada que ver: no bastan para decir
+# que dos nombres son la misma.
+_PALABRAS_GENERICAS = {
+    "SERVICIOS", "SERVICIO", "SERVICE", "SERVICES", "GRUPO", "GROUP",
+    "COMERCIAL", "ESPANA", "SPAIN", "IBERICA", "IBERIA", "DISTRIBUCIONES",
+    "DISTRIBUCION", "HERMANOS", "HNOS", "EMPRESA", "INDUSTRIAL", "INDUSTRIAS",
+    "SOLUCIONES", "SISTEMAS", "GESTION", "TALLER", "TALLERES",
+    "CONSTRUCCIONES", "TRANSPORTES", "ASESORES", "ASOCIADOS",
+    "INTERNACIONAL", "GLOBAL", "SUMINISTROS", "MANTENIMIENTO",
+}
 
 
 def _palabras_nombre(nombre) -> List[str]:
@@ -1090,16 +1101,20 @@ def _palabras_nombre(nombre) -> List[str]:
 
 
 def _palabras_que_cuentan(nombre) -> set:
-    return {p for p in _palabras_nombre(nombre)
-            if len(p) >= 3 and p not in _FORMAS_JURIDICAS
-            and p not in _PALABRAS_VACIAS}
+    """Las palabras que dicen quién es (siglas como «HM» o «HP» incluidas);
+    las genéricas («SERVICIOS», «GRUPO»…) solo si no hay otras."""
+    todas = {p for p in _palabras_nombre(nombre)
+             if len(p) >= 2 and p not in _FORMAS_JURIDICAS
+             and p not in _PALABRAS_VACIAS}
+    return (todas - _PALABRAS_GENERICAS) or todas
 
 
 def nombres_compatibles(a, b) -> bool:
     """Dos formas de llamar a la misma empresa: comparten alguna palabra que
-    no es la forma jurídica («Orange» y «ORANGE ESPAGNE, S.A.»). «Orange» y
-    «PETROSELF, S.L.» con el mismo NIF no lo son: uno de los dos está mal
-    leído y lo tiene que ver una persona."""
+    no es la forma jurídica ni una genérica («Orange» y «ORANGE ESPAGNE,
+    S.A.»). «H&M, S.L.» y «GASOLINERA NORTE, S.L.» con el mismo NIF no lo
+    son: uno de los dos está mal leído y lo tiene que ver una persona. Un
+    nombre vacío (o que es solo la forma jurídica) toma el de su NIF."""
     pa, pb = _palabras_que_cuentan(a), _palabras_que_cuentan(b)
     return not pa or not pb or bool(pa & pb)
 
@@ -1166,8 +1181,17 @@ def recordar_nombre_proveedor(nif, nombre) -> bool:
     ficha = proveedores.buscar_por_nif(nif) if nif else None
     clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
         else clave_proveedor(nombre)
-    return proveedores.guardar_campos(clave, nif=nif or None, nombre=nombre,
-                                      nombre_manual=True)
+    guardado = proveedores.guardar_campos(clave, nif=nif or None, nombre=nombre,
+                                          nombre_manual=True)
+    if nif:
+        # Un mismo NIF puede estar guardado con varios nombres (uno por cada
+        # forma en que se leyó): el último que pone una persona vale en
+        # todas, o uno de antes podría volver a ganar.
+        for otra, datos in proveedores.leer_todo().items():
+            if (otra != clave and normaliza_nif(datos.get("nif")) == nif
+                    and datos.get("nombre_manual")):
+                proveedores.guardar_campos(otra, nombre=nombre)
+    return guardado
 
 
 def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None) -> bool:

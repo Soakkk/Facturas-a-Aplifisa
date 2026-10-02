@@ -221,3 +221,38 @@ def test_los_titulos_de_columnas_conocidos():
                            "Total": "mucho"})
     assert t.anchos_a_mano() == {"Nombre": 300}
     assert COLS[C_NOMBRE] == "Nombre"
+
+
+def test_ocultar_columnas_con_el_raton_apretado_no_cuenta_como_a_mano():
+    """Termina una lectura (y salen o se van columnas) mientras se tiene el
+    botón apretado en la cabecera: eso no es ensanchar a mano, y una
+    columna nunca se queda a 0 px."""
+    from facturas_excel.tabla_facturas import C_BASE_IRPF, C_BASE_RE
+    t = _tabla()
+    t._arrastrando = True
+    t.setColumnHidden(C_BASE_IRPF, True)
+    t.setColumnHidden(C_BASE_RE, False)
+    t._arrastrando = False
+    assert t.anchos_a_mano() == {}
+    t.setColumnHidden(C_BASE_IRPF, False)
+    assert t.columnWidth(C_BASE_IRPF) > 0
+    t.close()
+
+
+def test_al_estrechar_las_columnas_caben_justas_sin_barra():
+    """Nombre y nº de factura a un píxel de su mínimo y la tabla un píxel
+    corta: quitando medio píxel a cada una, el redondeo lo dejaba en nada y
+    salía la barra horizontal."""
+    from facturas_excel.tabla_facturas import MINIMO
+    t = _tabla()
+    t._naturales[C_NOMBRE] = MINIMO[C_NOMBRE] + 1
+    t._naturales[C_NUM] = MINIMO[C_NUM] + 1
+    visibles = [c for c in range(t.columnCount()) if not t.isColumnHidden(c)]
+    naturales = sum(t.ancho_natural(c) for c in visibles)
+    extra = t.width() - t.viewport().width()
+    t.resize(naturales - 1 + extra, 400)
+    _procesar(2)
+    t.repartir()
+    assert sum(t.columnWidth(c) for c in visibles) <= t.viewport().width()
+    assert t.columnWidth(C_NOMBRE) == MINIMO[C_NOMBRE]
+    t.close()
