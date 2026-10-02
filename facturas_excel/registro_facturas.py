@@ -410,15 +410,29 @@ def consultar(texto: str = "", ejercicio: Optional[int] = None,
 
 
 def clientes() -> List[Tuple[str, str]]:
-    """(NIF, nombre) de los clientes con alguna factura guardada."""
+    """(NIF, nombre) de los clientes con alguna factura guardada. Un cliente
+    del que algún lote salió sin NIF (guardado por su nombre) es el mismo:
+    sale una vez, con su NIF."""
     try:
         with _con() as con:
             filas = con.execute(
-                "SELECT cliente_nif, MAX(cliente_nombre) FROM facturas "
-                "GROUP BY cliente ORDER BY MAX(cliente_nombre)").fetchall()
+                "SELECT DISTINCT cliente_nif, cliente_nombre FROM facturas").fetchall()
     except sqlite3.Error:
         return []
-    return [(f[0] or "", f[1] or "") for f in filas if f[0] or f[1]]
+    por_nombre: Dict[str, Tuple[str, str]] = {}
+    sin_nombre = []
+    for nif, nombre in filas:
+        nif, nombre = _nif(nif), (nombre or "").strip()
+        if not nombre:
+            if nif:
+                sin_nombre.append((nif, ""))
+            continue
+        k = nombre.upper()
+        if k not in por_nombre or (nif and not por_nombre[k][0]):
+            por_nombre[k] = (nif, nombre)
+    vistos = {nif for nif, _ in por_nombre.values() if nif}
+    salida = sorted(por_nombre.values(), key=lambda c: c[1].upper())
+    return salida + [c for c in dict.fromkeys(sin_nombre) if c[0] not in vistos]
 
 
 def ejercicios() -> List[int]:

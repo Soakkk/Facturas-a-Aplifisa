@@ -112,8 +112,10 @@ class AplifisaMixin:
         """El listado de Aplifisa del periodo que se quiera frente a todo lo
         que el programa tiene guardado en PDF del cliente (y el lote)."""
         from facturas_excel.dialogo_cuadre import DialogoCuadre
+        # Las copias repetidas del lote no cuentan (sumarían dos veces).
+        repetidas = set(getattr(self, "_duplicados", {}) or {})
         lote = [(self._leer_fila(r), self._tipo_fila(r), r)
-                for r in range(self.tabla.rowCount())]
+                for r in range(self.tabla.rowCount()) if r not in repetidas]
         dialogo = DialogoCuadre(
             self, (getattr(self, "_cliente_nif", ""),
                    getattr(self, "_cliente_nombre", "")), lote)

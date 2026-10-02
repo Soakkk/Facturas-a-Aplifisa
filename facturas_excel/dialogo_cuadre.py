@@ -33,10 +33,13 @@ COLUMNAS = ["Resultado", "Tipo", "Fecha", "Nº factura", "Proveedor o cliente",
             "Base", "IVA", "Total", "Nº Aplifisa", "PDF", "Qué pasa"]
 CLASE = {"gasto": "Gastos", "venta": "Ingresos"}
 # Para el resumen («2 faltan en el programa · 1 falta el PDF…»).
-EN_FRASE = {
-    BIEN: "todo bien", FALTA_APLIFISA: "falta en Aplifisa",
-    FALTA_PROGRAMA: "falta en el programa", SIN_PDF: "falta el PDF",
-    DUPLICADA: "duplicada", DISTINTA: "dato distinto",
+EN_FRASE = {                    # (una, varias)
+    BIEN: ("bien", "bien"),
+    FALTA_APLIFISA: ("falta en Aplifisa", "faltan en Aplifisa"),
+    FALTA_PROGRAMA: ("falta en el programa", "faltan en el programa"),
+    SIN_PDF: ("sin PDF guardado", "sin PDF guardado"),
+    DUPLICADA: ("duplicada", "duplicadas"),
+    DISTINTA: ("con un dato distinto", "con un dato distinto"),
 }
 
 
@@ -85,13 +88,13 @@ class DialogoCuadre(QDialog):
         self.combo_cliente.setMinimumWidth(320)
         clientes = list(cuadre_anual.clientes_guardados())
         if any(self._cliente_lote) and not any(
-                self._mismo_cliente(c, self._cliente_lote) for c in clientes):
+                cuadre_anual.mismo_cliente(c, self._cliente_lote) for c in clientes):
             clientes.insert(0, self._cliente_lote)
         for nif, nombre in clientes:
             self.combo_cliente.addItem(
                 f"{nombre or 'Sin nombre'}" + (f" · {nif}" if nif else ""), (nif, nombre))
         actual = next((i for i, c in enumerate(clientes)
-                       if self._mismo_cliente(c, self._cliente_lote)), 0)
+                       if cuadre_anual.mismo_cliente(c, self._cliente_lote)), 0)
         self.combo_cliente.setCurrentIndex(actual)
         fila_cliente.addWidget(self.combo_cliente, 1)
         raiz.addLayout(fila_cliente)
@@ -121,7 +124,7 @@ class DialogoCuadre(QDialog):
         fila_periodo.addWidget(self.desde)
         fila_periodo.addWidget(QLabel("al"))
         fila_periodo.addWidget(self.hasta)
-        ayuda = QLabel("(sale del listado: compruebe que es el mismo)")
+        ayuda = QLabel("Ponga las mismas fechas que pidió a Aplifisa.")
         ayuda.setObjectName("textoSuave")
         fila_periodo.addWidget(ayuda, 1)
         self.boton_cuadrar = QPushButton("Cuadrar")
@@ -189,14 +192,6 @@ class DialogoCuadre(QDialog):
         self.combo_cliente.currentIndexChanged.connect(lambda *_: self._invalidar())
 
     # ------------------------------------------------------------ cliente
-    @staticmethod
-    def _mismo_cliente(a, b) -> bool:
-        nif_a, nombre_a = a
-        nif_b, nombre_b = b
-        if nif_a and nif_b:
-            return nif_a.upper() == nif_b.upper()
-        return bool(nombre_a and nombre_b) and nombre_a.strip().upper() == nombre_b.strip().upper()
-
     def cliente(self):
         return self.combo_cliente.currentData() or ("", "")
 
@@ -256,7 +251,7 @@ class DialogoCuadre(QDialog):
             desde, hasta = hasta, desde
         nif, nombre = self.cliente()
         programa = cuadre_anual.facturas_del_registro(nif, nombre, desde, hasta)
-        if self._lote and self._mismo_cliente((nif, nombre), self._cliente_lote):
+        if self._lote and cuadre_anual.mismo_cliente((nif, nombre), self._cliente_lote):
             programa = cuadre_anual.juntar(
                 programa, cuadre_anual.facturas_del_lote(self._lote))
         aplifisa = []
@@ -270,12 +265,16 @@ class DialogoCuadre(QDialog):
         c = self.cuadre
         cuenta = c.cuenta()
         clases = " y ".join(CLASE[t].lower() for t in c.tipos)
-        if c.todo_bien:
+        if not c.lineas:
+            cabecera = (f"No hay {clases} del {c.desde:%d/%m/%Y} al "
+                        f"{c.hasta:%d/%m/%Y} ni en el listado ni en el programa: "
+                        "compruebe el periodo y el cliente.")
+        elif c.todo_bien:
             cabecera = (f"<b style='color:#19724E'>✓ Todo bien.</b> Los {clases} "
                         f"del {c.desde:%d/%m/%Y} al {c.hasta:%d/%m/%Y}: lo de "
                         "Aplifisa es lo que tiene guardado en PDF.")
         else:
-            partes = [f"<b>{cuenta[e]}</b> {EN_FRASE[e]}"
+            partes = [f"<b>{cuenta[e]}</b> {EN_FRASE[e][cuenta[e] > 1]}"
                       for e in ORDEN_ESTADO if cuenta[e]]
             cabecera = (f"{clases.capitalize()} del {c.desde:%d/%m/%Y} al "
                         f"{c.hasta:%d/%m/%Y}: " + " · ".join(partes) + ".")
@@ -283,10 +282,18 @@ class DialogoCuadre(QDialog):
         if otros:
             cabecera += (f"<br><span style='color:#5D7084'>Los {otros[0]} no se "
                          "comprueban: cargue también su listado.</span>")
+        fuera = []
         if c.fuera_de_periodo:
-            cabecera += (f"<br><span style='color:#5D7084'>{c.fuera_de_periodo} "
-                         "factura(s) del listado son de fuera del periodo y no "
-                         "entran.</span>")
+            fuera.append(f"{c.fuera_de_periodo} del listado")
+        if c.fuera_programa:
+            fuera.append(f"{c.fuera_programa} guardada(s) en el programa")
+        if fuera:
+            cabecera += ("<br><span style='color:#5D7084'>Fuera del periodo, y "
+                         "sin comprobar: " + " y ".join(fuera) + ".</span>")
+        if c.sin_fecha:
+            cabecera += (f"<br><span style='color:#B43737'>{c.sin_fecha} del "
+                         "programa sin fecha legible: corríjala en el lote para "
+                         "poder cuadrarla.</span>")
         self.resumen.setText(cabecera)
         self._pintar_trimestres()
         self.combo_filtro.blockSignals(True)
@@ -308,11 +315,10 @@ class DialogoCuadre(QDialog):
         filas = []
         for tipo in c.tipos:
             totales = {"programa": [0.0, 0.0, 0.0, 0], "aplifisa": [0.0, 0.0, 0.0, 0]}
-            for trimestre in range(1, 5):
-                datos = c.trimestres.get((tipo, trimestre))
-                if not datos:
+            for (tipo_t, anio, trimestre), datos in sorted(c.trimestres.items()):
+                if tipo_t != tipo:
                     continue
-                filas.append((f"{CLASE[tipo]} · {trimestre}T", datos))
+                filas.append((f"{CLASE[tipo]} · {trimestre}T {anio}", datos))
                 for lado in totales:
                     for i in range(4):
                         totales[lado][i] += datos[lado][i]
