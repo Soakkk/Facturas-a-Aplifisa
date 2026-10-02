@@ -50,6 +50,11 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    recuerda sus divisores (las asas con puntos; doble clic, como venían) y
    los anchos de columna que se pongan a mano. Cada columna mide lo que su
    contenido y lo que sobra se reparte entre todas.
+   **Cuadre con Aplifisa de lo guardado** («Cuadre año», Ctrl+Mayús+R): el
+   listado de Aplifisa del periodo que se quiera frente a todo lo guardado
+   en PDF del cliente (lotes exportados y el abierto): todo bien, falta en
+   Aplifisa, falta en el programa, falta el PDF, duplicada o dato distinto,
+   con totales por trimestre e informe en PDF.
    **Un NIF, un nombre**: las facturas del mismo NIF salen con un solo
    nombre (el ya usado o el que lleva la forma jurídica); si no se parecen
    en nada, la línea queda en «Revisar».

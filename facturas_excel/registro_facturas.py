@@ -409,6 +409,61 @@ def consultar(texto: str = "", ejercicio: Optional[int] = None,
         return []
 
 
+def _pares_cliente() -> List[Tuple[str, str]]:
+    try:
+        with _con() as con:
+            filas = con.execute(
+                "SELECT cliente_nif, cliente_nombre, MAX(actualizado) FROM facturas "
+                "GROUP BY cliente_nif, cliente_nombre "
+                "ORDER BY MAX(actualizado), MAX(rowid)").fetchall()
+    except sqlite3.Error:
+        return []
+    return [(_nif(f[0]), (f[1] or "").strip()) for f in filas]
+
+
+def clientes() -> List[Tuple[str, str]]:
+    """(NIF, nombre) de los clientes con alguna factura guardada: uno por
+    NIF (con el último nombre usado) y los guardados solo por su nombre,
+    salvo si ese nombre es de un único NIF (es el mismo cliente)."""
+    pares = _pares_cliente()
+    por_nif: Dict[str, str] = {}
+    for nif, nombre in pares:                 # del más antiguo al último
+        if nif:
+            por_nif[nif] = nombre or por_nif.get(nif, "")
+    nifs_de_nombre: Dict[str, set] = {}
+    for nif, nombre in pares:
+        if nif and nombre:
+            nifs_de_nombre.setdefault(nombre.upper(), set()).add(nif)
+    salida = [(nif, nombre) for nif, nombre in por_nif.items()]
+    vistos = set()
+    for nif, nombre in pares:
+        if nif or not nombre or nombre.upper() in vistos:
+            continue
+        vistos.add(nombre.upper())
+        if len(nifs_de_nombre.get(nombre.upper(), ())) != 1:
+            salida.append(("", nombre))
+    return sorted(salida, key=lambda c: (c[1].upper(), c[0]))
+
+
+def claves_cliente(cliente_nif: str, cliente_nombre: str = "") -> List[Tuple[str, str]]:
+    """Con qué (NIF, nombre) buscar todo lo guardado de un cliente: su NIF y
+    los nombres con los que algún lote salió sin NIF, si esos nombres son
+    solo suyos."""
+    nif = _nif(cliente_nif)
+    if not nif:
+        return [("", cliente_nombre)]
+    pares = _pares_cliente()
+    nombres = {n for f, n in pares if f == nif and n}
+    if cliente_nombre:
+        nombres.add(cliente_nombre.strip())
+    salida = [(nif, cliente_nombre)]
+    for nombre in sorted(nombres):
+        otros = {f for f, n in pares if f and f != nif and n.upper() == nombre.upper()}
+        if not otros:
+            salida.append(("", nombre))
+    return salida
+
+
 def ejercicios() -> List[int]:
     try:
         with _con() as con:

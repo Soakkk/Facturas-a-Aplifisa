@@ -1,9 +1,25 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 1 de octubre de 2026 (versión 1.20.0). Apunta abajo lo que
+Actualizado el 2 de octubre de 2026 (versión 1.21.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.21: cuadre con Aplifisa de lo guardado
+
+Botón **«Cuadre año»** (o Comprobar → Cuadre con Aplifisa, Ctrl+Mayús+R).
+Sacas de Aplifisa el listado de lo que quieres comprobar (de enero a hoy,
+6 o 9 meses, el año entero; compras, ventas o los dos) y el programa te dice
+si es lo que tienes guardado en PDF de ese cliente: todo bien, falta en
+Aplifisa, falta en el programa (búscala y escanéala), falta el PDF, duplicada
+o dato distinto. Con totales por trimestre e informe en PDF. Mira todos los
+lotes ya exportados de ese cliente y el que tengas abierto. El cliente lo
+coge solo del NIF que trae el listado, y para dar dos facturas por la misma
+tiene que ser el mismo proveedor (por su NIF o su nombre): nunca dice «todo
+bien» por casualidad.
+
+Pruébalo con el listado de enero a septiembre de un cliente y dime si algo
+de lo que marca no es cierto.
 
 ### Lo nuevo de la 1.20 (el prototipo 4 que elegiste)
 

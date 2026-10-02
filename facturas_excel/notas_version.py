@@ -6,6 +6,45 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.21.0": """
+<h2>Novedades de la versión 1.21.0</h2>
+<ul>
+  <li><b>Cuadre con Aplifisa de lo guardado</b> (botón <b>«Cuadre año»</b>,
+      Comprobar → Cuadre con Aplifisa, o Ctrl+Mayús+R). Saque de Aplifisa el
+      listado de lo que quiere comprobar (del 1 de enero a hoy, 6 o 9 meses,
+      el año entero; compras, ventas o los dos) y el programa le dice si es
+      lo que tiene guardado en PDF de ese cliente, factura a factura:
+      <ul>
+        <li><b>Todo bien</b>: está en Aplifisa y su PDF está guardado.</li>
+        <li><b>Falta en Aplifisa</b>: el programa la tiene y no está
+            registrada.</li>
+        <li><b>Falta en el programa</b>: está en Aplifisa pero no hay PDF
+            guardado: hay que buscarla y escanearla.</li>
+        <li><b>Falta el PDF</b>: registrada, pero su PDF no está en la
+            carpeta del cliente.</li>
+        <li><b>Duplicada</b>: la misma factura dos veces (mismo proveedor,
+            número, fecha e importes).</li>
+        <li><b>Dato distinto</b>: la misma factura con otra fecha, importe,
+            retención, recargo o nombre.</li>
+      </ul>
+      Mira todo lo que el programa tiene de ese cliente (todos los lotes ya
+      exportados, con su PDF) y el lote abierto. El cliente lo elige solo,
+      por el NIF que Aplifisa imprime en el listado (y avisa si el elegido es
+      otro). Cada listado lleva su periodo (sale del listado por trimestres;
+      póngale las fechas que pidió a Aplifisa). Todas las líneas del listado
+      se comprueban, y si el listado no se ha leído entero (o no trae sus
+      totales) no dice «todo bien». Para dar dos facturas por la misma tiene
+      que constar que son del mismo proveedor: su NIF, o su nombre entero
+      (compartir un apellido o una palabra no basta, ni una C.B. es la
+      persona que le da nombre); un NIF o un nombre vacío no cuentan. Dos facturas con distinto número o NIF
+      nunca se dan por la misma: lo dudoso sale como «falta» con una pista
+      de cuál podría ser. Para el cuadre más seguro de las compras, use el
+      listado de <b>facturas recibidas</b> (trae el número de cada factura).
+      Con totales por trimestre, filtro de «solo lo que falla», «Abrir su
+      PDF», «Ver en el lote» e informe en PDF. Rápido aunque sean miles de
+      facturas. Sin IA ni coste.</li>
+</ul>
+""",
     "1.20.1": """
 <h2>Novedades de la versión 1.20.1</h2>
 <ul>

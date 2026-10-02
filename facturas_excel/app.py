@@ -1402,6 +1402,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Comprobar registro de Aplifisa…\tCtrl+R",
             lambda: self._contrastar_registro())
         self.btn_registro.setEnabled(False)
+        # El listado de Aplifisa del periodo que se quiera (del 1 de enero a
+        # hoy, el año entero…) frente a todo lo guardado en PDF del cliente.
+        self.accion_cuadre_anual = comprobar.addAction(
+            "Cuadre con Aplifisa: lo guardado en PDF…",
+            lambda: self._cuadre_anual())
+        self.accion_cuadre_anual.setShortcut(QKeySequence("Ctrl+Shift+R"))
         # Ya no hay «Apartar para gestión manual»: lo dudoso queda en ámbar y
         # se exporta tras «Marcar revisada» (las apartadas no se registraban).
         self.accion_olvidar_exportacion = comprobar.addAction(
