@@ -564,13 +564,16 @@ def test_numeros_de_factura_escritos_de_otra_forma():
     mismo = cuadre_anual._mismo_numero
     for a, b in (("F-0012", "F12"), ("0012", "12"), ("2026-0123", "123"),
                  ("2026/0012", "12"), ("F-0012", "12"), ("CO F26 0100", "COF260100"),
-                 ("12/2026", "12"), ("FV-2026-12", "12"), ("2026 / 0001-r", "2026/1R")):
+                 ("12/2026", "12"), ("FV-2026-12", "12"), ("2026 / 0001-r", "2026/1R"),
+                 ("F-12", "F-2026-12"), ("F26-0100", "100"), ("A/12", "12")):
         assert mismo(a, b), (a, b)
     for a, b in (("A-0123", "B-0123"), ("11234", "1234"), ("R-0123", "F-0123"),
                  ("F-2026-0001", "F-2025-0001"),
                  # Revisión 3: la letra de detrás, la rectificativa y el año.
                  ("0001/A", "0001/B"), ("2026/001-R", "2026/001"), ("1/2026", "2026"),
-                 ("0001/A", "1"), ("12/2026", "2026")):
+                 ("0001/A", "1"), ("12/2026", "2026"),
+                 # Revisión 4: la «R» de rectificativa delante.
+                 ("R-12", "12"), ("FR-0012", "12")):
         assert not mismo(a, b), (a, b)
 
 
@@ -718,7 +721,13 @@ def test_nombres_por_palabras_enteras_y_el_proveedor_que_no_consta():
     parecidos = cuadre_anual.nombres_parecidos
     assert parecidos("AQUASERVICE SA", "VIVA AQUA SERVICE SPAIN SA")
     assert parecidos("ORANGE", "ORANGE ESPAGNE, S.A.U.")
+    assert parecidos("JOSE GARCIA LOPEZ", "GARCIA LOPEZ, JOSE")
     assert not parecidos("MARTIN SL", "MARTINEZ SL")
+    # Revisión 4: compartir una palabra no basta.
+    for a, b in (("GARCIA LOPEZ JOSE", "GARCIA LOPEZ MARIA"), ("BAR ESQUINA", "BAR CENTRAL"),
+                 ("TALLERES NORTE SL", "LIBRERIA NORTE SL"),
+                 ("FARMACIA LOPEZ", "FARMACIA RUIZ")):
+        assert not parecidos(a, b), (a, b)
     assert not parecidos("TALLERES SL", "TALLERES PEREZ SL")     # solo una genérica
     assert not parecidos("", "ORANGE") and not parecidos("S.L.", "S.L.")
     emisor = cuadre_anual.mismo_emisor
@@ -844,3 +853,105 @@ def test_las_lineas_de_fuera_del_periodo_se_dicen_en_naranja(tmp_path):
     assert "#86500A'>1 línea(s) del listado son de fuera del periodo" in texto
     assert "cambie el periodo" in texto
     dialogo.close()
+
+
+# --------------------------------------- lo que encontró la cuarta revisión
+
+def test_un_apellido_comun_no_hace_al_mismo_proveedor(tmp_path):
+    """La factura de MARIA metida en Aplifisa a nombre de JOSE (listado sin
+    NIF) no es «todo bien», ni la del lote de MARIA sin NIF se da por la ya
+    guardada de JOSE."""
+    _guardar(tmp_path, [_f("3/2026", "01/03/2026", "GARCIA LOPEZ MARIA", 300.0, 63.0,
+                           nif="B76543214")])
+    cuadre = _cuadrar([_apunte("12", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0)])
+    assert _por_estado(cuadre) == {FALTA_APLIFISA: ["3/2026"], FALTA_PROGRAMA: ["12"]}
+    assert not cuadre.todo_bien
+
+
+def test_el_lote_sin_nif_de_otro_con_el_mismo_apellido_no_se_esconde(tmp_path):
+    _guardar(tmp_path, [_f("3/2026", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0,
+                           nif="12345678Z")])
+    lote = [(_f("3/2026", "01/03/2026", "GARCIA LOPEZ MARIA", 300.0, 63.0, nif=""),
+             "gasto", 2)]
+    cuadre = _cuadrar([_apunte("12", "01/03/2026", "GARCIA LOPEZ JOSE", 300.0, 63.0)],
+                      lote=lote)
+    assert _por_estado(cuadre) == {BIEN: ["3/2026"], FALTA_APLIFISA: ["3/2026"]}
+    falta = next(l for l in cuadre.lineas if l.estado == FALTA_APLIFISA)
+    assert falta.programa.nombre == "GARCIA LOPEZ MARIA" and not cuadre.todo_bien
+
+
+def test_un_numero_con_ceros_no_es_un_numero_largo(tmp_path):
+    fuerte = cuadre_anual._numero_fuerte
+    assert not fuerte("0001", "0001") and not fuerte("F-0012", "F-0012")
+    assert fuerte("2026-0457", "2026-0457") and not fuerte("2026-0457", "2026-0458")
+    _guardar(tmp_path, [_f("0001", "02/01/2026", "", 100.0, 21.0, nif="")])
+    cuadre = _cuadrar([_apunte_con("0001", "02/01/2026", "OTRO PROVEEDOR SL", 100.0, 21.0,
+                                   nif="")])
+    assert BIEN not in _por_estado(cuadre) and not cuadre.todo_bien
+
+
+def test_la_retencion_que_no_esta_en_aplifisa_es_un_dato_distinto(tmp_path):
+    _guardar(tmp_path, [_f("F-7", "10/02/2026", "ABOGADO PRUEBA", 100.0, 21.0,
+                           cuota_irpf=15.0)])
+    sin_irpf = _cuadrar([_apunte_con("F-7", "10/02/2026", "ABOGADO PRUEBA", 100.0, 21.0)])
+    (linea,) = sin_irpf.lineas
+    assert linea.estado == DISTINTA and "IRPF: programa 15,00, Aplifisa 0,00" in linea.detalle
+    con_irpf = _apunte_con("F-7", "10/02/2026", "ABOGADO PRUEBA", 100.0, 21.0)
+    con_irpf.irpf, con_irpf.neto = 15.0, 106.0
+    assert _por_estado(_cuadrar([con_irpf])) == {BIEN: ["F-7"]}
+
+
+def test_el_recargo_que_no_esta_en_aplifisa_es_un_dato_distinto(tmp_path):
+    _guardar(tmp_path, [_f("F-8", "11/02/2026", "MAYORISTA PRUEBA SL", 100.0, 21.0,
+                           cuota_requiv=5.2)])
+    (linea,) = _cuadrar([_apunte_con("F-8", "11/02/2026", "MAYORISTA PRUEBA SL",
+                                     100.0, 21.0)]).lineas
+    assert linea.estado == DISTINTA and "recargo: programa 5,20" in linea.detalle
+
+
+def test_dos_tiques_sin_nif_del_lote_no_se_suman():
+    """En el lote, dos tiques sin NIF del mismo número y día de dos tiendas
+    son dos, no las líneas de una factura."""
+    lote = [(_f("1", "15/01/2026", "BAR ESQUINA", 10.0, 2.1, nif=""), "gasto", 0),
+            (_f("1", "15/01/2026", "FERRETERIA CENTRAL", 10.0, 2.1, nif=""), "gasto", 1)]
+    assert sorted((p.nombre, p.base) for p in cuadre_anual.facturas_del_lote(lote)) == \
+        [("BAR ESQUINA", 10.0), ("FERRETERIA CENTRAL", 10.0)]
+
+
+def test_lo_guardado_de_despues_del_periodo_se_dice_en_naranja(tmp_path):
+    """Si Aplifisa no tiene nada del último trimestre pedido, el periodo que
+    sale del listado se queda corto: lo guardado de después se dice."""
+    from facturas_excel.dialogo_cuadre import DialogoCuadre
+    _guardar(tmp_path, [_f("A-1", "15/02/2026", "PROVEEDOR UNO SL", 100.0, 21.0),
+                        _f("A-9", "20/07/2026", "PROVEEDOR UNO SL", 50.0, 10.5)])
+    listado = _listado_pdf(tmp_path / "compras.pdf", [
+        ("1", "15/02/2026", "PROVEEDOR UNO SL", "100,00", "21,00", "121,00")])
+    dialogo = DialogoCuadre(cliente=CLIENTE)
+    dialogo.cargar_listado(listado)
+    dialogo.cuadrar()
+    assert dialogo.cuadre.fuera_programa_despues == 1
+    texto = dialogo.resumen.text()
+    assert "#86500A'>1 guardada(s) en el programa son de después del periodo" in texto
+    dialogo.close()
+
+
+def test_muchas_facturas_el_mismo_dia_en_poco_tiempo(tmp_path):
+    """Antes, mil facturas del mismo día tardaban segundos (y memoria)."""
+    pdf = _pdf(tmp_path, "factura")
+    progs, apls = [], []
+    for n in range(2000):
+        fecha = "31/03/2026" if n % 2 else "30/06/2026"
+        base = round(10 + (n % 97) * 1.5, 2)
+        cuota = round(base * 0.21, 2)
+        nombre = f"PROVEEDOR {n % 7} PRUEBA"
+        progs.append(cuadre_anual.FacturaPrograma(
+            "gasto", fecha, f"F-{n}", nombre, "", base, cuota, round(base + cuota, 2),
+            pdf=pdf))
+        apls.append(cuadre_anual.FacturaAplifisa(
+            "gasto", fecha, numero=str(n + 1), nombre=nombre, base=base, cuota=cuota,
+            neto=round(base + cuota, 2), orden=n))
+    inicio = time.perf_counter()
+    cuadre = cuadre_anual.cuadrar(progs, apls, {"gasto": (date(2026, 1, 1),
+                                                          date(2026, 12, 31))})
+    assert time.perf_counter() - inicio < 8          # aquí, en torno a un segundo
+    assert len(cuadre.lineas) == 2000

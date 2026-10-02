@@ -77,6 +77,8 @@ class FacturaPrograma:
     base: float = 0.0
     cuota: Optional[float] = None
     total: Optional[float] = None
+    irpf: Optional[float] = None   # retención (None: ficha antigua, no se sabe)
+    recargo: Optional[float] = None
     pdf: str = ""                  # su PDF en el archivo (o el taco escaneado)
     en_taco: bool = False          # sin PDF propio: sigue dentro del taco
     origen: str = "registro"       # registro / lote
@@ -105,6 +107,8 @@ class FacturaAplifisa:
     base: float = 0.0
     cuota: Optional[float] = None
     neto: float = 0.0
+    irpf: float = 0.0
+    recargo: float = 0.0
     lineas: int = 0
     orden: int = 0                 # posición en el listado
     formato: str = ""
@@ -152,6 +156,7 @@ class Cuadre:
     trimestres: Dict[tuple, dict] = field(default_factory=dict)
     fuera_de_periodo: int = 0       # líneas del listado de otras fechas (comprobadas)
     fuera_programa: int = 0         # facturas guardadas de otras fechas
+    fuera_programa_despues: int = 0  # …de ellas, de después del periodo
     sin_fecha: int = 0              # del programa, sin fecha legible
     avisos: List[str] = field(default_factory=list)   # lo que impide el «todo bien»
     notas: List[str] = field(default_factory=list)    # para saber, sin impedirlo
@@ -184,6 +189,21 @@ def _palabras(nombre) -> frozenset:
 
 
 @lru_cache(maxsize=None)
+def _palabras_todas(nombre: str) -> Tuple[frozenset, frozenset]:
+    """(sus palabras, las que dicen quién es): sin forma jurídica, artículos
+    ni letras sueltas. Las genéricas («SERVICIOS», «GRUPO»…) van en las
+    primeras, no en las segundas."""
+    todas = frozenset(p for p in _palabras_nombre(nombre)
+                      if len(p) >= 2 and p not in _FORMAS_JURIDICAS
+                      and p not in _PALABRAS_VACIAS)
+    return todas, todas - _PALABRAS_GENERICAS
+
+
+def _propias(nombre) -> frozenset:
+    return _palabras_todas(str(nombre or ""))[1]
+
+
+@lru_cache(maxsize=None)
 def _seguidas(nombre: str) -> Tuple[str, frozenset, bool]:
     """Sus palabras juntas, dónde acaba cada una y si alguna dice quién es
     (no solo «SERVICIOS», «GRUPO»…): «VIVA AQUA SERVICE, S.A.» →
@@ -199,15 +219,19 @@ def _seguidas(nombre: str) -> Tuple[str, frozenset, bool]:
 
 
 def nombres_parecidos(a, b) -> bool:
-    """El mismo proveedor escrito de otra forma: comparten una palabra que
-    dice quién es («ORANGE» y «ORANGE ESPAGNE, S.A.»), o uno va dentro del
-    otro con las palabras juntas o separadas («AQUASERVICE» y «VIVA AQUA
-    SERVICE»), siempre por palabras enteras: «MARTIN» no es «MARTINEZ».
-    Un nombre vacío (o que es solo la forma jurídica) no se parece a nada."""
-    pa, pb = _palabras(a), _palabras(b)
+    """El mismo proveedor escrito de otra forma: todas las palabras del más
+    corto están en el otro («ORANGE» y «ORANGE ESPAGNE, S.A.»), o uno va
+    dentro del otro con las palabras juntas o separadas («AQUASERVICE» y
+    «VIVA AQUA SERVICE»), siempre por palabras enteras. Compartir una
+    palabra no basta: «GARCIA LOPEZ JOSE» no es «GARCIA LOPEZ MARIA», ni
+    «BAR ESQUINA» es «BAR CENTRAL», ni «MARTIN» es «MARTINEZ». Un nombre sin
+    ninguna palabra que diga quién es (vacío, solo la forma jurídica o solo
+    genéricas) no se parece a nada."""
+    ta, pa = _palabras_todas(str(a or ""))
+    tb, pb = _palabras_todas(str(b or ""))
     if not pa or not pb:
         return False
-    if pa & pb:
+    if ta <= tb or tb <= ta:
         return True
     corto, largo = sorted((_seguidas(str(a or "")), _seguidas(str(b or ""))),
                           key=lambda s: len(s[0]))
@@ -256,7 +280,7 @@ def mismo_emisor(nif_a, nombre_a, nif_b, nombre_b) -> Optional[bool]:
         return True
     if valido_a and valido_b:
         return False
-    if not _palabras(nombre_a) or not _palabras(nombre_b):
+    if not _propias(nombre_a) or not _propias(nombre_b):
         return None
     return nombres_parecidos(nombre_a, nombre_b)
 
@@ -279,11 +303,25 @@ def _es_anio(tramo: str) -> bool:
     return len(tramo) == 4 and tramo[:2] in ("19", "20")
 
 
+# Una «R» delante es una rectificativa: otra factura que la del mismo número.
+_RECTIFICATIVA = {"R", "RE", "REC", "RECT", "RECTIF", "RECTIFICATIVA", "FR"}
+
+
+def _serie(tramo: str) -> bool:
+    """Lo que puede ir delante del número sin que sea otra factura: la serie
+    (letras, o una o dos cifras) o el año."""
+    if tramo in _RECTIFICATIVA:
+        return False
+    return tramo.isalpha() or _es_anio(tramo) or (tramo.isdigit() and len(tramo) <= 2)
+
+
 def _mismo_numero(a, b) -> bool:
     """La misma factura escrita de dos formas: «F-0012», «F12», «12»,
-    «2026/0012», «12/2026». Una letra, una serie o un tramo de más que no
-    es el año la hacen otra: «0001/A» y «0001/B», «2026/001-R» y
-    «2026/001», «1/2026» y «2026», «A-0123» y «B-0123», «1234» y «11234»."""
+    «2026/0012», «12/2026», «F26-0012», «F-2026-12» y «F-12». Una letra
+    detrás, otra serie, una «R» de rectificativa o un tramo de más que no
+    es la serie ni el año la hacen otra: «0001/A» y «0001/B», «2026/001-R» y
+    «2026/001», «R-12» y «12», «1/2026» y «2026», «A-0123» y «B-0123»,
+    «1234» y «11234»."""
     na, nb = _id(str(a or "")), _id(str(b or ""))
     if not na or not nb:
         return False
@@ -293,14 +331,17 @@ def _mismo_numero(a, b) -> bool:
     if ta == tb:
         return True
     corto, largo = sorted((ta, tb), key=len)
-    if len(corto) == len(largo) or not any(t.isdigit() for t in corto):
+    # Tiene que quedar el número: una serie o un año solos no lo son.
+    if len(corto) == len(largo) or not any(
+            t.isdigit() and not _es_anio(t) for t in corto):
         return False
     sobra = len(largo) - len(corto)
     if largo[sobra:] == corto:                  # «F-2026-0012» y «12»
-        return all(t.isalpha() or _es_anio(t) for t in largo[:sobra])
+        return all(_serie(t) for t in largo[:sobra])
     if largo[:len(corto)] == corto:             # «12/2026» y «12»
         return all(_es_anio(t) for t in largo[len(corto):])
-    return False
+    # «F-2026-12» y «F-12»: el mismo con el año en medio.
+    return tuple(t for t in largo if not _es_anio(t)) == corto
 
 
 def _numeros_distintos(a, b) -> bool:
@@ -312,10 +353,13 @@ def _numeros_distintos(a, b) -> bool:
 
 
 def _numero_fuerte(a, b) -> bool:
-    """El mismo número, idéntico, largo y con cifras: basta para saber que
-    es la misma factura aunque no conste el proveedor."""
+    """El mismo número, idéntico y con al menos cuatro cifras que cuentan
+    (sin los ceros de delante: «0001» no vale): basta para saber que es la
+    misma factura aunque no conste el proveedor."""
     na = _id(str(a or ""))
-    return len(na) >= 4 and na == _id(str(b or "")) and any(c.isdigit() for c in na)
+    if not na or na != _id(str(b or "")):
+        return False
+    return len("".join(t for t in _tramos(str(a)) if t.isdigit())) >= 4
 
 
 # ---------------------------------------------------------------- entradas
@@ -385,8 +429,10 @@ def facturas_aplifisa(registro: Registro, tipo: Optional[str] = None) -> List[Fa
             num_proveedor=a.num_factura_proveedor, nombre=a.nombre, nif=a.nif,
             base=round(sum(x.base or 0 for x in lineas), 2),
             cuota=round(sum(cuotas), 2) if cuotas else None,
-            neto=round(neto, 2), lineas=len(lineas), orden=orden,
-            formato=registro.formato))
+            neto=round(neto, 2),
+            irpf=round(sum(x.irpf or 0 for x in lineas), 2),
+            recargo=round(sum(x.recargo or 0 for x in lineas), 2),
+            lineas=len(lineas), orden=orden, formato=registro.formato))
     return salida
 
 
@@ -412,7 +458,8 @@ def facturas_del_registro(cliente_nif: str, cliente_nombre: str,
                     fecha=f.get("fecha") or "", num_factura=f.get("num_factura") or "",
                     nombre=f.get("nombre") or "", nif=f.get("nif") or "",
                     base=float(f.get("base") or 0), cuota=f.get("cuota_iva"),
-                    total=f.get("total"), pdf=pdf, en_taco=en_taco,
+                    total=f.get("total"), irpf=f.get("cuota_irpf"),
+                    recargo=f.get("cuota_requiv"), pdf=pdf, en_taco=en_taco,
                     origen="registro", excel=f.get("excel") or "",
                     exportada=f.get("exportada") or ""))
     return salida
@@ -427,18 +474,25 @@ def facturas_del_lote(filas: Iterable[Tuple[object, str, int]]) -> List[FacturaP
         if getattr(f, "eliminada", False):
             continue
         k = registro_facturas.clave(f, tipo)
+        if k and not normaliza_nif(f.nif):
+            # Sin NIF, dos tiendas con el mismo nº y día no son una factura.
+            k += "|" + _normalizar_id(f.nombre)
         if k and k in por_clave:
             p = por_clave[k]
             p.base = round(p.base + (f.base_iva or 0), 2)
             if f.cuota_iva is not None:
                 p.cuota = round((p.cuota or 0) + f.cuota_iva, 2)
+            p.recargo = round(p.recargo + (f.cuota_requiv or 0), 2)
+            if f.cuota_irpf:
+                p.irpf = f.cuota_irpf
             continue
         p = FacturaPrograma(
             tipo=registro_facturas.lado(tipo), fecha=f.fecha or "",
             num_factura=f.num_factura or "", nombre=f.nombre or "",
             nif=f.nif or "", base=round(f.base_iva or 0, 2), cuota=f.cuota_iva,
-            total=f.total_impreso, pdf=f.origen_imagen or "", en_taco=True,
-            origen="lote", fila=fila)
+            total=f.total_impreso, irpf=f.cuota_irpf or 0.0,
+            recargo=round(f.cuota_requiv or 0, 2), pdf=f.origen_imagen or "",
+            en_taco=True, origen="lote", fila=fila)
         if k:
             por_clave[k] = p
         else:
@@ -512,7 +566,21 @@ def _euros(valor) -> str:
 
 
 def _nombre_distinto(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
+    """Los dos tienen nombre y no es el mismo (aunque se parezca)."""
+    return bool(p.nombre and a.nombre) and \
+        _palabras_todas(str(p.nombre))[0] != _palabras_todas(str(a.nombre))[0]
+
+
+def _otro_nombre(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
+    """Los dos tienen nombre y no son el mismo proveedor por el nombre."""
     return bool(p.nombre and a.nombre) and not nombres_parecidos(p.nombre, a.nombre)
+
+
+def _mismas_retenciones(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
+    """La retención de IRPF y el recargo, si la ficha los sabe (las fichas
+    antiguas no los guardaban)."""
+    return ((p.irpf is None or _cerca(p.irpf, a.irpf))
+            and (p.recargo is None or _cerca(p.recargo, a.recargo)))
 
 
 def _nif_distinto(p: FacturaPrograma, a: FacturaAplifisa) -> bool:
@@ -532,6 +600,11 @@ def _diferencias(p: FacturaPrograma, a: FacturaAplifisa) -> str:
         partes.append(f"base: programa {_euros(p.base)}, Aplifisa {_euros(a.base)}")
     if not _cerca(p.cuota, a.cuota):
         partes.append(f"IVA: programa {_euros(p.cuota)}, Aplifisa {_euros(a.cuota)}")
+    if p.irpf is not None and not _cerca(p.irpf, a.irpf):
+        partes.append(f"IRPF: programa {_euros(p.irpf)}, Aplifisa {_euros(a.irpf)}")
+    if p.recargo is not None and not _cerca(p.recargo, a.recargo):
+        partes.append(f"recargo: programa {_euros(p.recargo)}, "
+                      f"Aplifisa {_euros(a.recargo)}")
     if p.total is not None and not _cerca(p.total, a.neto):
         partes.append(f"total: programa {_euros(p.total)}, Aplifisa {_euros(a.neto)}")
     return "; ".join(partes)
@@ -611,34 +684,51 @@ def _misma_factura_otro_nombre(p, a, r):
             and _mismos_importes(p, a))
 
 
-NIVELES = ((_exacta, True), (_mismo_total, True),
-           (_misma_factura_otra_fecha, False), (_misma_factura_otros_importes, True),
-           (_misma_factura_otro_nombre, True))
+# (condición, dónde buscar, si hace falta el nº de factura en los dos).
+NIVELES = ((_exacta, "dia_base", False), (_mismo_total, "dia_total", False),
+           (_misma_factura_otra_fecha, "base", True),
+           (_misma_factura_otros_importes, "dia", True),
+           (_misma_factura_otro_nombre, "dia_base", True))
 
 
 def _emparejar(progs: List[FacturaPrograma], apls: List[FacturaAplifisa]):
     """[(p, a, nivel)] y lo que queda sin pareja de cada lado."""
     libres_p = {i: p for i, p in enumerate(progs)}
     libres_a = {j: a for j, a in enumerate(apls)}
-    # Para no comparar todas con todas: por día y por base (en euros).
-    por_dia, por_base = defaultdict(list), defaultdict(list)
+    # Para no comparar todas con todas, cada nivel mira solo las que pueden
+    # cumplirlo: el mismo día y base, el mismo día y total, la misma base o
+    # el mismo día (importes en euros, con uno de margen por el redondeo).
+    cajas = {"dia_base": defaultdict(list), "dia_total": defaultdict(list),
+             "base": defaultdict(list), "dia": defaultdict(list)}
     for j, a in enumerate(apls):
-        por_dia[(a.tipo, a.dia)].append(j)
-        por_base[(a.tipo, round(a.base))].append(j)
+        cajas["dia_base"][(a.tipo, a.dia, round(a.base))].append(j)
+        cajas["dia_total"][(a.tipo, a.dia, round(a.neto))].append(j)
+        cajas["base"][(a.tipo, round(a.base))].append(j)
+        cajas["dia"][(a.tipo, a.dia)].append(j)
+
+    def cerca(p: FacturaPrograma, donde: str) -> List[int]:
+        if donde == "dia":
+            return cajas["dia"].get((p.tipo, p.dia), [])
+        if donde == "dia_total" and p.total is None:
+            return []
+        euros = round(p.total if donde == "dia_total" else p.base)
+        delante = (p.tipo,) if donde == "base" else (p.tipo, p.dia)
+        return [j for k in (-1, 0, 1)
+                for j in cajas[donde].get(delante + (euros + k,), ())]
+
     relaciones: Dict[Tuple[int, int], Optional[dict]] = {}
     parejas = []
-    for nivel, (condicion, misma_fecha) in enumerate(NIVELES):
+    for nivel, (condicion, donde, con_numero) in enumerate(NIVELES):
         candidatas = []
         for i, p in libres_p.items():
-            if misma_fecha:
-                cerca = por_dia.get((p.tipo, p.dia), ())
-            else:
-                cerca = [j for k in (-1, 0, 1)
-                         for j in por_base.get((p.tipo, round(p.base) + k), ())]
-            for j in cerca:
+            if con_numero and not p.num_factura:
+                continue
+            for j in cerca(p, donde):
                 if j not in libres_a:
                     continue
                 a = libres_a[j]
+                if con_numero and not (a.numero_real or a.numero_posible):
+                    continue
                 if (i, j) not in relaciones:
                     relaciones[(i, j)] = _relacion(p, a)
                 r = relaciones[(i, j)]
@@ -662,7 +752,7 @@ def _por_que_no(p: FacturaPrograma, a: FacturaAplifisa) -> str:
         cambios.append(f"el nº de factura ({a.numero_real})")
     if _nifs_distintos(p.nif, a.nif):
         cambios.append(f"el NIF ({a.nif})")
-    if _nombre_distinto(p, a):
+    if _otro_nombre(p, a):
         cambios.append(f"el nombre («{a.nombre}»)")
     if cambios:
         return "Cambia " + ", ".join(cambios) + "."
@@ -735,10 +825,11 @@ def cuadrar(programa: List[FacturaPrograma], aplifisa: List[FacturaAplifisa],
         emparejadas.add(id(p))
         emparejadas_a.add(id(a))
         emparejadas_por_dia[(p.tipo, p.dia)].append(p)
-        if nivel == 0 and p.pdf_guardado:
+        bien = nivel == 0 and _mismas_retenciones(p, a)
+        if bien and p.pdf_guardado:
             cuadre.lineas.append(Linea(
                 BIEN, p, a, _detalle_programa(p) + _nota_pdf(p) + _nota_datos(p, a)))
-        elif nivel == 0:
+        elif bien:
             cuadre.lineas.append(Linea(
                 SIN_PDF, p, a,
                 "Registrada en Aplifisa, pero su PDF no está guardado en la "
@@ -755,6 +846,8 @@ def cuadrar(programa: List[FacturaPrograma], aplifisa: List[FacturaAplifisa],
     for p in solo_programa:
         if not en_periodo(p):
             cuadre.fuera_programa += 1
+            if p.dia > periodos[p.tipo][1]:
+                cuadre.fuera_programa_despues += 1
             continue
         pista = ""
         a = min((a for a in _de_base_parecida(p, libres_a_por_base) if _pista(p, a)),
@@ -768,7 +861,9 @@ def cuadrar(programa: List[FacturaPrograma], aplifisa: List[FacturaAplifisa],
                      if _mismos_importes(q, p)]
         gemela = next((q for q in mismo_dia if p.num_factura
                        and _mismo_numero(q.num_factura, p.num_factura)
-                       and _nifs_distintos(q.nif, p.nif)), None)
+                       and _nifs_distintos(q.nif, p.nif)
+                       and not (q.nombre and p.nombre
+                                and not nombres_parecidos(q.nombre, p.nombre))), None)
         otra = next((q for q in mismo_dia
                      if mismo_emisor(q.nif, q.nombre, p.nif, p.nombre) is not False
                      and not _numeros_distintos(q.num_factura, p.num_factura)), None)

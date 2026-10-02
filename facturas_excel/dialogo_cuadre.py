@@ -344,10 +344,18 @@ class DialogoCuadre(QDialog):
                          "(se han comprobado igual). Si pidió a Aplifisa esas fechas, "
                          "cambie el periodo: lo guardado de ellas no se está "
                          "reclamando.</span>")
-        if c.fuera_programa:
-            cabecera += (f"<br><span style='color:#5D7084'>{c.fuera_programa} "
-                         "guardada(s) en el programa de otras fechas no se "
-                         "reclaman.</span>")
+        despues = c.fuera_programa_despues
+        antes = c.fuera_programa - despues
+        if despues:
+            # Si Aplifisa no tiene nada del último trimestre pedido, el periodo
+            # que sale del listado se queda corto: que se vea.
+            cabecera += (f"<br><span style='color:#86500A'>{despues} guardada(s) en el "
+                         "programa son de después del periodo que ha puesto: si pidió "
+                         "a Aplifisa esas fechas, cambie el periodo (no se están "
+                         "reclamando).</span>")
+        if antes:
+            cabecera += (f"<br><span style='color:#5D7084'>{antes} guardada(s) en el "
+                         "programa de antes del periodo no se reclaman.</span>")
         self.resumen.setText(cabecera)
         self._pintar_trimestres()
         self.combo_filtro.blockSignals(True)
