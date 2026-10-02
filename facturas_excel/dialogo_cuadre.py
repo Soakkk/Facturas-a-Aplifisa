@@ -236,9 +236,15 @@ class DialogoCuadre(QDialog):
         registro.tipo = tipo
         self._listados[tipo] = registro
         self._rutas[tipo] = ruta
-        aviso = "" if registro.bien_leido else " · ⚠ sus totales no cuadran"
+        if not registro.bien_leido:
+            aviso = " · ⚠ sus totales no cuadran"
+        elif cuadre_anual.sin_totales(registro):
+            aviso = " · ⚠ sin sus totales"
+        else:
+            aviso = ""
         self.etiquetas_listado[tipo].setText(
             f"{os.path.basename(ruta)}: {registro.facturas} facturas" + aviso)
+        self._elegir_cliente_del_listado(registro)
         inicio, fin = cuadre_anual.periodo_de_listado(registro)
         if inicio:
             self.desde[tipo].setDate(_qdate(inicio))
@@ -248,6 +254,17 @@ class DialogoCuadre(QDialog):
         self.boton_cuadrar.setEnabled(True)
         self._invalidar()
         return True
+
+    def _elegir_cliente_del_listado(self, registro) -> None:
+        """El listado dice de qué cliente es (su NIF en la cabecera): se
+        elige ese, si el programa lo tiene."""
+        if not registro.cliente_nif:
+            return
+        for i in range(self.combo_cliente.count()):
+            nif, nombre = self.combo_cliente.itemData(i) or ("", "")
+            if cuadre_anual.mismo_cliente((nif, ""), (registro.cliente_nif, "")):
+                self.combo_cliente.setCurrentIndex(i)
+                return
 
     def periodos(self) -> dict:
         salida = {}
@@ -275,6 +292,9 @@ class DialogoCuadre(QDialog):
                 programa, cuadre_anual.facturas_del_lote(self._lote))
         self.cuadre = cuadre_anual.cuadrar(programa, aplifisa, periodos)
         for registro in self._listados.values():
+            otro = cuadre_anual.aviso_de_cliente(registro, (nif, nombre))
+            if otro:
+                self.cuadre.avisos.append(otro)
             self.cuadre.avisos += cuadre_anual.avisos_de_listado(registro)
             self.cuadre.notas += cuadre_anual.notas_de_listado(registro)
         self._pintar()
@@ -291,6 +311,12 @@ class DialogoCuadre(QDialog):
         if not c.lineas:
             cabecera = (f"No hay facturas ({periodo}) ni en el listado ni en el "
                         "programa: compruebe el periodo y el cliente.")
+        elif c.todo_bien and any(cuadre_anual.listado_sin_numero(r)
+                                 for r in self._listados.values()):
+            cabecera = (f"<b style='color:#19724E'>✓ Todo cuadra</b> por fecha, importes "
+                        "y proveedor (este listado no trae el nº de factura). "
+                        f"{periodo.capitalize()}: lo de Aplifisa es lo que tiene guardado "
+                        "en PDF.")
         elif c.todo_bien:
             cabecera = (f"<b style='color:#19724E'>✓ Todo bien.</b> {periodo.capitalize()}: "
                         "lo de Aplifisa es lo que tiene guardado en PDF.")
@@ -310,16 +336,18 @@ class DialogoCuadre(QDialog):
         if otros:
             cabecera += (f"<br><span style='color:#5D7084'>Los {otros[0]} no se "
                          "comprueban: cargue también su listado.</span>")
-        informacion = []
         if c.fuera_de_periodo:
-            informacion.append(f"{c.fuera_de_periodo} línea(s) del listado son de "
-                               "fuera del periodo (se han comprobado igual)")
+            # Puede ser una registrada tarde… o que el periodo puesto no es el
+            # que se pidió a Aplifisa: que se vea.
+            cabecera += (f"<br><span style='color:#86500A'>{c.fuera_de_periodo} "
+                         "línea(s) del listado son de fuera del periodo que ha puesto "
+                         "(se han comprobado igual). Si pidió a Aplifisa esas fechas, "
+                         "cambie el periodo: lo guardado de ellas no se está "
+                         "reclamando.</span>")
         if c.fuera_programa:
-            informacion.append(f"{c.fuera_programa} guardada(s) en el programa de "
-                               "otras fechas no se reclaman")
-        if informacion:
-            cabecera += ("<br><span style='color:#5D7084'>" + "; ".join(informacion)
-                         + ".</span>")
+            cabecera += (f"<br><span style='color:#5D7084'>{c.fuera_programa} "
+                         "guardada(s) en el programa de otras fechas no se "
+                         "reclaman.</span>")
         self.resumen.setText(cabecera)
         self._pintar_trimestres()
         self.combo_filtro.blockSignals(True)

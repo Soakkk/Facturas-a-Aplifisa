@@ -22,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from .validacion import fecha_de
+from .validacion import fecha_de, validar_nif
 
 FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 NUMERO = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}-?$|^-?\d+,\d{2}-?$")
@@ -76,6 +76,8 @@ class Registro:
     total_recargo: Optional[float] = None
     total_irpf: Optional[float] = None
     total_neto: Optional[float] = None
+    # El NIF del cliente que imprime Aplifisa en la cabecera del listado.
+    cliente_nif: str = ""
 
     @property
     def suma_base(self) -> float:
@@ -149,9 +151,12 @@ def leer_registro(ruta_pdf: str) -> Registro:
 
     lineas: List[str] = []
     with fitz.open(ruta_pdf) as doc:
+        cliente = _nif_del_cliente(doc)
         formato = _formato_posicional(doc)
         if formato:
-            return _leer_posicional(doc, formato)
+            registro = _leer_posicional(doc, formato)
+            registro.cliente_nif = cliente
+            return registro
         tipo = _tipo_listado_apuntes(doc)
         por_filas = _leer_apuntes_por_filas(doc, tipo)
         for pagina in doc:
@@ -163,8 +168,27 @@ def leer_registro(ruta_pdf: str) -> Registro:
     # texto seguido se desfasaba: el total de una línea pasaba a ser el
     # número de la siguiente y se perdía su IVA).
     if por_filas.apuntes and (por_filas.bien_leido or not registro.bien_leido):
-        return por_filas
+        registro = por_filas
+    registro.cliente_nif = cliente
     return registro
+
+
+_NIF_CABECERA = re.compile(
+    r"(?:C\.?\s*I\.?\s*F|N\.?\s*I\.?\s*F|D\.?\s*N\.?\s*I)\.?\s*:\s*"
+    r"([A-Z0-9][A-Z0-9.\-]{7,11})")
+
+
+def _nif_del_cliente(doc) -> str:
+    """El NIF que Aplifisa imprime en la cabecera («D.N.I./C.I.F.: …»), si
+    es un NIF válido. Sirve para saber de qué cliente es el listado."""
+    if not doc.page_count:
+        return ""
+    texto = _texto_simple(doc[0].get_text())
+    for m in _NIF_CABECERA.finditer(texto):
+        nif = m.group(1).replace(".", "").replace("-", "")
+        if validar_nif(nif):
+            return nif
+    return ""
 
 
 def _leer_por_texto(lineas: List[str]) -> Registro:

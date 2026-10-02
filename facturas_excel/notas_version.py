@@ -24,20 +24,24 @@ NOTAS = {
             carpeta del cliente.</li>
         <li><b>Duplicada</b>: la misma factura dos veces (mismo proveedor,
             número, fecha e importes).</li>
-        <li><b>Dato distinto</b>: la misma factura con otra fecha o
-            importe.</li>
+        <li><b>Dato distinto</b>: la misma factura con otra fecha, importe
+            o nombre.</li>
       </ul>
       Mira todo lo que el programa tiene de ese cliente (todos los lotes ya
-      exportados, con su PDF) y el lote abierto. Cada listado lleva su
-      periodo (sale del listado por trimestres; póngale las fechas que pidió
-      a Aplifisa). Todas las líneas del listado se comprueban, y si el
-      listado no se ha leído entero no dice «todo bien». Dos facturas con
-      distinto número o NIF nunca se dan por la misma: lo dudoso sale como
-      «falta» con una pista de cuál podría ser. Para el cuadre más seguro de
-      las compras, use el listado de <b>facturas recibidas</b> (trae el
-      número de cada factura). Con totales por trimestre, filtro de «solo lo
-      que falla», «Abrir su PDF», «Ver en el lote» e informe en PDF. Sin IA
-      ni coste.</li>
+      exportados, con su PDF) y el lote abierto. El cliente lo elige solo,
+      por el NIF que Aplifisa imprime en el listado (y avisa si el elegido es
+      otro). Cada listado lleva su periodo (sale del listado por trimestres;
+      póngale las fechas que pidió a Aplifisa). Todas las líneas del listado
+      se comprueban, y si el listado no se ha leído entero (o no trae sus
+      totales) no dice «todo bien». Para dar dos facturas por la misma tiene
+      que constar que son del mismo proveedor (su NIF o su nombre); un NIF o
+      un nombre vacío no cuentan. Dos facturas con distinto número o NIF
+      nunca se dan por la misma: lo dudoso sale como «falta» con una pista
+      de cuál podría ser. Para el cuadre más seguro de las compras, use el
+      listado de <b>facturas recibidas</b> (trae el número de cada factura).
+      Con totales por trimestre, filtro de «solo lo que falla», «Abrir su
+      PDF», «Ver en el lote» e informe en PDF. Rápido aunque sean miles de
+      facturas. Sin IA ni coste.</li>
 </ul>
 """,
     "1.20.1": """

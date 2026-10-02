@@ -10,10 +10,10 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from datetime import date
+import time
+from datetime import date, timedelta
 
 import fitz
-import pytest
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel import cuadre_anual, registro_facturas
@@ -73,7 +73,6 @@ def _cuadrar(apuntes, lote=(), desde=DESDE, hasta=HASTA, formato="apuntes"):
 def _por_estado(cuadre):
     salida = {}
     for linea in cuadre.lineas:
-        d = linea.programa or linea.aplifisa
         salida.setdefault(linea.estado, []).append(
             (linea.programa.num_factura if linea.programa else linea.aplifisa.numero))
     return salida
@@ -376,6 +375,16 @@ def test_el_periodo_sale_del_listado_por_trimestres_enteros():
                          "10/01/2026", "10/03/2026")
     assert cuadre_anual.periodo_de_listado(medio_anio) == (date(2025, 10, 1),
                                                            date(2026, 3, 31))
+    # Las de finales de diciembre registradas en enero (pocas, aunque sean
+    # más de dos) no llevan el periodo a octubre.
+    tarde = listado(*[f"{d}/12/2025" for d in (27, 28, 29, 30, 31)],
+                    *[f"{d:02d}/{m:02d}/2026" for m in (1, 2, 3) for d in range(1, 21)])
+    assert cuadre_anual.periodo_de_listado(tarde)[0] == date(2026, 1, 1)
+    # Una del año siguiente sí lo alarga: de más se ve; de menos, no.
+    despues = listado(*[f"{d:02d}/{m}/2025" for m in (10, 11, 12) for d in range(1, 11)],
+                      "05/01/2026")
+    assert cuadre_anual.periodo_de_listado(despues) == (date(2025, 10, 1),
+                                                        date(2026, 3, 31))
 
 
 def test_lo_guardado_del_ultimo_mes_que_no_esta_en_aplifisa_se_ve(tmp_path):
@@ -395,10 +404,14 @@ def _derecha(pagina, x_fin, y, texto, tam=7):
                        texto, fontsize=tam)
 
 
-def _listado_pdf(ruta, filas):
-    """Un «listado de apuntes de compras desglosados» como el de Aplifisa."""
+def _listado_pdf(ruta, filas, nif=CLIENTE[0], totales=True):
+    """Un «listado de apuntes de compras desglosados» como el de Aplifisa:
+    con el NIF del cliente en la cabecera y su «TOTAL ACUMULADO»."""
     doc = fitz.open()
     pagina = doc.new_page()
+    pagina.insert_text((17, 60), "GESTION FISCAL", fontsize=8)
+    pagina.insert_text((17, 72), f"CLIENTE PRUEBA       D.N.I./C.I.F.: {nif}       Ref.  1",
+                       fontsize=8)
     pagina.insert_text((112, 125), "LISTADO DE APUNTES DE COMPRAS DESGLOSADOS",
                        fontsize=9)
     for x, texto in ((30, "Fecha"), (86, "Factura"), (136, "Cto."),
@@ -407,16 +420,21 @@ def _listado_pdf(ruta, filas):
                      (514, "Imp."), (535, "Neto"), (561, "GD")):
         pagina.insert_text((x, 152), texto, fontsize=7)
     y = 168
+    sumas = [0.0, 0.0, 0.0]
     for numero, fecha, nombre, base, cuota, neto in filas:
         pagina.insert_text((17, y), fecha, fontsize=7)
         _derecha(pagina, 137, y, numero)
         pagina.insert_text((139, y), "628", fontsize=7)
         pagina.insert_text((169, y), "15", fontsize=7)
         pagina.insert_text((179, y), nombre, fontsize=7)
-        _derecha(pagina, 369, y, base)
-        _derecha(pagina, 415, y, cuota)
-        _derecha(pagina, 563, y, neto)
+        for i, (x_fin, valor) in enumerate(((369, base), (415, cuota), (563, neto))):
+            _derecha(pagina, x_fin, y, valor)
+            sumas[i] += float(valor.replace(",", "."))
         y += 14
+    if totales:
+        pagina.insert_text((179, y + 6), "TOTAL ACUMULADO", fontsize=7)
+        for x_fin, valor in zip((369, 415, 563), sumas):
+            _derecha(pagina, x_fin, y + 6, f"{valor:.2f}".replace(".", ","))
     doc.save(str(ruta))
     doc.close()
     return str(ruta)
@@ -443,6 +461,7 @@ def test_la_ventana_carga_el_listado_cuadra_y_guarda_el_informe(tmp_path):
     assert "1</b> falta en el programa" in texto and "1</b> falta en Aplifisa" in texto
     assert "Los ingresos no se comprueban" in texto
     assert "no trae el número de factura del proveedor" in texto
+    assert "totales" not in texto and "es del cliente con NIF" not in texto
     # Por defecto, solo lo que falla.
     assert {l.estado for l in dialogo.lineas_visibles()} == {FALTA_APLIFISA, FALTA_PROGRAMA}
     assert dialogo.tabla.rowCount() == 2
@@ -544,10 +563,14 @@ def test_mismo_dia_e_importes_con_otro_nombre_no_se_emparejan(tmp_path):
 def test_numeros_de_factura_escritos_de_otra_forma():
     mismo = cuadre_anual._mismo_numero
     for a, b in (("F-0012", "F12"), ("0012", "12"), ("2026-0123", "123"),
-                 ("2026/0012", "12"), ("F-0012", "12"), ("CO F26 0100", "COF260100")):
+                 ("2026/0012", "12"), ("F-0012", "12"), ("CO F26 0100", "COF260100"),
+                 ("12/2026", "12"), ("FV-2026-12", "12"), ("2026 / 0001-r", "2026/1R")):
         assert mismo(a, b), (a, b)
     for a, b in (("A-0123", "B-0123"), ("11234", "1234"), ("R-0123", "F-0123"),
-                 ("F-2026-0001", "F-2025-0001")):
+                 ("F-2026-0001", "F-2025-0001"),
+                 # Revisión 3: la letra de detrás, la rectificativa y el año.
+                 ("0001/A", "0001/B"), ("2026/001-R", "2026/001"), ("1/2026", "2026"),
+                 ("0001/A", "1"), ("12/2026", "2026")):
         assert not mismo(a, b), (a, b)
 
 
@@ -613,3 +636,211 @@ def test_en_el_desglosado_de_ventas_el_numero_no_veta(tmp_path):
     cuadre = cuadre_anual.cuadrar(programa, cuadre_anual.facturas_aplifisa(ventas),
                                   {"venta": (DESDE, HASTA)})
     assert _por_estado(cuadre) == {BIEN: ["V-1"]}
+
+
+# --------------------------------------- lo que encontró la tercera revisión
+
+def test_dos_tiques_sin_nif_del_mismo_numero_y_dia_no_se_esconden(tmp_path):
+    """Dos NIF vacíos no son «el mismo»: el tique de otra tienda con el mismo
+    número, día e importes no se da por el ya guardado (antes se perdía y
+    salía «todo bien»)."""
+    _guardar(tmp_path, [_f("1", "15/01/2026", "BAR ESQUINA", 10.0, 2.1, nif="")])
+    lote = [(_f("1", "15/01/2026", "FERRETERIA CENTRAL", 10.0, 2.1, nif=""), "gasto", 5)]
+    cuadre = _cuadrar([_apunte("1", "15/01/2026", "BAR ESQUINA", 10.0, 2.1)], lote=lote)
+    assert _por_estado(cuadre) == {BIEN: ["1"], FALTA_APLIFISA: ["1"]}
+    falta = next(l for l in cuadre.lineas if l.estado == FALTA_APLIFISA)
+    assert falta.programa.nombre == "FERRETERIA CENTRAL" and falta.programa.fila == 5
+    assert not cuadre.todo_bien
+    # Tampoco son «la misma guardada dos veces».
+    progs = [cuadre_anual.FacturaPrograma("gasto", "16/01/2026", "7", nombre, "", 5.0, 1.05)
+             for nombre in ("BAR ESQUINA", "FERRETERIA CENTRAL")]
+    dos = cuadre_anual.cuadrar(progs, [], {"gasto": (DESDE, HASTA)})
+    assert [l.estado for l in dos.lineas] == [FALTA_APLIFISA, FALTA_APLIFISA]
+    # Sin nombre ni NIF no se sabe: tampoco.
+    sin_nada = [cuadre_anual.FacturaPrograma("gasto", "16/01/2026", "7", "", "", 5.0, 1.05)
+                for _ in range(2)]
+    assert DUPLICADA not in _por_estado(
+        cuadre_anual.cuadrar(sin_nada, [], {"gasto": (DESDE, HASTA)}))
+
+
+def test_el_numero_corto_no_basta_para_darla_por_buena(tmp_path):
+    """«F-1» y «1» del mismo día e importes, de dos proveedores, no son la
+    misma. Un número largo e idéntico sí basta cuando no consta el proveedor."""
+    _guardar(tmp_path, [_f("F-1", "15/01/2026", "TALLERES NORTE SL", 100.0, 21.0, nif="")])
+    cuadre = _cuadrar([_apunte_con("1", "15/01/2026", "LIBRERIA SUR SL", 100.0, 21.0,
+                                   nif="")])
+    assert _por_estado(cuadre) == {FALTA_APLIFISA: ["F-1"], FALTA_PROGRAMA: [""]}
+    assert all("el nombre" in l.detalle for l in cuadre.lineas)
+    _guardar(tmp_path, [_f("2026-0457", "20/01/2026", "", 50.0, 10.5, nif="")])
+    largo = _cuadrar([_apunte_con("2026-0457", "20/01/2026", "LIBRERIA SUR SL", 50.0, 10.5,
+                                  nif="")], desde=date(2026, 1, 20), hasta=date(2026, 1, 20))
+    (linea,) = largo.lineas
+    assert linea.estado == BIEN and "nº de factura" in linea.detalle
+
+
+def test_el_mismo_numero_de_otro_proveedor_no_es_un_dato_distinto(tmp_path):
+    _guardar(tmp_path, [_f("100", "10/02/2026", "TALLERES NORTE SL", 100.0, 21.0)])
+    otra_fecha = _cuadrar([_apunte_con("100", "15/02/2026", "LIBRERIA SUR SL", 100.0, 21.0,
+                                       nif="")])
+    assert _por_estado(otra_fecha) == {FALTA_APLIFISA: ["100"], FALTA_PROGRAMA: [""]}
+    otros_importes = _cuadrar([_apunte_con("100", "10/02/2026", "LIBRERIA SUR SL", 40.0, 8.4,
+                                           nif="")])
+    assert _por_estado(otros_importes) == {FALTA_APLIFISA: ["100"], FALTA_PROGRAMA: [""]}
+    # Con el mismo NIF y otro nombre sí es la misma, y se dice qué cambia.
+    mismo_nif = _cuadrar([_apunte_con("100", "15/02/2026", "NOMBRE COMERCIAL", 100.0, 21.0)])
+    (linea,) = mismo_nif.lineas
+    assert linea.estado == DISTINTA
+    assert "nombre: programa «TALLERES NORTE SL», Aplifisa «NOMBRE COMERCIAL»" in linea.detalle
+    assert "fecha: programa 10/02/2026, Aplifisa 15/02/2026" in linea.detalle
+
+
+def test_series_distintas_no_son_la_misma_factura(tmp_path):
+    """«0001/A» y «0001/B» son dos facturas: la B no es una duplicada."""
+    _guardar(tmp_path, [_f("0001/A", "05/03/2026", "TALLERES NORTE SL", 60.0, 12.6)])
+    cuadre = _cuadrar([
+        _apunte_con("0001/A", "05/03/2026", "TALLERES NORTE SL", 60.0, 12.6, numero="7"),
+        _apunte_con("0001/B", "05/03/2026", "TALLERES NORTE SL", 60.0, 12.6, numero="8")])
+    assert _por_estado(cuadre) == {BIEN: ["0001/A"], FALTA_PROGRAMA: ["8"]}
+
+
+def test_la_repetida_es_la_de_despues_aunque_se_empareje_la_otra(tmp_path):
+    """Si el programa se empareja con la segunda de dos iguales, la que sobra
+    sigue siendo una duplicada (no «falta en el programa»)."""
+    _guardar(tmp_path, [_f("FA-7", "15/01/2026", "PROVEEDOR UNO SL", 100.0, 21.0)])
+    cuadre = _cuadrar([
+        _apunte_con("FA-7", "15/01/2026", "PROVEEDOR UNO", 100.0, 21.0, numero="1",
+                    nif=""),
+        _apunte_con("FA-7", "15/01/2026", "PROVEEDOR UNO SL", 100.0, 21.0, numero="2")])
+    assert sorted(l.estado for l in cuadre.lineas) == sorted([BIEN, DUPLICADA])
+
+
+def test_nombres_por_palabras_enteras_y_el_proveedor_que_no_consta():
+    parecidos = cuadre_anual.nombres_parecidos
+    assert parecidos("AQUASERVICE SA", "VIVA AQUA SERVICE SPAIN SA")
+    assert parecidos("ORANGE", "ORANGE ESPAGNE, S.A.U.")
+    assert not parecidos("MARTIN SL", "MARTINEZ SL")
+    assert not parecidos("TALLERES SL", "TALLERES PEREZ SL")     # solo una genérica
+    assert not parecidos("", "ORANGE") and not parecidos("S.L.", "S.L.")
+    emisor = cuadre_anual.mismo_emisor
+    assert emisor("", "", "", "ORANGE") is None
+    assert emisor("", "S.L.", "", "S.L.") is None
+    assert emisor("B12345674", "", "B-12345674", "OTRO NOMBRE") is True
+    assert emisor("B12345674", "ORANGE", "A12345674", "ORANGE") is False
+    assert emisor("B1234567", "ORANGE SA", "B12345674", "ORANGE ESPAGNE") is True
+
+
+def test_dos_lineas_al_mismo_tipo_con_centimos_redondeados_son_dos_tiques(tmp_path):
+    """0,11 € de IVA sobre 0,50 € es un 21 % (no un 22 %): con otro tique al
+    21 % del mismo día son dos facturas, no una de dos tipos de IVA."""
+    _guardar(tmp_path, [_f("T-1", "08/02/2026", "GASOLINERA PRUEBA", 0.50, 0.11),
+                        _f("T-2", "08/02/2026", "GASOLINERA PRUEBA", 100.0, 21.0)])
+    cuadre = _cuadrar([_apunte("", "08/02/2026", "GASOLINERA PRUEBA", 0.50, 0.11),
+                       _apunte("", "08/02/2026", "GASOLINERA PRUEBA", 100.0, 21.0)])
+    assert _por_estado(cuadre) == {BIEN: ["T-1", "T-2"]}
+
+
+def test_en_el_desglosado_de_ventas_un_numero_corto_no_basta_para_otra_fecha(tmp_path):
+    """El número del desglosado de ventas puede ser el de Aplifisa: un «45»
+    no hace la misma factura con otra fecha; uno largo e idéntico, sí."""
+    _guardar(tmp_path, [_f("45", "03/02/2026", "CLIENTE FINAL SL", 100.0, 21.0),
+                        _f("2026-0046", "10/02/2026", "CLIENTE FINAL SL", 80.0, 16.8)],
+             tipo="venta")
+    ventas = Registro(tipo="venta", formato="apuntes", apuntes=[
+        _apunte("45", "05/02/2026", "CLIENTE FINAL SL", 100.0, 21.0),
+        _apunte("2026-0046", "12/02/2026", "CLIENTE FINAL SL", 80.0, 16.8)])
+    programa = cuadre_anual.facturas_del_registro(*CLIENTE, DESDE, HASTA)
+    cuadre = cuadre_anual.cuadrar(programa, cuadre_anual.facturas_aplifisa(ventas),
+                                  {"venta": (DESDE, HASTA)})
+    estados = _por_estado(cuadre)
+    assert estados[DISTINTA] == ["2026-0046"]
+    assert estados[FALTA_APLIFISA] == ["45"] and estados[FALTA_PROGRAMA] == ["45"]
+    falta = next(l for l in cuadre.lineas if l.estado == FALTA_APLIFISA)
+    assert "Cambia la fecha" in falta.detalle
+
+
+def test_sin_totales_ni_fechas_del_listado_no_hay_todo_bien():
+    sin = Registro(tipo="gasto", apuntes=[_apunte("1", "15/01/2026", "X SL", 1.0, 0.21)])
+    assert "TOTAL ACUMULADO" in " ".join(cuadre_anual.avisos_de_listado(sin))
+    con = Registro(tipo="gasto", total_base=1.0, total_cuota=0.21, total_neto=1.21,
+                   apuntes=list(sin.apuntes))
+    assert not cuadre_anual.avisos_de_listado(con)
+    # Una línea con la fecha ilegible no se puede comprobar: se dice.
+    rara = cuadre_anual.facturas_aplifisa(Registro(tipo="gasto", apuntes=[
+        _apunte("1", "15/13/2026", "X SL", 1.0, 0.21)]))
+    cuadre = cuadre_anual.cuadrar([], rara, {"gasto": (DESDE, HASTA)})
+    assert cuadre.avisos and not cuadre.todo_bien
+
+
+def test_miles_de_facturas_en_poco_tiempo(tmp_path):
+    """Antes, 4.000 facturas tardaban más de un minuto (todas con todas)."""
+    pdf = _pdf(tmp_path, "factura")
+    nombres = ("ALFA MOTOR SL", "BETA PAPELERIA SA", "GAMMA COMBUSTIBLES SL",
+               "DELTA OFICINAS SL", "EPSILON LIMPIEZAS SL")
+    progs, apls = [], []
+    for n in range(4000):
+        dia = date(2026, 1, 1) + timedelta(days=n % 270)
+        base = round(10 + (n % 97) * 1.5, 2)
+        cuota = round(base * 0.21, 2)
+        nombre = nombres[n % len(nombres)]
+        progs.append(cuadre_anual.FacturaPrograma(
+            "gasto", f"{dia:%d/%m/%Y}", f"F-{n}", nombre, "", base, cuota,
+            round(base + cuota, 2), pdf=pdf))
+        apls.append(cuadre_anual.FacturaAplifisa(
+            "gasto", f"{dia:%d/%m/%Y}", numero=str(n + 1), nombre=nombre, base=base,
+            cuota=cuota, neto=round(base + cuota, 2), orden=n))
+    inicio = time.perf_counter()
+    cuadre = cuadre_anual.cuadrar(progs, apls, {"gasto": (date(2026, 1, 1),
+                                                          date(2026, 12, 31))})
+    assert time.perf_counter() - inicio < 20
+    assert cuadre.todo_bien and len(cuadre.lineas) == 4000
+
+
+def test_la_ventana_elige_el_cliente_del_listado_y_avisa_si_es_otro(tmp_path):
+    from facturas_excel.dialogo_cuadre import DialogoCuadre
+    _guardar(tmp_path, [_f("A-1", "15/07/2026", "PROVEEDOR UNO SL", 100.0, 21.0)])
+    registro_facturas.exportar("B76543214", {"gasto": [
+        _f("Z-1", "15/07/2026", "OTRO PROVEEDOR SL", 1.0, 0.21)]}, {"gasto": "x.xlsx"},
+        "OTRO CLIENTE SL")
+    listado = _listado_pdf(tmp_path / "compras.pdf", [
+        ("1", "15/07/2026", "PROVEEDOR UNO SL", "100,00", "21,00", "121,00")])
+    dialogo = DialogoCuadre(cliente=("B76543214", "OTRO CLIENTE SL"))
+    assert dialogo.cliente()[0] == "B76543214"
+    dialogo.cargar_listado(listado)
+    assert dialogo.cliente() == CLIENTE              # el NIF de su cabecera
+    dialogo.cuadrar()
+    texto = dialogo.resumen.text()
+    # Todo bien, pero sin el nº de factura del proveedor: se dice cómo.
+    assert dialogo.cuadre.todo_bien and "Todo cuadra" in texto
+    assert "no trae el nº de factura" in texto
+    # Elegido otro cliente a mano: se avisa y no hay «todo bien».
+    dialogo.combo_cliente.setCurrentIndex(
+        next(i for i in range(dialogo.combo_cliente.count())
+             if dialogo.combo_cliente.itemData(i)[0] == "B76543214"))
+    dialogo.cuadrar()
+    assert "es del cliente con NIF 12345678Z" in dialogo.resumen.text()
+    assert not dialogo.cuadre.todo_bien
+    # Un listado sin sus totales tampoco da «todo bien».
+    sin_totales = _listado_pdf(tmp_path / "sin.pdf", [
+        ("1", "15/07/2026", "PROVEEDOR UNO SL", "100,00", "21,00", "121,00")], totales=False)
+    dialogo.cargar_listado(sin_totales)
+    assert "sin sus totales" in dialogo.etiquetas_listado["gasto"].text()
+    dialogo.cuadrar()
+    assert not dialogo.cuadre.todo_bien and "TOTAL ACUMULADO" in dialogo.resumen.text()
+    dialogo.close()
+
+
+def test_las_lineas_de_fuera_del_periodo_se_dicen_en_naranja(tmp_path):
+    from facturas_excel.dialogo_cuadre import DialogoCuadre
+    _guardar(tmp_path, [_f("A-1", "15/07/2026", "PROVEEDOR UNO SL", 100.0, 21.0),
+                        _f("J-1", "20/06/2026", "PROVEEDOR UNO SL", 40.0, 8.4)])
+    listado = _listado_pdf(tmp_path / "compras.pdf", [
+        ("1", "15/07/2026", "PROVEEDOR UNO SL", "100,00", "21,00", "121,00"),
+        ("2", "20/06/2026", "PROVEEDOR UNO SL", "40,00", "8,40", "48,40")])
+    dialogo = DialogoCuadre(cliente=CLIENTE)
+    dialogo.cargar_listado(listado)
+    dialogo.desde["gasto"].setDate(dialogo.desde["gasto"].date().addMonths(3))   # julio
+    dialogo.cuadrar()
+    texto = dialogo.resumen.text()
+    assert "#86500A'>1 línea(s) del listado son de fuera del periodo" in texto
+    assert "cambie el periodo" in texto
+    dialogo.close()

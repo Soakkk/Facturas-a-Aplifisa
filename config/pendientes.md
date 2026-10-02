@@ -13,7 +13,10 @@ Sacas de Aplifisa el listado de lo que quieres comprobar (de enero a hoy,
 si es lo que tienes guardado en PDF de ese cliente: todo bien, falta en
 Aplifisa, falta en el programa (búscala y escanéala), falta el PDF, duplicada
 o dato distinto. Con totales por trimestre e informe en PDF. Mira todos los
-lotes ya exportados de ese cliente y el que tengas abierto.
+lotes ya exportados de ese cliente y el que tengas abierto. El cliente lo
+coge solo del NIF que trae el listado, y para dar dos facturas por la misma
+tiene que ser el mismo proveedor (por su NIF o su nombre): nunca dice «todo
+bien» por casualidad.
 
 Pruébalo con el listado de enero a septiembre de un cliente y dime si algo
 de lo que marca no es cierto.
