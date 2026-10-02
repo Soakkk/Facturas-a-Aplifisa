@@ -6,8 +6,8 @@ una celda, dice qué dato de la factura ha cambiado (`valor_de_celda`).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem,
 )
@@ -39,8 +39,11 @@ CAMPO_DE_COLUMNA = {c: campo for campo, c in COLUMNA_DE_CAMPO.items()}
 COLUMNAS_IMPORTE = (C_BASE, C_PCT, C_CUOTA, C_BASE_RE, C_PCT_RE, C_CUOTA_RE,
                     C_BASE_IRPF, C_PCT_IRPF, C_CUOTA_IRPF, C_TOTAL)
 COLUMNAS_DATO = tuple(sorted(CAMPO_DE_COLUMNA))
-# Algo más estrechas desde la 1.18: la tabla comparte la pantalla con el
-# documento y la ficha (tres columnas) y así cabe sin desplazarse en 1920.
+# La tabla con lo justo (distribución «una a una»): cabe en una lista
+# estrecha; el resto de datos se ve en la factura, al lado.
+COLUMNAS_COMPACTAS = (C_ESTADO, C_NOMBRE, C_TOTAL)
+# Los anchos de partida, mientras no hay nada que medir (tabla vacía). Con
+# facturas, cada columna mide lo que su contenido (ver `TablaFacturas.medir`).
 ANCHOS = {
     C_ESTADO: 108, C_TIPO: 78, C_CUENTA: 58, C_GXX: 50,
     C_FECHA: 86, C_NUM: 100, C_NOMBRE: 160, C_NIF: 96,
@@ -52,6 +55,20 @@ ANCHOS = {
 # Si con recargo o retenciones no queda sitio, el nombre no baja de aquí
 # (la tabla se desplaza en horizontal antes que dejarlo en «PRO…»).
 ANCHO_MIN_NOMBRE = 140
+# Cada columna, lo que su contenido más este aire, para que se lea bien.
+HOLGURA = 22
+# Lo de la cabecera (sus márgenes y la flecha de ordenar).
+HOLGURA_CABECERA = 30
+# Un nombre o un número de factura larguísimo no se come la tabla: se corta
+# con «…» (entero en la ficha de la factura).
+TOPE = {C_NOMBRE: 380, C_NUM: 200}
+# Sin sitio para todo, las de texto se estrechan hasta aquí (los importes y
+# las fechas, nunca: un importe cortado engaña).
+MINIMO = {C_NOMBRE: ANCHO_MIN_NOMBRE, C_NUM: 96}
+# Si sobra sitio, cada columna se lleva como mucho esto de más: repartido
+# entre todas, no todo para el nombre (antes se quedaba media tabla en
+# blanco al lado de nombres cortos).
+AIRE_MAXIMO = 48
 
 
 def parse_numero(texto):
@@ -136,18 +153,45 @@ class TablaFacturas(QTableWidget):
     # Ctrl+Intro: dar por buena la que se ve y pasar a la siguiente.
     intro = Signal()
     ctrl_intro = Signal()
+    # Una persona ha ensanchado o estrechado columnas: {título: ancho}.
+    anchos_a_mano_cambiados = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(0, len(COLS), parent)
         self.setAlternatingRowColors(True)
         self.setHorizontalHeaderLabels(COLS)
+        # Cada título, alineado como lo que tiene debajo (los importes a la
+        # derecha): con columnas a su medida, un título centrado quedaba
+        # descolgado de su texto.
+        for c in range(len(COLS)):
+            self.horizontalHeaderItem(c).setTextAlignment(
+                Qt.AlignCenter if c == C_ESTADO else
+                Qt.AlignRight | Qt.AlignVCenter if c in COLUMNAS_IMPORTE else
+                Qt.AlignLeft | Qt.AlignVCenter)
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.verticalHeader().setDefaultSectionSize(38)
+        # Anchos: cada columna, lo que su contenido (`medir`); lo que una
+        # persona ensancha a mano se queda así (`_a_mano`) y doble clic en
+        # el borde la vuelve a ajustar al contenido.
+        self._naturales = dict(ANCHOS)
+        self._a_mano: dict[int, int] = {}
+        self._ajustando = False
+        self._arrastrando = False
+        self._soltar_a_mano = False
+        self._timer_medir = QTimer(self)
+        self._timer_medir.setSingleShot(True)
+        self._timer_medir.setInterval(0)
+        self._timer_medir.timeout.connect(self.medir)
+        self.model().rowsRemoved.connect(lambda *_: self._medida_pendiente())
         cabecera = self.horizontalHeader()
         cabecera.setSectionResizeMode(QHeaderView.Interactive)
-        cabecera.setSectionResizeMode(C_NOMBRE, QHeaderView.Stretch)
         cabecera.setSectionsClickable(True)
+        cabecera.setMinimumSectionSize(40)
+        cabecera.setToolTip("Arrastre el borde de una columna para ensancharla. "
+                            "Doble clic en el borde: ajustarla a lo que pone.")
+        cabecera.viewport().installEventFilter(self)
+        cabecera.sectionHandleDoubleClicked.connect(self.ajustar_al_contenido)
         for columna, ancho in ANCHOS.items():
             self.setColumnWidth(columna, ancho)
         # Bloque ya está en el filtro; recargo y retenciones se enseñan solo
@@ -175,37 +219,153 @@ class TablaFacturas(QTableWidget):
                 return
         super().keyPressEvent(evento)
 
-    # ------------------------------------------------------- ancho nombre
+    # ------------------------------------------------------------ anchos
     def setColumnHidden(self, columna: int, oculta: bool) -> None:
-        super().setColumnHidden(columna, oculta)
-        self.ajustar_nombre()
+        # Lo que cambia Qt al ocultar o enseñar no es «a mano», aunque haya
+        # un botón apretado sobre la cabecera.
+        anterior, self._ajustando = self._ajustando, True
+        try:
+            super().setColumnHidden(columna, oculta)
+        finally:
+            self._ajustando = anterior
+        self.repartir()
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)
-        self.ajustar_nombre()
+        self.repartir()
 
-    def _al_redimensionar_columna(self, columna, _antes, _ahora) -> None:
-        if columna != C_NOMBRE:
-            self.ajustar_nombre()
+    def eventFilter(self, objeto, evento):
+        # Solo lo que se arrastra con el ratón cuenta como «a mano» (Qt
+        # también avisa de lo que cambia él al ocultar o repartir).
+        if objeto is self.horizontalHeader().viewport():
+            tipo = evento.type()
+            izquierdo = tipo in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease) \
+                and evento.button() == Qt.LeftButton
+            if tipo == QEvent.MouseButtonPress and izquierdo:
+                self._arrastrando = True
+            elif tipo == QEvent.MouseButtonRelease and izquierdo:
+                self._arrastrando = False
+                if self._soltar_a_mano:
+                    self._soltar_a_mano = False
+                    self.anchos_a_mano_cambiados.emit(self.anchos_a_mano())
+                    self.repartir()
+        return super().eventFilter(objeto, evento)
 
-    def ajustar_nombre(self) -> None:
-        """El nombre ocupa lo que sobra, pero nunca menos de ANCHO_MIN_NOMBRE."""
-        cabecera = self.horizontalHeader()
-        otras = sum(self.columnWidth(c) for c in range(self.columnCount())
-                    if c != C_NOMBRE and not self.isColumnHidden(c))
-        if self.viewport().width() - otras >= ANCHO_MIN_NOMBRE:
-            modo = QHeaderView.Stretch
+    def _al_redimensionar_columna(self, columna, _antes, ahora) -> None:
+        if (self._ajustando or not self._arrastrando or ahora <= 0
+                or self.isColumnHidden(columna)):
+            return
+        self._a_mano[columna] = ahora
+        self._soltar_a_mano = True
+
+    def anchos_a_mano(self) -> dict:
+        """{título de la columna: ancho} de las que ha puesto una persona."""
+        return {COLS[c]: w for c, w in sorted(self._a_mano.items())}
+
+    def poner_anchos_a_mano(self, anchos) -> None:
+        """Los anchos que se guardaron (por título: sobrevive a columnas
+        nuevas). Lo que no se reconoce se ignora."""
+        self._a_mano = {}
+        for titulo, ancho in (anchos or {}).items():
+            if titulo in COLS and isinstance(ancho, (int, float)) and ancho >= 20:
+                self._a_mano[COLS.index(titulo)] = int(ancho)
+        self.repartir()
+
+    def ajustar_al_contenido(self, columna: int | None = None) -> None:
+        """Olvida lo puesto a mano (en esa columna o en todas)."""
+        if columna is None:
+            self._a_mano.clear()
         else:
-            modo = QHeaderView.Interactive
-        if cabecera.sectionResizeMode(C_NOMBRE) != modo:
-            cabecera.setSectionResizeMode(C_NOMBRE, modo)
-            if modo == QHeaderView.Interactive:
-                # El reparto del Stretch es diferido: sin esto se quedaría el
-                # ancho estirado de antes y empujaría los importes fuera.
-                self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
-        if modo == QHeaderView.Interactive \
-                and self.columnWidth(C_NOMBRE) < ANCHO_MIN_NOMBRE:
-            self.setColumnWidth(C_NOMBRE, ANCHO_MIN_NOMBRE)
+            self._a_mano.pop(columna, None)
+        self._arrastrando = self._soltar_a_mano = False
+        self.anchos_a_mano_cambiados.emit(self.anchos_a_mano())
+        self.repartir()
+
+    def _medida_pendiente(self) -> None:
+        if not self._timer_medir.isActive():
+            self._timer_medir.start()
+
+    def medir(self) -> None:
+        """Lo que pide cada columna: su texto más largo (en negrita si va en
+        negrita) o su título, con aire para que se lea bien."""
+        if self.rowCount() == 0:
+            self._naturales = dict(ANCHOS)
+            self.repartir()
+            return
+        normal = QFont(self.font())
+        negrita = QFont(normal)
+        negrita.setBold(True)
+        medidas = {False: QFontMetrics(normal), True: QFontMetrics(negrita)}
+        cabecera = self.horizontalHeader().fontMetrics()
+        naturales = {}
+        for c in range(self.columnCount()):
+            if c == C_BLOQUE:
+                continue
+            ancho = cabecera.horizontalAdvance(COLS[c]) + HOLGURA_CABECERA
+            if c == C_TIPO:
+                combo = self.cellWidget(0, C_TIPO)
+                contenido = combo.sizeHint().width() if combo else ANCHOS[c]
+            else:
+                contenido = 0
+                for r in range(self.rowCount()):
+                    item = self.item(r, c)
+                    if item is None or not item.text():
+                        continue
+                    medida = medidas[item.font().bold()]
+                    contenido = max(contenido, medida.horizontalAdvance(item.text()))
+                contenido += HOLGURA
+            naturales[c] = min(max(ancho, contenido), TOPE.get(c, 10_000))
+        self._naturales = naturales
+        self.repartir()
+
+    def ancho_natural(self, columna: int) -> int:
+        return self._naturales.get(columna, ANCHOS.get(columna, 80))
+
+    def repartir(self) -> None:
+        """Cada columna a su medida (o la puesta a mano). Si no cabe todo, se
+        estrechan el nombre y el número; si sobra, el aire se reparte entre
+        todas las que no se han puesto a mano."""
+        if self._ajustando:
+            return
+        visibles = [c for c in range(self.columnCount()) if not self.isColumnHidden(c)]
+        if not visibles:
+            return
+        anchos = {c: self._a_mano.get(c, self.ancho_natural(c)) for c in visibles}
+        libres = [c for c in visibles if c not in self._a_mano]
+        sitio = self.viewport().width()
+        total = sum(anchos.values())
+        if total > sitio:
+            holgura = {c: anchos[c] - MINIMO[c] for c in libres
+                       if c in MINIMO and anchos[c] > MINIMO[c]}
+            if holgura:
+                # Hacia abajo y lo que quede, del nombre: redondeando, dos
+                # medios píxeles se quedaban en nada y salía la barra.
+                falta = min(total - sitio, sum(holgura.values()))
+                parte = falta / sum(holgura.values())
+                for c, h in holgura.items():
+                    quitar = int(h * parte)
+                    anchos[c] -= quitar
+                    falta -= quitar
+                for c in sorted(holgura, key=lambda c: c != C_NOMBRE):
+                    quitar = min(falta, anchos[c] - MINIMO[c])
+                    anchos[c] -= quitar
+                    falta -= quitar
+        elif libres:
+            sobra = sitio - total
+            aire = min(AIRE_MAXIMO, sobra // len(libres))
+            for c in libres:
+                anchos[c] += aire
+            if aire < AIRE_MAXIMO:
+                # Los últimos píxeles, al nombre (o a la última): sin rendija.
+                resto = C_NOMBRE if C_NOMBRE in libres else libres[-1]
+                anchos[resto] += sobra - aire * len(libres)
+        self._ajustando = True
+        try:
+            for c, ancho in anchos.items():
+                if self.columnWidth(c) != ancho:
+                    self.setColumnWidth(c, ancho)
+        finally:
+            self._ajustando = False
 
     # ------------------------------------------------------------ filas
     def insertar(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
@@ -238,6 +398,7 @@ class TablaFacturas(QTableWidget):
         self.setRowHeight(r, 34)
         self.pintar(r, fila)
         self.blockSignals(bloqueadas)
+        self._medida_pendiente()
 
     def pintar(self, r: int, fila: Fila, columnas=None) -> None:
         """Vuelca en la fila `r` lo que dice la factura (sin avisar a nadie)."""
@@ -260,6 +421,7 @@ class TablaFacturas(QTableWidget):
                     "Clasificación automática según el NIF y el papel del "
                     "cliente en la factura.")
         self.blockSignals(bloqueadas)
+        self._medida_pendiente()
 
     def fila_del_combo(self, control) -> int:
         for r in range(self.rowCount()):
@@ -283,6 +445,7 @@ class TablaFacturas(QTableWidget):
         celda.setFont(fuente)
         celda.setToolTip(ayuda)
         self.blockSignals(bloqueadas)
+        self._medida_pendiente()
 
     def resaltar(self, r: int, fila: Fila, estado: str, mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
@@ -356,6 +519,7 @@ class TablaFacturas(QTableWidget):
             item.setToolTip(
                 f"{ayuda_anterior}\n\n{ayuda}" if ayuda_anterior else ayuda)
         self.blockSignals(bloqueadas)
+        self._medida_pendiente()
 
 
 def _senaladas(filas, campos) -> bool:

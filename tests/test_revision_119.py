@@ -69,9 +69,12 @@ def test_filtrar_por_mes_deja_solo_ese_mes_y_lo_suma_aparte():
     _elegir_mes(v, "Julio 2026")
     assert _visibles(v) == ["J-1", "J-2"]
     assert "julio 2026" in v.lbl_resumen_titulo.text()
-    totales = v.vista_totales.toPlainText()
-    assert totales.index("Lo que se ve") < totales.index("Todo el lote")
-    assert "181,50 €" in totales                     # 121 + 60,50
+    t = v.tabla_totales
+    # Lo que se ve, primero (es lo que se cuadra con el listado del mes).
+    assert t.item(0, 0).text() == "Gastos · Lo que se ve (filtro)"
+    assert t.item(0, t.columnCount() - 1).text() == "181,50 €"  # 121 + 60,50
+    assert any(t.item(r, 0).text() == "Gastos · Todo el lote"
+               for r in range(1, t.rowCount()))
     _elegir_mes(v, "Sin fecha")
     assert _visibles(v) == ["S-1"]
     v._limpiar_filtros()
@@ -104,11 +107,11 @@ def test_leer_importe_entiende_como_se_escribe():
 
 
 def _resultado(v, clave):
-    return v.caja_su_suma._filas[clave][2].text()
+    return v.tabla_su_suma.resultado(clave)
 
 
 def _teclear(v, clave, texto):
-    v.caja_su_suma._filas[clave][1].setText(texto)
+    v.tabla_su_suma.campo(clave).setText(texto)
 
 
 def test_su_suma_dice_si_cuadra_y_cuanto_falta():
@@ -117,9 +120,9 @@ def test_su_suma_dice_si_cuadra_y_cuanto_falta():
     assert _resultado(v, "base") == "✓ cuadra"
     _teclear(v, "total", "430")                     # programa: 435,60
     assert _resultado(v, "total") == "+5,60 €"
-    assert "El programa da más" in v.caja_su_suma.lbl_veredicto.text()
+    assert "El programa da más" in v.tabla_su_suma.lbl_veredicto.text()
     _teclear(v, "total", "435,60")
-    assert "Todo lo que ha escrito cuadra" in v.caja_su_suma.lbl_veredicto.text()
+    assert "Todo lo que ha escrito cuadra" in v.tabla_su_suma.lbl_veredicto.text()
     _teclear(v, "iva", "x")
     assert _resultado(v, "iva") == "¿cifra?"
 
@@ -127,11 +130,11 @@ def test_su_suma_dice_si_cuadra_y_cuanto_falta():
 def test_su_suma_compara_con_lo_filtrado():
     v = _lote()
     _elegir_mes(v, "Agosto 2026")
-    assert "Lo que se ve" in v.caja_su_suma.lbl_ambito.text()
+    assert "Lo que se ve" in v.tabla_su_suma.lbl_ambito.text()
     _teclear(v, "base", "200")
     assert _resultado(v, "base") == "✓ cuadra"
     v._limpiar_filtros()
-    assert "Todo el lote" in v.caja_su_suma.lbl_ambito.text()
+    assert "Todo el lote" in v.tabla_su_suma.lbl_ambito.text()
     # El programa da 360 en el lote: 160 más que lo tecleado.
     assert _resultado(v, "base") == "+160,00 €"
 
@@ -139,11 +142,11 @@ def test_su_suma_compara_con_lo_filtrado():
 def test_su_suma_guarda_lo_de_gastos_e_ingresos_por_separado():
     v = _lote()
     _teclear(v, "base", "360")
-    v.caja_su_suma.combo_tipo.setCurrentIndex(1)     # Ingresos
-    assert v.caja_su_suma._filas["base"][1].text() == ""
-    assert "No hay ingresos" in v.caja_su_suma.lbl_ambito.text()
-    v.caja_su_suma.combo_tipo.setCurrentIndex(0)
-    assert v.caja_su_suma._filas["base"][1].text() == "360"
+    v.tabla_su_suma.combo_tipo.setCurrentIndex(1)     # Ingresos
+    assert v.tabla_su_suma.campo("base").text() == ""
+    assert "No hay ingresos" in v.tabla_su_suma.lbl_ambito.text()
+    v.tabla_su_suma.combo_tipo.setCurrentIndex(0)
+    assert v.tabla_su_suma.campo("base").text() == "360"
 
 
 def test_su_suma_se_conserva_al_cerrar_y_se_borra_al_vaciar(tmp_path, monkeypatch):
@@ -155,14 +158,14 @@ def test_su_suma_se_conserva_al_cerrar_y_se_borra_al_vaciar(tmp_path, monkeypatc
     _teclear(v, "base", "360")
     v.closeEvent(QCloseEvent())
     otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
-    assert otra.caja_su_suma._filas["base"][1].text() == "360"
+    assert otra.tabla_su_suma.campo("base").text() == "360"
     assert _resultado(otra, "base") == "✓ cuadra"
     monkeypatch.setattr("facturas_excel.app.QMessageBox.question",
                         lambda *a, **k: __import__(
                             "PySide6.QtWidgets", fromlist=["QMessageBox"]
                         ).QMessageBox.Yes)
     otra._vaciar_todo()
-    assert otra.caja_su_suma._filas["base"][1].text() == ""
+    assert otra.tabla_su_suma.campo("base").text() == ""
 
 
 # ------------------------------------------------- revisar desde la factura
@@ -235,20 +238,27 @@ def test_la_lectura_se_pliega_a_una_linea_con_el_motivo(monkeypatch):
     _app.processEvents()
     v.tabla.selectRow(0)
     _app.processEvents()
+    ancho_abierta = v.visor_scroll.width()
+    # En una pantalla de 1024 con la letra grande la tarjeta ya empieza por
+    # debajo de su mínimo y al plegar Qt la recoloca: el ancho no se compara.
+    apretada = v.factura_card.width() < v.factura_card.minimumSizeHint().width()
     v.btn_plegar_lectura.setChecked(True)
     _app.processEvents()
-    assert v.ficha.isHidden()
+    assert v.panel_lectura.isHidden()
     assert v.lbl_lectura_resumen.isVisible()
+    # La hoja se queda con el ancho de lo leído.
+    assert v.visor_scroll.width() > ancho_abierta
     resumen = v.lbl_lectura_resumen.text()
     assert "Revisar" in resumen and "F-9" in resumen
     # El motivo, recortado a lo que quepa en la línea y entero en el globo.
     assert "suplido" in v.lbl_lectura_resumen.toolTip()
     assert guardado["lectura_plegada"] is True
-    alto_plegada = v.panel_lectura.height()
     v.btn_plegar_lectura.setChecked(False)
     _app.processEvents()
-    assert not v.ficha.isHidden()
-    assert v.panel_lectura.height() > alto_plegada
+    assert not v.panel_lectura.isHidden()
+    assert not v.lbl_lectura_resumen.isVisible()
+    if not apretada:
+        assert abs(v.visor_scroll.width() - ancho_abierta) <= 10
     assert guardado["lectura_plegada"] is False
 
 
@@ -286,10 +296,9 @@ def test_la_retencion_se_compara_con_el_signo_que_se_escriba():
 
 def test_se_pueden_pedir_recargo_retencion_y_suplidos_aunque_valgan_cero():
     v = _lote()
-    etiqueta = v.caja_su_suma._filas["irpf"][0]
-    assert etiqueta.isHidden()
-    v.caja_su_suma.btn_mas.setChecked(True)
-    assert not etiqueta.isHidden()
+    # Desde la 1.20 hay una casilla bajo cada columna, valga o no cero.
+    for clave in ("requiv", "irpf", "suplidos"):
+        assert not v.tabla_su_suma.campo(clave).isHidden()
     _teclear(v, "irpf", "22,50")
     assert _resultado(v, "irpf") == "−22,50 €"       # el programa no tiene
 
@@ -301,7 +310,7 @@ def test_vaciar_un_lote_ya_vacio_borra_lo_tecleado():
         v.tabla.selectRow(0)
         v._eliminar_seleccion()
     v._vaciar_todo()
-    assert v.caja_su_suma._filas["base"][1].text() == ""
+    assert v.tabla_su_suma.campo("base").text() == ""
 
 
 def test_ctrl_intro_de_verdad_marca_la_que_se_ve():
@@ -376,12 +385,12 @@ def test_con_una_eleccion_pendiente_la_lectura_se_despliega_sola(monkeypatch):
                           discrepancias=(disc,)))
     v.btn_plegar_lectura.setChecked(True)
     v.tabla.setCurrentCell(0, 3)
-    assert v.ficha.isHidden()
+    assert v.panel_lectura.isHidden()
     v.tabla.setCurrentCell(1, 3)
-    assert not v.ficha.isHidden()                         # hay que elegir
+    assert not v.panel_lectura.isHidden()                 # hay que elegir
     assert v.btn_plegar_lectura.isChecked()               # la preferencia sigue
     v.tabla.setCurrentCell(0, 3)
-    assert v.ficha.isHidden()
+    assert v.panel_lectura.isHidden()
 
 
 def test_plegada_el_motivo_entero_va_en_el_globo():

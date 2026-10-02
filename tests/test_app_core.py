@@ -289,21 +289,27 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
     assert not hasattr(v, "menu_acciones")
     assert not hasattr(v, "btn_mas_acciones")
     assert not hasattr(v, "accion_gestion_manual")
-    # Tres columnas: datos extraídos | factura (hoja + lectura) | totales.
-    assert v.split_revision.count() == 3
+    # Como el prototipo 4: datos extraídos | factura (hoja + lectura) arriba
+    # y, abajo a todo lo ancho, los totales con «Su suma» debajo.
+    assert v.split_revision.count() == 2
     assert v.split_revision.widget(0) is v.tabla.parentWidget()
     assert v.split_revision.widget(1) is v.factura_card
-    assert v.split_revision.widget(2) is v.lado_card
-    # La hoja y lo leído van juntos en la misma tarjeta, uno encima del otro.
-    assert v.split_factura.orientation() == Qt.Vertical
+    assert v.split_principal.orientation() == Qt.Vertical
+    assert v.split_principal.widget(0) is v.split_revision
+    assert v.split_principal.widget(1) is v.totales_card
+    # La hoja y lo leído van juntos en la misma tarjeta, uno al lado del otro.
+    assert v.split_factura.orientation() == Qt.Horizontal
     assert v.split_factura.widget(0) is v.visor_scroll
     assert v.factura_card.isAncestorOf(v.ficha)
-    # Los totales tienen la columna entera para ellos.
-    assert v.lado_card.isAncestorOf(v.vista_totales)
-    assert not v.lado_card.isAncestorOf(v.ficha)
+    assert v.totales_card.isAncestorOf(v.tabla_totales)
+    assert v.totales_card.isAncestorOf(v.tabla_su_suma)
+    assert not v.totales_card.isAncestorOf(v.ficha)
+    assert not hasattr(v, "lado_card") and not hasattr(v, "vista_totales")
     assert not hasattr(v, "lista_card")             # sin «Bloques del lote»
     etiquetas = {etiqueta.text() for etiqueta in v.findChildren(QLabel)}
-    botones = {boton.text() for boton in v.findChildren(type(v.btn_siguiente))}
+    # Por su nombre: en una ventana estrecha algunos se quedan con el icono.
+    botones = {boton.accessibleName() or boton.text()
+               for boton in v.findChildren(type(v.btn_siguiente))}
     assert "Todo tu lote, a la vista" not in etiquetas
     # Sin logo, título ni «Mesa de revisión» en la cabecera.
     assert "fa" not in etiquetas and "Facturas a Aplifisa" not in etiquetas
@@ -332,14 +338,25 @@ def test_barra_rapida_y_acciones_se_adaptan_a_portatiles():
         assert boton.toolTip()
     assert any(fila.indexOf(v.btn_siguiente) >= 0
                for fila in v.filas_herramientas)
+
+    def fila_de_accion(widget):
+        return next(i for i, fila in enumerate(v.filas_herramientas)
+                    if fila.indexOf(widget) >= 0)
     assert not v.btn_unir_hojas.icon().isNull()
-    assert v.btn_unir_hojas.toolTip().startswith("Seleccione las filas")
+    assert "Seleccione las filas" in v.btn_unir_hojas.toolTip()
+    # Si las acciones no caben, las ocasionales se quedan con el icono (y su
+    # nombre en el globo) antes que ocupar otra fila.
+    for boton in (v.btn_unir_hojas, v.btn_limpiar_filtros,
+                  v.btn_quitar_bloque, v.btn_eliminar):
+        assert not boton.icon().isNull()
+        assert boton.text() == "" or fila_de_accion(boton) == fila_de_accion(v.btn_siguiente)
+        assert boton.toolTip().startswith(boton.accessibleName()) or boton.text()
     for boton in (v.btn_siguiente, v.btn_revisada, v.btn_unir_hojas,
                   v.btn_limpiar_filtros, v.btn_quitar_bloque, v.btn_eliminar):
         assert not boton.isHidden()
         assert boton.width() >= boton.sizeHint().width()
         assert boton.sizePolicy().horizontalPolicy().name == "Maximum"
-    assert v.btn_revisada.parentWidget() is v.tabla.parentWidget()
+    assert v.tabla.parentWidget().isAncestorOf(v.btn_revisada)
     # Los filtros, a la izquierda y encima de las acciones.
     def fila_de(widget):
         return next(i for i, fila in enumerate(v.filas_herramientas)

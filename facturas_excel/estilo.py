@@ -171,7 +171,6 @@ QLineEdit, QComboBox {{
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
 QLineEdit#buscadorLote {{ padding: 6px 8px; }}
-QTextBrowser#vistaTotales {{ background: {CARD}; border: none; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {BORDER};
     selection-background-color: {ACCENT_FAINT}; selection-color: {ACCENT};
@@ -190,14 +189,22 @@ QHeaderView::section {{
 }}
 QTableWidget QComboBox {{ border: none; border-radius: 3px; padding: 3px 5px; background: transparent; }}
 QSplitter::handle {{ background: {BORDER}; }}
-QSplitter#splitRevision::handle {{ margin: 4px 2px; border-radius: 2px; }}
-QSplitter#splitFactura::handle {{ margin: 2px 40px; border-radius: 2px; }}
+QSplitter#splitRevision::handle, QSplitter#splitInferior::handle {{
+    margin: 4px 2px; border-radius: 2px; }}
+/* La hoja y lo leído: al lado (asa vertical) o uno encima del otro. */
+QSplitter#splitFactura::handle:horizontal {{ margin: 40px 2px; border-radius: 2px; }}
+QSplitter#splitFactura::handle:vertical {{ margin: 2px 40px; border-radius: 2px; }}
+QSplitter#splitPrincipal::handle {{ margin: 2px 4px; border-radius: 2px; }}
 QSplitter::handle:hover {{ background: {ACCENT}; }}
 QProgressBar {{
     background: #E8EDF4; border: none; border-radius: 2px;
     min-height: 8px; max-height: 8px; text-align: center; color: transparent;
 }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 2px; }}
+QProgressBar#barraProgresoLote::chunk {{ background: {SUCCESS}; }}
+QLabel#faltanLote {{ color: {WARNING}; font-weight: 700; }}
+QLabel#faltanLote[todas="true"] {{ color: {SUCCESS}; }}
+QFrame#progresoLote {{ border: none; border-bottom: 1px solid {BORDER}; }}
 QStatusBar {{ background: {CARD}; color: {MUTED}; border-top: 1px solid {BORDER}; }}
 QToolTip {{
     background: {CARD}; color: {INK}; border: 1px solid {BORDER};

@@ -6,6 +6,69 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.20.0": """
+<h2>Novedades de la versión 1.20.0</h2>
+<ul>
+  <li><b>Nueva pantalla.</b> Arriba, las facturas a la izquierda y la
+      <b>factura</b> a la derecha: la hoja escaneada y, a su lado, lo que ha
+      leído la IA (el botón «Lectura IA» lo quita para dar a la hoja todo el
+      ancho). «Revisada» y «Correcta · siguiente» suben a la línea del
+      título de la factura.</li>
+  <li><b>Los totales, abajo y a lo ancho, como el listado de Aplifisa.</b>
+      Una fila por gastos e ingresos (y por lo que se ve con un filtro, que
+      va la primera) y una columna por importe: base, cada IVA, total IVA,
+      recargo, retención, suplidos y total. El divisor entre arriba y abajo
+      se puede arrastrar y el programa lo recuerda.</li>
+  <li><b>Su suma, debajo de cada columna.</b> Una casilla bajo cada importe
+      y, debajo, lo que da de más o de menos el programa (o «✓ cuadra»). La
+      fila con la que se compara sale en negrita. «Su suma a mano» oculta o
+      enseña esa fila.</li>
+  <li><b>Más facturas a la vista en un portátil.</b> Si los botones de la
+      tabla no caben en una fila, los de uso ocasional (unir hojas, limpiar
+      filtros, quitar bloque, eliminar) se quedan con el icono; su nombre
+      sale al pasar el ratón.</li>
+  <li><b>Elija la distribución de la pantalla</b> en <b>Ver → Distribución
+      de la pantalla</b> (o con Ctrl+1 … Ctrl+5): los cinco prototipos que
+      vio dibujados.
+      <ol>
+        <li><b>Tres columnas</b> — todo a la vista en una pantalla grande:
+            facturas | factura (la hoja arriba y lo leído debajo) | totales
+            en columna.</li>
+        <li><b>Lectura sobre la hoja</b> — para comprobar contra el papel:
+            la hoja ocupa toda la factura, lo leído queda en una línea y los
+            datos ya localizados se señalan sobre la hoja.</li>
+        <li><b>Tabla arriba</b> — para repasar el lote entero: la tabla de
+            facturas a lo ancho; debajo, la factura y los totales.</li>
+        <li><b>Cuadre con su suma</b> (la de siempre) — para cuadrar con su
+            suma y con Aplifisa: los totales abajo, a lo ancho, con «Su suma»
+            bajo cada columna.</li>
+        <li><b>Una a una</b> — para revisar las pendientes una detrás de
+            otra: una lista con lo justo, la factura en grande, cuántas
+            quedan y los totales en columna (para pantallas anchas).</li>
+      </ol>
+      Con los totales en columna, «Su suma» va al lado de cada importe. Cada
+      distribución recuerda dónde dejó los divisores y el programa abre con
+      la última elegida.</li>
+  <li><b>Columnas a la medida de lo que ponen.</b> Cada columna de la tabla
+      mide lo que su texto más largo, con aire para leerse bien; si sobra
+      sitio se reparte entre todas (antes se lo quedaba entero el nombre) y
+      si falta, se estrechan el nombre y el nº de factura, nunca los
+      importes. Los títulos van alineados con su contenido.</li>
+  <li><b>Anchos a su gusto.</b> Arrastre el borde de una columna para
+      ensancharla: se queda así (doble clic en el borde la vuelve a ajustar).
+      Entre la tabla, la factura y los totales hay un asa con puntos:
+      arrástrela para dar más sitio a uno u otro (doble clic: como venía).
+      En <b>Ver</b>: «Ajustar las columnas a lo que ponen» y «Volver al
+      reparto de esta distribución». Cada distribución recuerda lo suyo.</li>
+  <li><b>Un NIF, un nombre.</b> Las facturas de una misma empresa llegaban
+      unas con el nombre fiscal («EMPRESA, S.A.») y otras con el comercial
+      («Empresa»): ahora todas salen con uno solo, el que ya se usó para ese
+      NIF o, la primera vez, el que lleva la forma jurídica. También al abrir
+      un lote de antes y al corregir un NIF a mano. Si con el mismo NIF hay
+      nombres que no se parecen en nada, la línea queda en «Revisar»: o el
+      nombre o el NIF está mal leído.</li>
+</ul>
+""",
     "1.19.0": """
 <h2>Novedades de la versión 1.19.0</h2>
 <ul>

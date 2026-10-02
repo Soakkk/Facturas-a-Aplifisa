@@ -1,9 +1,47 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 1 de octubre de 2026 (versión 1.19.0). Apunta abajo lo que
+Actualizado el 1 de octubre de 2026 (versión 1.20.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.20 (el prototipo 4 que elegiste)
+
+**Arriba, facturas y factura.** Las facturas a la izquierda; a la derecha la
+hoja y, a su lado, lo que ha leído la IA («Lectura IA» lo quita y la hoja
+gana el ancho). «Revisada» y «Correcta · siguiente», en la línea del título.
+
+**Abajo, los totales como el listado de Aplifisa**: una fila por gastos e
+ingresos (con un filtro, lo que se ve va primero) y una columna por importe.
+Debajo, **Su suma** con una casilla bajo cada columna y lo que da de más o
+de menos el programa.
+
+**Los cinco prototipos, para elegir.** En Ver → Distribución de la pantalla
+(o Ctrl+1 … Ctrl+5) puedes cambiar entre las cinco que viste dibujadas.
+Cada una va mejor para un momento del trabajo:
+1 tres columnas (todo a la vista en una pantalla grande), 2 lectura sobre la
+hoja (comprobar contra el papel), 3 tabla arriba (repasar el lote entero),
+4 cuadre con su suma (cuadrar con tu suma y con Aplifisa; la de siempre) y
+5 una a una (revisar las pendientes una detrás de otra, con cuántas
+quedan). Cambia solo dónde va cada pieza;
+lo cargado y lo que hayas escrito en «Su suma» se quedan. Cada una recuerda
+sus divisores y el programa abre con la última que elegiste.
+
+**Columnas y anchos a tu gusto.** Cada columna mide lo que pone (el nombre
+ya no se queda con media tabla) y lo que sobra se reparte entre todas.
+Arrastra el borde de una columna para ensancharla (doble clic: se ajusta
+sola) y el asa con puntos entre tabla, factura y totales para dar más sitio
+a uno u otro (doble clic: como venía). En Ver: «Ajustar las columnas a lo
+que ponen» y «Volver al reparto de esta distribución».
+
+**Un NIF, un nombre.** Si las facturas de una empresa llegan unas con
+«EMPRESA, S.A.» y otras con «Empresa», ahora salen todas con uno solo (el
+que lleva la forma jurídica, o el que ya se usó para ese NIF). Si con el
+mismo NIF hay dos nombres que no se parecen en nada, la línea queda en
+«Revisar»: o el nombre o el NIF está mal leído.
+
+Dime con cuál te quedas (o qué cambiarías de la que más te guste) y la dejo
+como la de siempre.
 
 ### Lo nuevo de la 1.19 (lo que pediste)
 

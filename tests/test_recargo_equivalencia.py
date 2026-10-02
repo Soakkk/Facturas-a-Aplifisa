@@ -238,6 +238,16 @@ def test_sin_facturas_con_recargo_la_eleccion_ni_aparece(monkeypatch, tmp_path):
     assert v.fila_recargo.isHidden()
 
 
+def _totales(v):
+    """{ámbito: {cabecera: (texto, globo)}} de la tabla de totales."""
+    t = v.tabla_totales
+    cabeceras = [t.horizontalHeaderItem(c).text() for c in range(t.columnCount())]
+    return {t.item(r, 0).text(): {
+                cabeceras[c]: (t.item(r, c).text(), t.item(r, c).toolTip())
+                for c in range(1, t.columnCount())}
+            for r in range(t.rowCount())}
+
+
 def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
     from facturas_excel.app import C_BASE, C_CUOTA, C_PCT
     from facturas_excel.clientes import TOTAL
@@ -252,10 +262,11 @@ def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
     assert v.tabla.item(0, C_CUOTA).text() == ""
     assert v.tabla.item(0, C_BASE).text() == "145,11"  # base + IVA + recargo
     # En los totales, solo el total y por qué (no un desglose a cero).
-    totales = v.vista_totales.toPlainText()
-    assert "por el total factura" in totales
-    assert "145,11 €" in totales
-    assert "Base imponible" not in totales.split("Ingresos")[0]
+    gastos = _totales(v)["Gastos · Todo el lote"]
+    assert gastos["Total"] == ("145,11 €", "")
+    texto, globo = gastos["Base imponible"]
+    assert texto == "—" and "por el total factura" in globo
+    assert "recargo de equivalencia" in v.lbl_resumen_titulo.text()
 
 
 def test_el_mayorista_registra_con_desglose(monkeypatch, tmp_path):
@@ -267,10 +278,9 @@ def test_el_mayorista_registra_con_desglose(monkeypatch, tmp_path):
     assert not v._por_el_total()
     assert v.tabla.item(0, C_PCT).text() == "21,00"
     assert v.tabla.item(0, C_BASE).text() == "114,98"
-    # El recargo sale en su línea de los totales, con su importe.
-    lineas = [l.strip() for l in v.vista_totales.toPlainText().splitlines()]
-    recargo = lineas[lineas.index("Recargo de equivalencia") + 1]
-    assert recargo not in ("", "0,00 €")
+    # El recargo sale en su columna de los totales, con su importe.
+    recargo, _globo = _totales(v)["Gastos · Todo el lote"]["Recargo"]
+    assert recargo not in ("", "—", "0,00 €")
 
 
 def test_cambiar_de_regimen_rehace_el_lote_sin_volver_a_leer(monkeypatch, tmp_path):
@@ -312,7 +322,7 @@ def test_por_el_total_lo_corregido_no_se_pierde_ni_queda_corregido_sin_dato(
     otra._revalidar_todo()
     assert otra.tabla.item(0, C_BASE).text() == "150,00"
     assert otra.filas[0].presentacion == "corregida"
-    assert "150,00 €" in otra.vista_totales.toPlainText()
+    assert _totales(otra)["Gastos · Todo el lote"]["Total"][0] == "150,00 €"
 
 
 def test_por_el_total_una_venta_mal_clasificada_recupera_su_iva(

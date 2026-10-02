@@ -513,29 +513,17 @@ class FichaMixin:
         self._aplicar_plegado(self._plegado_efectivo())
 
     def _aplicar_plegado(self, plegada: bool) -> None:
-        """Plegada: solo el estado y el motivo; la hoja se queda el alto."""
+        """Plegada: lo leído se quita de al lado de la hoja y queda una línea
+        con el estado y el motivo (el divisor recuerda su ancho)."""
         if not hasattr(self, "panel_lectura"):
             return
-        ya_plegada = not self.ficha.isVisibleTo(self.panel_lectura)
-        if plegada and not ya_plegada:
-            # El alto de la lectura para cuando se despliegue. Antes de
-            # enseñar la ventana el divisor aún no tiene su tamaño: lo
-            # guardado vale más.
-            self._tamanos_lectura = (
-                self.split_factura.sizes() if self.isVisible()
-                else self._tamanos_divisor("split_factura", [520, 320]))
-        self.ficha.setVisible(not plegada)
+        self.panel_lectura.setVisible(not plegada)
         self.lbl_lectura_resumen.setVisible(plegada)
-        self.btn_plegar_lectura.setArrowType(
-            Qt.RightArrow if plegada else Qt.DownArrow)
-        if plegada:
-            self.panel_lectura.setMaximumHeight(
-                self.panel_lectura.sizeHint().height())
+        if self.split_factura.orientation() == Qt.Horizontal:
+            flecha = Qt.LeftArrow if plegada else Qt.RightArrow
         else:
-            self.panel_lectura.setMaximumHeight(16_777_215)
-            if ya_plegada and self._tamanos_lectura:
-                self.split_factura.setSizes(self._tamanos_lectura)
-            self._tamanos_lectura = None
+            flecha = Qt.RightArrow if plegada else Qt.DownArrow
+        self.btn_plegar_lectura.setArrowType(flecha)
 
     def _destino_discrepancia(self, d: dict, filas_doc) -> list | None:
         """Las líneas donde se puede poner sin riesgo la otra lectura de `d`.
@@ -687,8 +675,9 @@ class FichaMixin:
                 poner(campo_pulsado, getattr(f, campo_pulsado), ACCENT, etiqueta,
                       destacado=True, sin_valor=True)
             return salida
-        if self._columna_senalada == "todo":
-            # «¿De dónde sale?»: todos los datos de la factura.
+        if self._columna_senalada == "todo" or getattr(self, "_datos_sobre_hoja", False):
+            # «¿De dónde sale?» (o la distribución «lectura sobre la hoja»):
+            # todos los datos de la factura que ya se sabe dónde están.
             for campo in localizar.CAMPOS:
                 if campo not in disputas:
                     poner(campo, getattr(f, campo), ACCENT,
