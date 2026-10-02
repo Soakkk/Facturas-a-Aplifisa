@@ -38,13 +38,19 @@ def _procesar(veces=6):
         _app.processEvents()
 
 
-def _tabla(nombres=NOMBRES, ancho=1800):
+def _tabla(nombres=NOMBRES, ancho=None):
+    """Sin `ancho`, el que piden sus columnas y 600 px de sobra (en Windows
+    sin el estilo del programa la letra mide mucho más que aquí)."""
     t = TablaFacturas()
     for r, nombre in enumerate(nombres):
         f = Factura(num_factura=f"F-{r}", fecha="09/07/2026", nombre=nombre,
                     nif="B12345674", base_iva=100.0, pct_iva=21.0,
                     cuota_iva=21.0, total_impreso=121.0)
         t.insertar(r, Fila(png=b"", factura=f, tipo="gasto"), lambda _c: None)
+    t.medir()
+    if ancho is None:
+        ancho = 600 + sum(t.ancho_natural(c) for c in range(t.columnCount())
+                          if not t.isColumnHidden(c))
     t.resize(ancho, 400)
     t.show()
     _procesar()
