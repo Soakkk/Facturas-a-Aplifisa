@@ -27,6 +27,19 @@ quedan). Cambia solo dónde va cada pieza;
 lo cargado y lo que hayas escrito en «Su suma» se quedan. Cada una recuerda
 sus divisores y el programa abre con la última que elegiste.
 
+**Columnas y anchos a tu gusto.** Cada columna mide lo que pone (el nombre
+ya no se queda con media tabla) y lo que sobra se reparte entre todas.
+Arrastra el borde de una columna para ensancharla (doble clic: se ajusta
+sola) y el asa con puntos entre tabla, factura y totales para dar más sitio
+a uno u otro (doble clic: como venía). En Ver: «Ajustar las columnas a lo
+que ponen» y «Volver al reparto de esta distribución».
+
+**Un NIF, un nombre.** Si las facturas de una empresa llegan unas con
+«EMPRESA, S.A.» y otras con «Empresa», ahora salen todas con uno solo (el
+que lleva la forma jurídica, o el que ya se usó para ese NIF). Si con el
+mismo NIF hay dos nombres que no se parecen en nada, la línea queda en
+«Revisar»: o el nombre o el NIF está mal leído.
+
 Dime con cuál te quedas (o qué cambiarías de la que más te guste) y la dejo
 como la de siempre.
 

@@ -1018,17 +1018,18 @@ def fusionar_paginas_manual(registros: List[tuple]) -> tuple:
 
 
 
-def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
-    """El mismo proveedor, escrito siempre igual.
+def nombres_guardados(solo_a_mano: bool = False) -> Dict[str, str]:
+    """{NIF: nombre} de los proveedores ya conocidos (el puesto a mano manda).
 
-    Una vez llega "TELEFONICA DE ESPAÑA, S.A.U." y otra "Telefónica de España,
-    S.A.U.". Es el mismo, pero Aplifisa busca la cuenta por NIF y luego por
-    NOMBRE EXACTO, asi que dos formas de escribirlo pueden acabar en dos
-    cuentas. Se usa el nombre que ya esta guardado para ese NIF.
+    `solo_a_mano`: solo los que escribió una persona. Al guardar un NIF se
+    guarda también el nombre tal cual se leyó, y ese no debe decidir entre
+    dos formas de escribirlo que ya están en el lote.
     """
     por_nif = {}
     for ficha in proveedores.leer_todo().values():
         if not isinstance(ficha, dict):
+            continue
+        if solo_a_mano and not ficha.get("nombre_manual"):
             continue
         nif = normaliza_nif(ficha.get("nif"))
         if not nif or not ficha.get("nombre"):
@@ -1036,7 +1037,19 @@ def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
         # El corregido a mano manda: se ponga antes o despues en el fichero.
         if ficha.get("nombre_manual") or nif not in por_nif:
             por_nif[nif] = ficha["nombre"]
+    return por_nif
 
+
+def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
+    """El mismo proveedor, escrito siempre igual.
+
+    Una vez llega "TELEFONICA DE ESPAÑA, S.A.U." y otra "Telefónica de España,
+    S.A.U.". Es el mismo, pero Aplifisa busca la cuenta por NIF y luego por
+    NOMBRE EXACTO, asi que dos formas de escribirlo pueden acabar en dos
+    cuentas. Se usa el nombre que ya esta guardado para ese NIF y, si es la
+    primera vez que llega, uno solo para todo el lote.
+    """
+    por_nif = nombres_guardados()
     cambiados = 0
     for pr in procesadas:
         for f in pr.facturas:
@@ -1044,7 +1057,101 @@ def unificar_nombres(procesadas: List[FacturaProcesada]) -> int:
             if bueno and f.nombre and f.nombre != bueno:
                 f.nombre = bueno
                 cambiados += 1
-    return cambiados
+    return cambiados + len(unificar_nombres_por_nif(
+        [f for pr in procesadas for f in pr.facturas], por_nif))
+
+
+# Formas jurídicas y palabras que no dicen de quién es la factura.
+_FORMAS_JURIDICAS = {
+    "SA", "SL", "SLU", "SAU", "SLL", "SLNE", "SC", "CB", "SCOOP", "COOP",
+    "SAL", "SOCIEDAD", "LIMITADA", "ANONIMA", "UNIPERSONAL", "COOPERATIVA",
+}
+_PALABRAS_VACIAS = {"DEL", "LOS", "LAS", "THE", "AND", "CIA"}
+
+
+def _palabras_nombre(nombre) -> List[str]:
+    """«Orange Espagne, S.A.» -> ['ORANGE', 'ESPAGNE', 'SA'] (sin acentos y
+    con las letras sueltas juntas: «S. A.» es «SA»)."""
+    import unicodedata
+    t = "".join(c for c in unicodedata.normalize("NFD", str(nombre or ""))
+                if unicodedata.category(c) != "Mn").upper().replace(".", "")
+    palabras, sueltas = [], ""
+    for p in re.sub(r"[^\w]+", " ", t).split():
+        if len(p) == 1:
+            sueltas += p
+            continue
+        if sueltas:
+            palabras.append(sueltas)
+            sueltas = ""
+        palabras.append(p)
+    if sueltas:
+        palabras.append(sueltas)
+    return palabras
+
+
+def _palabras_que_cuentan(nombre) -> set:
+    return {p for p in _palabras_nombre(nombre)
+            if len(p) >= 3 and p not in _FORMAS_JURIDICAS
+            and p not in _PALABRAS_VACIAS}
+
+
+def nombres_compatibles(a, b) -> bool:
+    """Dos formas de llamar a la misma empresa: comparten alguna palabra que
+    no es la forma jurídica («Orange» y «ORANGE ESPAGNE, S.A.»). «Orange» y
+    «PETROSELF, S.L.» con el mismo NIF no lo son: uno de los dos está mal
+    leído y lo tiene que ver una persona."""
+    pa, pb = _palabras_que_cuentan(a), _palabras_que_cuentan(b)
+    return not pa or not pb or bool(pa & pb)
+
+
+def nombre_preferido(nombres: List[str]) -> str:
+    """De las formas de escribir un proveedor, la que va al registro: la que
+    lleva la forma jurídica (S.A., S.L.…), después la que más se repite y,
+    a igualdad, la más completa."""
+    cuenta = Counter(nombres)
+    primera = {}
+    for i, nombre in enumerate(nombres):
+        primera.setdefault(nombre, i)
+
+    def puntos(nombre):
+        forma = any(p in _FORMAS_JURIDICAS for p in _palabras_nombre(nombre))
+        return (forma, cuenta[nombre], len(_palabras_que_cuentan(nombre)),
+                len(nombre), -primera[nombre])
+    return max(cuenta, key=puntos)
+
+
+def unificar_nombres_por_nif(facturas, preferidos: Dict[str, str] | None = None):
+    """Un NIF, un nombre: el registro de Aplifisa no admite dos.
+
+    Agrupa las facturas por NIF (solo los válidos: uno ilegible no prueba
+    nada) y les pone a todas el mismo nombre: el ya guardado para ese NIF o,
+    si no hay, `nombre_preferido` de los del lote. Las que se llaman de otra
+    forma que no se parece en nada no se tocan (avisa la validación: o el
+    nombre o el NIF está mal leído). Devuelve [(factura, antes, después)].
+    """
+    preferidos = preferidos or {}
+    grupos: Dict[str, list] = defaultdict(list)
+    vistas = set()
+    for f in facturas:
+        if id(f) in vistas:
+            continue
+        vistas.add(id(f))
+        nif = normaliza_nif(f.nif)
+        if nif and validar_nif(nif):
+            grupos[nif].append(f)
+    cambios = []
+    for nif, grupo in grupos.items():
+        nombres = [str(f.nombre).strip() for f in grupo if str(f.nombre or "").strip()]
+        bueno = preferidos.get(nif) or (nombre_preferido(nombres) if nombres else "")
+        if not bueno:
+            continue
+        for f in grupo:
+            antes = str(f.nombre or "").strip()
+            if antes == bueno or not nombres_compatibles(antes, bueno):
+                continue
+            cambios.append((f, f.nombre, bueno))
+            f.nombre = bueno
+    return cambios
 
 
 def recordar_nombre_proveedor(nif, nombre) -> bool:

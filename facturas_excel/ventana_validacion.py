@@ -65,12 +65,30 @@ from facturas_excel.tabla_facturas import (
 )
 from facturas_excel.validacion import (
     ERROR, OK, REVISAR, Incidencia, huecos_de_numeracion, fecha_de, validar,
+    validar_nif,
 )
 
 from facturas_excel.ventana_comun import (
     ESCRITORIO, ESTILO_PRESENTACION, COLOR_CONTADOR, TODOS_LOS_BLOQUES,
     _sin_aviso_ejercicios_antiguo, _ayuda_estado, _cabeceras_resumen,
 )
+
+
+def _otro_nombre_del_mismo_nif(facturas) -> dict:
+    """{fila: (otro nombre, su fila)} de las que comparten NIF con otra que
+    se llama distinto (lo que se parece ya lo unifica la lectura)."""
+    por_nif = {}
+    for r, f in enumerate(facturas):
+        nif, nombre = normaliza_nif(f.nif), str(f.nombre or "").strip()
+        if nombre and validar_nif(nif):
+            por_nif.setdefault(nif, {}).setdefault(nombre, r)
+    otro = {}
+    for r, f in enumerate(facturas):
+        nombres = por_nif.get(normaliza_nif(f.nif)) or {}
+        if len(nombres) > 1:
+            propio = str(f.nombre or "").strip()
+            otro[r] = next((n, k) for n, k in nombres.items() if n != propio)
+    return otro
 
 
 class ValidacionMixin:
@@ -110,6 +128,13 @@ class ValidacionMixin:
             anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
         for texto in pasada["errores_documento"].get(r, []):
             anadir(texto, gravedad=ERROR)
+        otro = pasada.get("otro_nombre", {}).get(r)
+        if otro:
+            nombre, linea = otro
+            anadir(f"Este NIF está en la línea {linea + 1} a nombre de «{nombre}». "
+                   f"En Aplifisa un NIF es un solo proveedor: escriba aquí el "
+                   f"nombre bueno (se pone en todas las de ese NIF) o corrija "
+                   f"el NIF si está mal leído.", "nombre", "nif")
         lado = "gasto" if pasada["tipos"][r] == "gasto" else "ingreso"
         if f.concepto and not any(
                 c == str(f.concepto).strip() and (not f.subclave or g == f.subclave)
@@ -214,6 +239,7 @@ class ValidacionMixin:
                 exportadas[r] = ya[k]
         return {
             "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
+            "otro_nombre": _otro_nombre_del_mismo_nif(facturas),
             "transportista": self._cliente_es_transportista(),
             "catalogo": {lado: {(c, g) for c, g, _ in catalogo(lado)}
                          for lado in ("gasto", "ingreso")},
@@ -381,6 +407,7 @@ class ValidacionMixin:
     def _menu_columnas(self, posicion) -> None:
         menu = QMenu(self)
         menu.addAction(self.accion_todas_columnas)
+        menu.addAction(self.accion_ajustar_columnas)
         menu.exec(self.tabla.horizontalHeader().mapToGlobal(posicion))
 
     def _revalidar_todo(self):

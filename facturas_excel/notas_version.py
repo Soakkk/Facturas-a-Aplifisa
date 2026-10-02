@@ -49,6 +49,24 @@ NOTAS = {
       Con los totales en columna, «Su suma» va al lado de cada importe. Cada
       distribución recuerda dónde dejó los divisores y el programa abre con
       la última elegida.</li>
+  <li><b>Columnas a la medida de lo que ponen.</b> Cada columna de la tabla
+      mide lo que su texto más largo, con aire para leerse bien; si sobra
+      sitio se reparte entre todas (antes se lo quedaba entero el nombre) y
+      si falta, se estrechan el nombre y el nº de factura, nunca los
+      importes. Los títulos van alineados con su contenido.</li>
+  <li><b>Anchos a su gusto.</b> Arrastre el borde de una columna para
+      ensancharla: se queda así (doble clic en el borde la vuelve a ajustar).
+      Entre la tabla, la factura y los totales hay un asa con puntos:
+      arrástrela para dar más sitio a uno u otro (doble clic: como venía).
+      En <b>Ver</b>: «Ajustar las columnas a lo que ponen» y «Volver al
+      reparto de esta distribución». Cada distribución recuerda lo suyo.</li>
+  <li><b>Un NIF, un nombre.</b> Las facturas de una misma empresa llegaban
+      unas con el nombre fiscal («EMPRESA, S.A.») y otras con el comercial
+      («Empresa»): ahora todas salen con uno solo, el que ya se usó para ese
+      NIF o, la primera vez, el que lleva la forma jurídica. También al abrir
+      un lote de antes y al corregir un NIF a mano. Si con el mismo NIF hay
+      nombres que no se parecen en nada, la línea queda en «Revisar»: o el
+      nombre o el NIF está mal leído.</li>
 </ul>
 """,
     "1.19.0": """

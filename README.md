@@ -47,7 +47,12 @@ que importa el programa de gestión fiscal **Aplifisa** (Apuntes → Captura mas
    (Ctrl+1 … Ctrl+5) se elige otra de los cinco prototipos: tres columnas,
    lectura sobre la hoja, tabla arriba, cuadre con su suma o una a una. Con
    los totales en columna, «Su suma» va al lado de cada importe. Cada una
-   recuerda sus divisores.
+   recuerda sus divisores (las asas con puntos; doble clic, como venían) y
+   los anchos de columna que se pongan a mano. Cada columna mide lo que su
+   contenido y lo que sobra se reparte entre todas.
+   **Un NIF, un nombre**: las facturas del mismo NIF salen con un solo
+   nombre (el ya usado o el que lleva la forma jurídica); si no se parecen
+   en nada, la línea queda en «Revisar».
    La **lectura de la IA**, al lado de la hoja, agrupa lo leído
    (identificación, importes, contabilidad), marca cada dato con ✓ o !, enseña
    el cuadre como una cuenta y permite elegir entre las dos lecturas.

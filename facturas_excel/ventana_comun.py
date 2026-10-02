@@ -6,11 +6,11 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPalette
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QSplitter, QSplitterHandle
 
-from facturas_excel.estilo import ACCENT, SUCCESS, WARNING, DANGER
+from facturas_excel.estilo import ACCENT, DANGER, MUTED, SUCCESS, WARNING
 from facturas_excel.ficha_incidencias import TITULOS as TITULOS_ESTADO
 from facturas_excel.resumen import porcentaje_iva
 from facturas_excel.lote import (
@@ -180,3 +180,52 @@ def rutas_factura_de_mime(mime):
         if os.path.splitext(ruta)[1].lower() in EXT_FACTURA:
             rutas.append(ruta)
     return rutas
+
+
+AYUDA_DIVISOR = ("Arrastre para dar más sitio a un lado o al otro (se recuerda). "
+                 "Doble clic: volver al reparto de esta distribución.")
+
+
+class _Asa(QSplitterHandle):
+    """El asa de un divisor, con sus puntos: que se vea que se arrastra."""
+
+    def __init__(self, orientacion, divisor):
+        super().__init__(orientacion, divisor)
+        self.setToolTip(AYUDA_DIVISOR)
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def paintEvent(self, evento):
+        super().paintEvent(evento)
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.Antialiasing)
+        pintor.setPen(Qt.NoPen)
+        pintor.setBrush(QColor("white" if self.underMouse() else MUTED))
+        centro = self.rect().center()
+        for paso in (-6, 0, 6):
+            if self.orientation() == Qt.Horizontal:
+                x, y = centro.x(), centro.y() + paso
+            else:
+                x, y = centro.x() + paso, centro.y()
+            pintor.drawEllipse(x - 1, y - 1, 3, 3)
+        pintor.end()
+
+    def mouseDoubleClickEvent(self, evento):
+        if evento.button() == Qt.LeftButton:
+            self.splitter().doble_clic.emit()
+            evento.accept()
+            return
+        super().mouseDoubleClickEvent(evento)
+
+
+class Divisor(QSplitter):
+    """QSplitter con asas visibles; doble clic en una: `doble_clic`."""
+
+    doble_clic = Signal()
+
+    def __init__(self, orientacion, parent=None):
+        super().__init__(orientacion, parent)
+        self.setChildrenCollapsible(False)
+        self.setHandleWidth(8)
+
+    def createHandle(self):
+        return _Asa(self.orientation(), self)

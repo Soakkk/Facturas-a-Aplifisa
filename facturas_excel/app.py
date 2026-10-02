@@ -54,8 +54,9 @@ from facturas_excel import distribucion
 from facturas_excel.su_suma import ALTO_FILA_COLUMNA, TablaSuSuma, TablaTotales
 from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
-    a_total_factura, clave_proveedor, construir, normaliza_nif, quitar_aviso_cuenta,
-    recordar_cuenta_proveedor, recordar_nif, recordar_nombre_proveedor,
+    a_total_factura, clave_proveedor, construir, nombres_guardados, normaliza_nif,
+    quitar_aviso_cuenta, recordar_cuenta_proveedor, recordar_nif,
+    recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
 from facturas_excel.lote import (
     CON_ERROR, CORREGIDA, PENDIENTES, POR_REVISAR, REVISADA, SIN_VERIFICAR,
@@ -81,7 +82,8 @@ TODOS_LOS_MESES = "Todos los meses"
 MARGENES_TARJETA = (12, 10, 12, 10)
 ALTO_TITULO_TARJETA = 32
 from facturas_excel.ventana_comun import (  # noqa: F401
-    COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, EtiquetaCliente, EtiquetaRecortada,
+    COLS_RESUMEN_INICIO, COLS_RESUMEN_FIN, ESCRITORIO, Divisor, EtiquetaCliente,
+    EtiquetaRecortada,
     ICONO_CORREGIDO, ICONO_ESTADO, ICONO_REVISADO, ICONO_SIN_VERIFICAR,
     TODOS_LOS_BLOQUES, _cabeceras_resumen, ruta_recurso,
     rutas_factura_de_mime,
@@ -292,11 +294,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         lal.addLayout(fila_alerta)
         lal.addWidget(self.lbl_alerta_texto)
 
-        split = QSplitter(Qt.Horizontal)
+        split = Divisor(Qt.Horizontal)
         self.split_revision = split
         split.setObjectName("splitRevision")
-        split.setChildrenCollapsible(False)
-        split.setHandleWidth(8)
         tabla_card = QFrame()
         tabla_card.setObjectName("tarjeta")
         self.tabla_card = tabla_card
@@ -602,10 +602,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         lv.addWidget(self.lbl_lectura_resumen)
         # La hoja a la izquierda y lo leído a su derecha: la tarjeta es ancha
         # y baja (los totales van abajo, a lo ancho).
-        self.split_factura = QSplitter(Qt.Horizontal)
+        self.split_factura = Divisor(Qt.Horizontal)
         self.split_factura.setObjectName("splitFactura")
-        self.split_factura.setChildrenCollapsible(False)
-        self.split_factura.setHandleWidth(8)
         self.split_factura.addWidget(self.visor_scroll)
         lectura = QWidget()
         self.panel_lectura = lectura
@@ -801,10 +799,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_ver_su_suma.setChecked(bool(ajustes.leer("su_suma_abierta", True)))
         self._ver_su_suma(self.btn_ver_su_suma.isChecked())
 
-        self.split_principal = QSplitter(Qt.Vertical)
+        self.split_principal = Divisor(Qt.Vertical)
         self.split_principal.setObjectName("splitPrincipal")
-        self.split_principal.setChildrenCollapsible(False)
-        self.split_principal.setHandleWidth(8)
         self.split_principal.addWidget(split)
         self.split_principal.addWidget(totales_card)
         # Mientras no se mueva el divisor a mano, los totales ocupan lo que
@@ -812,12 +808,16 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._alto_totales_a_mano = bool(ajustes.leer("alto_totales_a_mano", False))
         self.split_principal.splitterMoved.connect(self._divisor_totales_movido)
         # Con la tabla arriba, debajo van la factura y los totales.
-        self.split_inferior = QSplitter(Qt.Horizontal)
+        self.split_inferior = Divisor(Qt.Horizontal)
         self.split_inferior.setObjectName("splitInferior")
-        self.split_inferior.setChildrenCollapsible(False)
-        self.split_inferior.setHandleWidth(8)
         self.split_inferior.splitterMoved.connect(
             lambda *_: self._timer_divisores.start())
+        # Doble clic en un asa: ese divisor, como venía en la distribución.
+        for nombre, divisor in self._divisores():
+            divisor.doble_clic.connect(
+                lambda nombre=nombre: self._restablecer_divisor(nombre))
+        # Los anchos de columna que se ponen a mano, por distribución.
+        self.tabla.anchos_a_mano_cambiados.connect(self._guardar_anchos_columnas)
         # «Ocultar» quita los totales; se vuelven a ver en el menú Ver.
         totales_card.setVisible(bool(ajustes.leer("ver_totales_lado", True)))
         cuerpo.addWidget(self.split_principal, 1)
@@ -1155,6 +1155,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._aplicar_plegado(self._plegado_efectivo())
         self._poner_totales_en_columna(d.totales_en_columna)
         self._actualizar_columnas()
+        self.tabla.poner_anchos_a_mano(ajustes.leer(f"columnas_{d.clave}", {}))
         self._poner_tamanos_distribucion()
         accion = self.acciones_distribucion.get(d.clave)
         if accion is not None and not accion.isChecked():
@@ -1198,10 +1199,36 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             for i, factor in enumerate(factores):
                 split.setStretchFactor(i, factor)
 
-    def _poner_tamanos_distribucion(self) -> None:
+    def _restablecer_divisor(self, nombre: str) -> None:
+        """Ese divisor, como venía en la distribución (olvida lo movido)."""
+        if not self._divisor_en_uso(nombre):
+            return
+        if nombre == "principal" \
+                and self._distribucion.colocacion == distribucion.TOTALES_ABAJO:
+            # Los totales vuelven a medir lo justo para sus filas.
+            self._alto_totales_a_mano = False
+            ajustes.guardar("alto_totales_a_mano", False)
+        ajustes.guardar(self._clave_divisor(nombre), None)
+        self._poner_tamanos_distribucion(solo=nombre)
+        self._guardar_divisores()
+
+    def _restablecer_pantalla(self) -> None:
+        """Ver → Volver al reparto de esta distribución: los divisores y los
+        anchos de las columnas, como venían."""
+        for nombre, _divisor in self._divisores():
+            self._restablecer_divisor(nombre)
+        self.tabla.ajustar_al_contenido()
+        self.lbl_estado.setText(
+            f"Distribución {self._distribucion.titulo}: tamaños como venían.")
+
+    def _guardar_anchos_columnas(self, anchos: dict) -> None:
+        if hasattr(self, "_distribucion"):
+            ajustes.guardar(f"columnas_{self._distribucion.clave}", anchos or None)
+
+    def _poner_tamanos_distribucion(self, solo: str | None = None) -> None:
         d = self._distribucion
         for nombre, split in self._divisores():
-            if not self._divisor_en_uso(nombre):
+            if not self._divisor_en_uso(nombre) or solo not in (None, nombre):
                 continue
             defecto = list(d.tamanos.get(nombre) or [600] * split.count())
             if nombre == "principal" and d.colocacion == distribucion.TOTALES_ABAJO:
@@ -1415,6 +1442,16 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 lambda _marcada=False, clave=d.clave: self._elegir_distribucion(clave))
             self.grupo_distribucion.addAction(accion)
             self.acciones_distribucion[d.clave] = accion
+        # Cada pieza se ensancha arrastrando su asa y cada columna, su borde;
+        # esto lo deja todo como venía.
+        self.accion_ajustar_columnas = ver.addAction(
+            "Ajustar las columnas a lo que ponen", lambda: self.tabla.ajustar_al_contenido())
+        self.accion_ajustar_columnas.setStatusTip(
+            "Olvida los anchos de columna puestos a mano: cada una, lo que su contenido.")
+        self.accion_restablecer = ver.addAction(
+            "Volver al reparto de esta distribución", self._restablecer_pantalla)
+        self.accion_restablecer.setStatusTip(
+            "Los divisores y las columnas, como venían en la distribución elegida.")
         config =self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
@@ -1663,6 +1700,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self.combo_recargo.blockSignals(False)
             self._actualizar_combo_bloques()
             self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
+            # Lotes de antes: el mismo NIF podía quedarse con dos nombres.
+            unificar_nombres_por_nif(
+                [x for fila in datos.get("filas", [])
+                 for x in (fila["factura"], *(fila.get("fuentes") or ()))]
+                + [f for bloque in self._bloques
+                   for _, pr in bloque.get("procesadas", []) for f in pr.facturas],
+                nombres_guardados(solo_a_mano=True))
             self.tabla.setRowCount(0)
             self.filas = []
             for fila in datos.get("filas", []):
@@ -2083,6 +2127,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _rellenar_tabla(self):
         self._invalidar_contraste_registro()
+        # Un NIF, un nombre, también entre tacos leídos por separado.
+        unificar_nombres_por_nif(
+            [f for bloque in self._bloques for _, pr in bloque["procesadas"]
+             for f in pr.facturas], nombres_guardados(solo_a_mano=True))
         filas = filas_de_bloques(
             self._bloques, self._por_el_total(), a_total_factura)
         self._conservar_resumenes_corregidos(filas)
@@ -2243,6 +2291,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                         a_las_fuentes = False
         if columna == C_NIF:
             aviso = self._nif_escrito_a_mano(item.row())
+            self._unificar_nombres_en_tabla()
         elif columna == C_NOMBRE:
             aviso = self._nombre_escrito_a_mano(item.row())
         elif columna in (C_CUENTA, C_GXX):
@@ -2316,6 +2365,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         return (f"Guardado: las facturas de {f.nombre} irán a "
                 f"{cuenta}{f' ({gxx})' if gxx else ''} "
                 f"{descripcion_de(cuenta, gxx) or ''}".strip())
+
+    def _unificar_nombres_en_tabla(self) -> int:
+        """Un NIF, un nombre en todo el lote (al corregir un NIF, la línea
+        toma el nombre con el que ya está ese NIF)."""
+        facturas = [x for registro in self.filas
+                    for x in (registro.factura, *(registro.get("fuentes") or ()))]
+        cambiadas = {id(f) for f, _antes, _despues in
+                     unificar_nombres_por_nif(facturas, nombres_guardados(solo_a_mano=True))}
+        for r, registro in enumerate(self.filas):
+            if id(registro.factura) in cambiadas:
+                self.tabla.pintar(r, registro, (C_NOMBRE,))
+        return len(cambiadas)
 
     def _poner_en_las_del_mismo_nif(self, r, nif, columna, valor) -> int:
         """Aplica un valor al resto de facturas del mismo proveedor del lote."""

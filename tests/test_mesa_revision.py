@@ -16,15 +16,16 @@ _app = QApplication.instance() or QApplication([])
 
 def ventana():
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
-    for i, (tipo, nombre, fecha) in enumerate((
-        ("gasto", "SUMINISTROS PRUEBA", "12/01/2026"),
-        ("gasto", "OTRO PROVEEDOR PRUEBA", "04/02/2026"),
-        ("venta", "CLIENTE PRUEBA", "15/03/2026"),
-        ("gasto", "FUERA PRUEBA", "02/04/2026"),
+    # Cada empresa con su NIF: el mismo NIF con otro nombre ya es un aviso.
+    for i, (tipo, nombre, nif, fecha) in enumerate((
+        ("gasto", "SUMINISTROS PRUEBA", "B12345674", "12/01/2026"),
+        ("gasto", "OTRO PROVEEDOR PRUEBA", "A12345674", "04/02/2026"),
+        ("venta", "CLIENTE PRUEBA", "12345678Z", "15/03/2026"),
+        ("gasto", "FUERA PRUEBA", "B76543214", "02/04/2026"),
     )):
         cuenta, concepto = ("600", "G01") if tipo == "gasto" else ("700", "I01")
         f = Factura(
-            num_factura=f"F-{i}", nombre=nombre, nif="B12345674", fecha=fecha,
+            num_factura=f"F-{i}", nombre=nombre, nif=nif, fecha=fecha,
             base_iva=100, pct_iva=21, cuota_iva=21, total_impreso=121,
             concepto=cuenta, subclave=concepto,
         )
