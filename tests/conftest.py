@@ -1,8 +1,69 @@
 """Aislar datos y ventanas: las pruebas no escriben en el perfil del asesor."""
+import faulthandler
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import pytest
+
+# Una prueba que se cuelga (una ventana que espera respuesta, un reparto de
+# tamaños que no se para) no puede tener parado el CI horas: a los cinco
+# minutos se escribe en CUELGUE dónde está cada hilo y se corta. Va a un
+# fichero porque lo que la prueba escribe en pantalla lo guarda pytest y se
+# perdería al cortar (el CI lo enseña si falla).
+MINUTOS_POR_PRUEBA = 5
+CUELGUE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "cuelgue_pruebas.txt")
+
+
+@pytest.fixture(autouse=True)
+def vigilante_de_cuelgues(request):
+    with open(CUELGUE, "w", encoding="utf-8") as fh:
+        fh.write(f"Prueba colgada más de {MINUTOS_POR_PRUEBA} minutos: "
+                 f"{request.node.nodeid}\n\n")
+        fh.flush()
+        faulthandler.dump_traceback_later(MINUTOS_POR_PRUEBA * 60, exit=True, file=fh)
+        try:
+            yield
+        finally:
+            faulthandler.cancel_dump_traceback_later()
+    try:
+        os.remove(CUELGUE)
+    except OSError:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def sin_ventanas_que_esperan(monkeypatch):
+    """Una ventana que espera respuesta deja una prueba colgada para siempre:
+    nadie la pulsa. Pasó en Windows con «Novedades de la versión», que el
+    programa abre a los 500 ms de arrancar: en una máquina lenta saltaba en
+    mitad de otra prueba. Si una prueba no ha previsto la ventana
+    (sustituyéndola), no se abre y la prueba falla diciendo cuál era."""
+    from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+    abiertas = []
+
+    def sin_prever(nombre, devuelve):
+        def ventana(*_a, **_k):
+            abiertas.append(nombre)
+            return devuelve
+        return ventana
+
+    monkeypatch.setattr(QDialog, "exec", lambda self: sin_prever(
+        type(self).__name__, 0)())
+    for nombre in ("critical", "warning", "information", "question", "about"):
+        monkeypatch.setattr(QMessageBox, nombre, staticmethod(
+            sin_prever(f"QMessageBox.{nombre}", QMessageBox.No)))
+    for nombre in ("getText", "getItem", "getInt", "getDouble", "getMultiLineText"):
+        monkeypatch.setattr(QInputDialog, nombre, staticmethod(
+            sin_prever(f"QInputDialog.{nombre}", ("", False))))
+    for nombre in ("getOpenFileName", "getOpenFileNames", "getSaveFileName"):
+        monkeypatch.setattr(QFileDialog, nombre, staticmethod(
+            sin_prever(f"QFileDialog.{nombre}", ("", ""))))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(
+        sin_prever("QFileDialog.getExistingDirectory", "")))
+    yield abiertas
+    assert not abiertas, ("Se abrió una ventana que espera respuesta sin "
+                          f"preverla en la prueba: {', '.join(abiertas)}")
 
 
 @pytest.fixture(autouse=True)

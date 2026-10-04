@@ -514,10 +514,9 @@ def facturas_del_lote(filas: Iterable[Tuple[object, str, int]]) -> List[FacturaP
     for f, tipo, fila in filas:
         if getattr(f, "eliminada", False):
             continue
+        # Sin NIF, la clave lleva el nombre: dos tiendas con el mismo nº y
+        # día no son una factura.
         k = registro_facturas.clave(f, tipo)
-        if k and not normaliza_nif(f.nif):
-            # Sin NIF, dos tiendas con el mismo nº y día no son una factura.
-            k += "|" + _normalizar_id(f.nombre)
         if k and k in por_clave:
             p = por_clave[k]
             p.base = round(p.base + (f.base_iva or 0), 2)

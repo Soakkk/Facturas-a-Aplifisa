@@ -1021,3 +1021,16 @@ def test_la_retencion_del_listado_leido_como_texto_no_se_compara():
     cuadre = cuadre_anual.cuadrar(programa, cuadre_anual.facturas_aplifisa(texto),
                                   {"gasto": (DESDE, HASTA)})
     assert [l.estado for l in cuadre.lineas] == [BIEN]
+
+
+# ------------------------------------------------------------ 1.22
+
+def test_dos_tiques_sin_nif_guardados_salen_los_dos_en_el_cuadre(tmp_path):
+    """Exportados en dos lotes, el segundo ya no pisa al primero en el
+    registro: el que no está en Aplifisa sale como «falta»."""
+    _guardar(tmp_path, [_f("1", "15/01/2026", "BAR ESQUINA", 10.0, 2.1, nif="")])
+    _guardar(tmp_path, [_f("1", "15/01/2026", "FERRETERIA CENTRAL", 30.0, 6.3, nif="")])
+    cuadre = _cuadrar([_apunte("1", "15/01/2026", "BAR ESQUINA", 10.0, 2.1)])
+    assert _por_estado(cuadre) == {BIEN: ["1"], FALTA_APLIFISA: ["1"]}
+    falta = next(l for l in cuadre.lineas if l.estado == FALTA_APLIFISA)
+    assert falta.programa.nombre == "FERRETERIA CENTRAL"

@@ -11,8 +11,10 @@ guardada. De aquí salen el aviso de «ya exportada», el resumen del expediente
 y la consulta «¿qué facturas tengo de este proveedor y dónde está su PDF?».
 
 Una factura se identifica por cliente + lado (gasto/ingreso) + NIF de la otra
-parte + número + fecha. Sin número o sin fecha legible no se apunta: dos
-tickets del mismo día se confundirían.
+parte + número + fecha. Sin NIF, en su lugar va el nombre de la otra parte:
+dos tiques sin NIF del mismo número y día de dos tiendas son dos facturas.
+Sin número o sin fecha legible no se apunta: dos tickets del mismo día se
+confundirían.
 """
 
 from __future__ import annotations
@@ -47,14 +49,63 @@ def lado(tipo: str) -> str:
     return "venta" if tipo in ("venta", "ingreso") else "gasto"
 
 
+# La clave se guarda: estas listas son las suyas y NO se cambian (si se
+# cambiaran, las fichas ya guardadas dejarían de encontrarse). Copia fija de
+# las de procesar.py en la 1.22.
+_FORMAS_CLAVE = frozenset({
+    "SA", "SL", "SLU", "SAU", "SLL", "SLNE", "SC", "CB", "SCOOP", "COOP",
+    "SAL", "SOCIEDAD", "LIMITADA", "ANONIMA", "UNIPERSONAL", "COOPERATIVA"})
+_VACIAS_CLAVE = frozenset({"DE", "LA", "EL", "EN", "LO", "AL", "DEL", "LOS",
+                           "LAS", "THE", "AND", "CIA"})
+
+
+def _palabras_clave(nombre) -> List[str]:
+    """«Bar La Esquina, S.L.» → ['BAR', 'LA', 'ESQUINA', 'SL']: sin acentos y
+    con las letras sueltas juntas («S. L.» es «SL»). Fija, como las listas."""
+    import unicodedata
+    texto = "".join(c for c in unicodedata.normalize("NFD", str(nombre or ""))
+                    if unicodedata.category(c) != "Mn").upper().replace(".", "")
+    palabras, sueltas = [], ""
+    for p in re.sub(r"[^\w]+", " ", texto).split():
+        if len(p) == 1:
+            sueltas += p
+            continue
+        if sueltas:
+            palabras.append(sueltas)
+            sueltas = ""
+        palabras.append(p)
+    if sueltas:
+        palabras.append(sueltas)
+    return palabras
+
+
+def _nombre_clave(nombre) -> str:
+    """El nombre como identidad: sus palabras sin acentos, forma jurídica ni
+    artículos, en orden («Bar La Esquina, S.L.» y «BAR ESQUINA SL» son el
+    mismo: BAR-ESQUINA)."""
+    return "-".join(sorted(p for p in _palabras_clave(nombre)
+                           if p not in _FORMAS_CLAVE and p not in _VACIAS_CLAVE))
+
+
+def _quien(nif, nombre) -> str:
+    """La otra parte: su NIF o, si no lo tiene, su nombre (con «~» delante
+    para no confundirlo con un NIF)."""
+    n = _nif(nif)
+    if n:
+        return n
+    por_nombre = _nombre_clave(nombre)
+    return f"~{por_nombre}" if por_nombre else ""
+
+
 def clave(f, tipo: str) -> Optional[str]:
-    """Identidad de una factura dentro de un cliente, o None si no es segura."""
+    """Identidad de una factura dentro de un cliente, o None si no es segura.
+    La fecha va la última (del_ejercicio la lee de ahí)."""
     from .validacion import fecha_de
     numero = _numero(f.num_factura)
     dia = fecha_de(f.fecha) if f.fecha else None
     if not numero or not dia:
         return None
-    return f"{lado(tipo)}|{_nif(f.nif)}|{numero}|{dia.isoformat()}"
+    return f"{lado(tipo)}|{_quien(f.nif, f.nombre)}|{numero}|{dia.isoformat()}"
 
 
 def cliente_de(cliente_nif: str, cliente_nombre: str = "") -> str:
@@ -73,10 +124,43 @@ def _carpeta() -> str:
 def _con():
     carpeta = _carpeta()
     _migrar_historial(carpeta)
+    _migrar_claves_sin_nif(carpeta)
     return almacen.conexion(carpeta)
 
 
 _migrados: set = set()
+_claves_migradas: set = set()
+
+
+def _migrar_claves_sin_nif(carpeta: str) -> None:
+    """Una sola vez: las fichas sin NIF de antes de la 1.22 pasan a llevar el
+    nombre en su clave (si no, la siguiente exportación de esa factura no la
+    encontraría y saldría como nueva)."""
+    if carpeta in _claves_migradas:
+        return
+    with almacen.conexion(carpeta) as con:
+        hecho = con.execute("SELECT 1 FROM migraciones WHERE coleccion = ?",
+                            ("claves_sin_nif",)).fetchone()
+        if not hecho:
+            existentes = {f["id"] for f in con.execute("SELECT id FROM facturas")}
+            cambiadas = 0
+            for fila in con.execute(
+                    "SELECT id, nombre FROM facturas WHERE id LIKE '%#%||%'").fetchall():
+                cliente, _, k = fila["id"].partition("#")
+                partes = k.split("|")
+                if len(partes) != 4 or partes[1]:
+                    continue
+                quien = _quien("", fila["nombre"])
+                nuevo = _id(cliente, "|".join([partes[0], quien, partes[2], partes[3]]))
+                if not quien or nuevo in existentes:
+                    continue
+                con.execute("UPDATE facturas SET id = ? WHERE id = ?", (nuevo, fila["id"]))
+                existentes.discard(fila["id"])
+                existentes.add(nuevo)
+                cambiadas += 1
+            con.execute("INSERT OR REPLACE INTO migraciones VALUES (?, ?, ?)",
+                        ("claves_sin_nif", f"{cambiadas} fichas", almacen.ahora()))
+    _claves_migradas.add(carpeta)
 
 
 def _migrar_historial(carpeta: str) -> None:

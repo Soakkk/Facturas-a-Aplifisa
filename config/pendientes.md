@@ -1,9 +1,15 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 2 de octubre de 2026 (versión 1.21.0). Apunta abajo lo que
+Actualizado el 4 de octubre de 2026 (versión 1.22.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.22: facturas sin NIF
+
+Dos tiques sin NIF con el mismo número y el mismo día, de dos sitios
+distintos, ya son dos facturas en el registro (antes una pisaba a la otra).
+Lo que ya tenías guardado se pasa solo.
 
 ### Lo nuevo de la 1.21: cuadre con Aplifisa de lo guardado
 
