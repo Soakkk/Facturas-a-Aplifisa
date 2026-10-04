@@ -30,9 +30,12 @@ def escaneos(tmp_path, monkeypatch):
     carpeta = tmp_path / "escaneos"
     carpeta.mkdir()
     monkeypatch.setattr(archivo, "carpeta_escaneos", lambda: str(carpeta))
+    # Lo demás, lo de verdad (de la prueba): «Novedades de la versión» ya
+    # vistas, para que no se abran a mitad de la prueba.
+    leer = ajustes.leer
     monkeypatch.setattr(ajustes, "leer",
                         lambda clave, defecto=None:
-                        str(carpeta) if clave == "carpeta_escaneos" else defecto)
+                        str(carpeta) if clave == "carpeta_escaneos" else leer(clave, defecto))
     return str(carpeta)
 
 

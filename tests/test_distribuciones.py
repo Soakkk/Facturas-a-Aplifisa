@@ -30,11 +30,17 @@ CLAVES = [d.clave for d in distribucion.DISTRIBUCIONES]
 
 @pytest.fixture
 def guardado(monkeypatch):
+    """Lo que se guarda en la prueba, aparte; lo demás, lo de verdad de la
+    prueba. Antes lo leía todo de aquí y no veía que «Novedades de la
+    versión» ya estaban vistas: en Windows, con la máquina lenta, se abrían
+    a los 500 ms en mitad de una prueba y la dejaban colgada."""
     datos = {}
+    leer = ajustes.leer
     monkeypatch.setattr(ajustes, "guardar",
                         lambda clave, valor: datos.__setitem__(clave, valor))
     monkeypatch.setattr(ajustes, "leer",
-                        lambda clave, defecto=None: datos.get(clave, defecto))
+                        lambda clave, defecto=None: datos[clave] if clave in datos
+                        else leer(clave, defecto))
     return datos
 
 
@@ -484,4 +490,29 @@ def test_la_cabecera_de_los_totales_no_arrastra_globos_de_la_otra_forma(guardado
               for c in range(t.columnCount())}
     assert globos["Nº"] == "" and globos["Base imponible"] == ""
     assert globos["Total"].startswith("Total = base")
+    v.close()
+
+
+def test_las_novedades_al_arrancar_no_cuelgan_las_pruebas(guardado):
+    """Lo que colgó el CI de Windows: con la máquina lenta, la prueba seguía
+    procesando eventos pasados los 500 ms y saltaba «Novedades de la
+    versión», que espera un clic. Vistas en esta versión, no salen."""
+    import time
+    from PySide6.QtCore import QCoreApplication, QEventLoop
+    v = _ventana()
+    fin = time.monotonic() + 0.9
+    while time.monotonic() < fin:
+        QCoreApplication.processEvents(QEventLoop.AllEvents, 20)
+    v.close()
+
+
+def test_una_ventana_que_espera_respuesta_no_cuelga_una_prueba(sin_ventanas_que_esperan):
+    """Si aun así salta una ventana que la prueba no ha previsto, no se abre
+    (no se queda esperando un clic) y la prueba falla diciendo cuál es."""
+    from facturas_excel import notas_version
+    notas_version.ajustes.guardar("notas_version_vistas", "")
+    v = _ventana()
+    v._mostrar_notas_version_al_arrancar()
+    assert sin_ventanas_que_esperan == ["DialogoNotasVersion"]
+    sin_ventanas_que_esperan.clear()          # esta vez, prevista
     v.close()

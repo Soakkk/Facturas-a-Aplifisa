@@ -6,6 +6,25 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.22.0": """
+<h2>Novedades de la versión 1.22.0</h2>
+<ul>
+  <li><b>Facturas sin NIF que ya no se pisan.</b> El registro de facturas
+      reconocía cada factura por el NIF de la otra parte, su número y su
+      fecha. Sin NIF, el tique «1» de un bar y el «1» de una ferretería del
+      mismo día eran la misma ficha: exportados juntos se sumaban, y en dos
+      lotes el segundo borraba al primero (y el «Cuadre año» no podía
+      reclamarlo). Ahora, sin NIF, cuenta el nombre de la otra parte. Las
+      fichas que ya tenía se pasan solas al arrancar, y la misma factura
+      escrita de otra forma («Bar La Esquina, S.L.» y «BAR ESQUINA SL»)
+      sigue avisando de «ya exportada».</li>
+  <li><b>Pruebas más seguras al publicar.</b> Una de las comprobaciones que
+      se pasan antes de publicar se quedaba a veces parada en Windows: la
+      ventana de «Novedades» se abría en mitad de ella y esperaba un clic.
+      Ya no puede pasar, y si alguna vez algo se para, se corta a los pocos
+      minutos diciendo dónde. No cambia nada de lo que usted ve.</li>
+</ul>
+""",
     "1.21.0": """
 <h2>Novedades de la versión 1.21.0</h2>
 <ul>

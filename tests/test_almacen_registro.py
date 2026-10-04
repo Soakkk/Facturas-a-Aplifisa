@@ -35,6 +35,7 @@ def _sin_base_de_datos():
     almacen._preparadas.clear()
     almacen._migradas.clear()
     registro_facturas._migrados.clear()
+    registro_facturas._claves_migradas.clear()
 
 
 # ------------------------------------------------------------ migración
@@ -229,3 +230,67 @@ def test_sin_iva_el_registro_no_inventa_un_cero():
     f.pct_iva = f.cuota_iva = None
     historial.registrar("12345678Z", {"gasto": [f]}, {})
     assert registro_facturas.consultar("F-5")[0]["cuota_iva"] is None
+
+
+# ------------------------------------------------- 1.22: facturas sin NIF
+def _sin_nif(numero, nombre, base=10.0, iva=2.1, fecha="15/01/2026"):
+    f = _factura(numero, nif="", fecha=fecha, base=base, iva=iva)
+    f.nombre = nombre
+    return f
+
+
+def test_dos_tiques_sin_nif_de_dos_tiendas_son_dos_fichas():
+    """Antes la clave era NIF + número + fecha: sin NIF, el tique «1» de un
+    bar y el «1» de una ferretería del mismo día eran una sola ficha (en el
+    mismo Excel se sumaban; en dos, la segunda pisaba a la primera)."""
+    bar = _sin_nif("1", "BAR ESQUINA")
+    ferreteria = _sin_nif("1", "FERRETERIA CENTRAL", base=30.0, iva=6.3)
+    assert historial.registrar("12345678Z", {"gasto": [bar, ferreteria]}, {}) == 2
+    assert sorted((f["nombre"], f["base"]) for f in
+                  historial.del_ejercicio("12345678Z", 2026)) == \
+        [("BAR ESQUINA", 10.0), ("FERRETERIA CENTRAL", 30.0)]
+    historial.registrar("12345678Z", {"gasto": [_sin_nif("2", "BAR ESQUINA",
+                                                         fecha="16/01/2026")]}, {})
+    historial.registrar("12345678Z", {"gasto": [_sin_nif("2", "PAPELERIA SUR", 5.0, 1.05,
+                                                         fecha="16/01/2026")]}, {})
+    assert len(historial.del_ejercicio("12345678Z", 2026)) == 4
+    # La misma escrita de otra forma sigue siendo la misma («ya exportada»).
+    assert historial.buscar("12345678Z", _sin_nif("1", "Bar La Esquina, S.L."), "gasto")
+    assert not historial.buscar("12345678Z", _sin_nif("1", "BAR CENTRAL"), "gasto")
+    # Las líneas de IVA de una factura sin NIF siguen siendo una ficha.
+    historial.registrar("12345678Z", {"gasto": [_sin_nif("9", "BAR ESQUINA", 10.0, 2.1),
+                                                _sin_nif("9", "BAR ESQUINA", 5.0, 0.5)]}, {})
+    assert [f["base"] for f in historial.del_ejercicio("12345678Z", 2026)
+            if f["num_factura"] == "9"] == [15.0]
+
+
+def test_las_fichas_sin_nif_de_antes_se_siguen_encontrando():
+    """Una ficha sin NIF guardada con la clave de antes de la 1.22 pasa una
+    vez a la nueva: la factura sigue saliendo como «ya exportada»."""
+    f = _sin_nif("7", "BAR ESQUINA")
+    historial.registrar("12345678Z", {"gasto": [f]}, {"gasto": "C:/x/G 2026.xlsx"})
+    with almacen.conexion(dir_datos()) as con:
+        con.execute("UPDATE facturas SET id = ? WHERE id = ?",
+                    ("12345678Z#gasto||7|2026-01-15",
+                     "12345678Z#gasto|~BAR-ESQUINA|7|2026-01-15"))
+        con.execute("DELETE FROM migraciones WHERE coleccion = 'claves_sin_nif'")
+    registro_facturas._claves_migradas.clear()
+    assert historial.buscar("12345678Z", f, "gasto")["archivo"] == "G 2026.xlsx"
+    assert len(historial.del_ejercicio("12345678Z", 2026)) == 1
+    # Una sola vez: lo que se guarde luego con la clave vieja ya no se toca.
+    with almacen.conexion(dir_datos()) as con:
+        assert con.execute("SELECT origen FROM migraciones WHERE coleccion = ?",
+                           ("claves_sin_nif",)).fetchone()[0] == "1 fichas"
+
+
+def test_la_clave_sin_nif_es_fija():
+    """La clave se guarda: si cambiara su forma, lo guardado dejaría de
+    encontrarse. Estas claves no pueden cambiar nunca."""
+    for nombre, esperada in (("Bar La Esquina, S.L.", "~BAR-ESQUINA"),
+                             ("GASOLINERA Ñ.  PEREZ S. A.", "~GASOLINERA-N-PEREZ"),
+                             ("H&M Hennes", "~HENNES-HM"), ("S.L.", ""), ("", "")):
+        assert registro_facturas._quien("", nombre) == esperada, nombre
+    assert registro_facturas.clave(_sin_nif("F/0012", "Bar La Esquina"), "gasto") == \
+        "gasto|~BAR-ESQUINA|F0012|2026-01-15"
+    assert registro_facturas.clave(_factura("F-1"), "venta") == \
+        "venta|B12345674|F1|2026-03-10"

@@ -18,6 +18,8 @@ permissions:
 jobs:
   tests:
     runs-on: windows-latest
+    # Normalmente tarda 5 minutos: si se cuelga, que no espere seis horas.
+    timeout-minutes: 30
     steps:
       - name: Descargar código
         uses: actions/checkout@v4
@@ -34,11 +36,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
+      - name: Dónde se colgó (si se colgó)
+        if: failure()
+        shell: pwsh
+        run: if (Test-Path cuelgue_pruebas.txt) { Get-Content cuelgue_pruebas.txt }
 
   build:
     needs: tests
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Descargar código
         uses: actions/checkout@v4

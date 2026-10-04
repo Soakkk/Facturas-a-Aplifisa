@@ -180,8 +180,10 @@ def test_el_alto_de_los_totales_se_guarda_aunque_esten_ocultos(monkeypatch):
     guardado = {}
     monkeypatch.setattr(ajustes, "guardar",
                         lambda clave, valor: guardado.__setitem__(clave, valor))
+    leer = ajustes.leer          # lo no guardado aquí («Novedades» vistas…)
     monkeypatch.setattr(ajustes, "leer",
-                        lambda clave, defecto=None: guardado.get(clave, defecto))
+                        lambda clave, defecto=None: guardado[clave] if clave in guardado
+                        else leer(clave, defecto))
     v = _ventana()
     v.resize(1600, 900)
     v.show()
@@ -291,8 +293,10 @@ def _ventana_grande(monkeypatch):
     guardado = {}
     monkeypatch.setattr(ajustes, "guardar",
                         lambda clave, valor: guardado.__setitem__(clave, valor))
+    leer = ajustes.leer          # lo no guardado aquí («Novedades» vistas…)
     monkeypatch.setattr(ajustes, "leer",
-                        lambda clave, defecto=None: guardado.get(clave, defecto))
+                        lambda clave, defecto=None: guardado[clave] if clave in guardado
+                        else leer(clave, defecto))
     v = _ventana()
     v.resize(1600, 1000)
     v.show()
