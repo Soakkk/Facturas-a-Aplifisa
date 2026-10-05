@@ -1,9 +1,24 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de octubre de 2026 (versión 1.22.1). Apunta abajo lo que
+Actualizado el 5 de octubre de 2026 (versión 1.23.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.23: no perder nada
+
+- **El lote se guarda solo** unos segundos después de cada cambio: un apagón
+  ya no se lleva la revisión ni lo leído. Si un lote guardado no se puede
+  abrir, se guarda aparte en vez de borrarse.
+- **Copia de seguridad diaria** de lo que el programa recuerda (registro de
+  facturas, clientes, proveedores, cuentas y notas) en «_Copias de seguridad»,
+  dentro de tu carpeta de documentación. Configuración → Copias de seguridad
+  para hacer una o volver a una anterior.
+- **Gemini con prisas ya no tira lo leído**, y si se acaba el crédito se queda
+  con lo que ya había leído.
+- **Aviso en rojo** si no se puede apuntar lo exportado.
+- **Cada factura, su PDF**, aunque dos se llamen igual.
+- **Escritorio en OneDrive** y **«Deshacer organización»** tras una recogida.
 
 ### Lo nuevo de la 1.22.1: manda la ley
 

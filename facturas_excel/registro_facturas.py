@@ -334,11 +334,18 @@ def _apuntar(cliente_nif: str, cliente_nombre: str,
 
 
 # ---------------------------------------------------------------- pasos
+class NoApuntado(Exception):
+    """No se pudo apuntar lo exportado (base bloqueada, disco lleno…)."""
+
+
 def exportar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],
              archivos: Dict[str, str], cliente_nombre: str = "",
              cuando: Optional[datetime] = None,
              leidas_en: Optional[dict] = None) -> int:
-    """Las facturas acaban de salir en un Excel verificado."""
+    """Las facturas acaban de salir en un Excel verificado.
+
+    Si no se puede apuntar, NO se calla (lanza NoApuntado): sin ese apunte,
+    la misma factura se podría exportar otra vez a Aplifisa sin aviso."""
     momento = (cuando or datetime.now()).isoformat(timespec="seconds")
     try:
         anteriores, _ = _apuntar(
@@ -346,8 +353,12 @@ def exportar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],
             {"revisada_en": momento, "exportada_en": momento,
              "excel": lambda k, d: os.path.basename(archivos.get(d["tipo"], "")) or None},
             leidas_en)
-    except sqlite3.Error:
-        return 0
+    except sqlite3.Error as error:
+        from . import errores
+        import traceback
+        errores.apuntar("Apuntar lo exportado en el registro:\n"
+                        + traceback.format_exc())
+        raise NoApuntado(str(error) or type(error).__name__) from error
     return sum(1 for previa in anteriores.values() if not previa.get("exportada_en"))
 
 
@@ -422,6 +433,21 @@ def buscar(cliente_nif: str, f, tipo: str, cliente_nombre: str = "") -> Optional
     except sqlite3.Error:
         return None
     return _info(fila) if fila else None
+
+
+def pdf_de(cliente_nif: str, f, tipo: str, cliente_nombre: str = "") -> str:
+    """El PDF propio que tiene apuntado esta factura ("" si ninguno)."""
+    k = clave(f, tipo)
+    if not k:
+        return ""
+    try:
+        with _con() as con:
+            fila = con.execute(
+                "SELECT pdf FROM facturas WHERE id = ?",
+                (_id(cliente_de(cliente_nif, cliente_nombre), k),)).fetchone()
+    except sqlite3.Error:
+        return ""
+    return (fila["pdf"] if fila else "") or ""
 
 
 def exportadas_de(cliente_nif: str, cliente_nombre: str = "") -> Dict[str, dict]:

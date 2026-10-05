@@ -11,12 +11,15 @@ unidas), así que es el momento seguro de separarlas:
 Cada factura va al ejercicio de SU fecha y a Gastos o Ingresos según SU tipo
 (un taco puede mezclar años o tipos). La fecha va delante en el nombre para
 que la carpeta se ordene sola. El taco original nunca se borra: se aparta en
-«Tacos escaneados». Si una factura ya se había separado antes (el mismo nombre
-ya existe), no se duplica.
+«Tacos escaneados». Si una factura ya se había separado antes (mismo nombre y
+mismas hojas), no se duplica. Dos facturas distintas a las que les tocaría el
+mismo nombre («A/1» y «A:1», dos tiques sin número de la misma gasolinera el
+mismo día) tienen cada una su PDF: la segunda lleva « (2)».
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from collections import OrderedDict
@@ -64,6 +67,59 @@ def _documentos(facturas_por_tipo: Dict[str, Iterable]) -> "OrderedDict":
     return docs
 
 
+def _huella(doc) -> tuple:
+    """Cómo son sus hojas (vistas en pequeño): igual huella, mismas hojas."""
+    return tuple(hashlib.sha1(pagina.get_pixmap(dpi=24).samples).hexdigest()
+                 for pagina in doc)
+
+
+def _misma_que(ruta: str, huella: tuple) -> bool:
+    import fitz
+    try:
+        with fitz.open(ruta) as existente:
+            return _huella(existente) == huella
+    except Exception:          # dañado o ilegible: no es «la misma»
+        return False
+
+
+def _destino(carpeta: str, nombre: str, huella: tuple, reservados: set,
+             suyo: str = ""):
+    """(ruta, ya estaba). Un nombre que ya existe solo es «el mismo PDF» si
+    tiene las mismas hojas. Si es el PDF que esta misma factura ya tenía
+    (`suyo`, del registro) con otras hojas (se le unió la que faltaba), se
+    sustituye. Si es de otra, se busca « (2)», « (3)»…"""
+    raiz, ext = os.path.splitext(nombre)
+    suyo = os.path.normcase(os.path.abspath(suyo)) if suyo else ""
+    n = 1
+    while True:
+        candidato = os.path.join(carpeta, nombre if n == 1 else f"{raiz} ({n}){ext}")
+        clave = os.path.normcase(os.path.abspath(candidato))
+        if clave not in reservados:
+            if not os.path.exists(candidato):
+                return candidato, False
+            if _misma_que(candidato, huella):
+                return candidato, True
+            if clave == suyo:
+                return candidato, False
+        n += 1
+
+
+def _a_la_papelera(ruta: str, base: str) -> bool:
+    """El PDF viejo de una factura que se rehace no se borra: a _Papelera."""
+    papelera = os.path.join(base, archivo.PAPELERA)
+    raiz, ext = os.path.splitext(os.path.basename(ruta))
+    destino, n = os.path.join(papelera, raiz + ext), 2
+    while os.path.exists(destino):
+        destino = os.path.join(papelera, f"{raiz}_{n}{ext}")
+        n += 1
+    try:
+        os.makedirs(papelera, exist_ok=True)
+        shutil.move(ruta, destino)
+        return True
+    except OSError:
+        return False
+
+
 def _dentro(ruta: str, base: str) -> bool:
     ruta = os.path.normcase(os.path.abspath(ruta))
     base = os.path.normcase(os.path.abspath(base))
@@ -71,8 +127,11 @@ def _dentro(ruta: str, base: str) -> bool:
 
 
 def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
-            cliente: str, nif: str) -> dict:
+            cliente: str, nif: str, pdf_previo=None) -> dict:
     """Crea un PDF por factura y aparta los tacos originales.
+
+    `pdf_previo(tipo, factura)` dice qué PDF tenía ya esa factura (del
+    registro), para rehacerlo en su sitio en vez de dejar dos.
 
     Devuelve {"creados": [...], "ya_estaban": n, "sin_paginas": [...],
     "tacos": {ruta vieja: ruta nueva}, "afectados": {(ejercicio)},
@@ -82,6 +141,7 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
 
     creados, sin_paginas, ya_estaban, pdfs = [], [], 0, []
     usados: set = set()
+    reservados: set = set()     # los PDF que ya tienen dueño en esta pasada
     afectados = set()
     abiertos: Dict[str, "fitz.Document"] = {}
     try:
@@ -96,11 +156,6 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
                 sin_paginas.append(f.num_factura or f.nombre or "?")
                 continue
             carpeta = archivo.carpeta_tipo_cliente(cliente, ejercicio, tipo, base, nif=nif)
-            destino = os.path.join(carpeta, nombre_factura(f))
-            if os.path.exists(destino):
-                ya_estaban += 1
-                pdfs.append((tipo, f, destino))
-                continue
             nuevo = fitz.open()
             for origen, pagina in paginas:
                 if origen.lower().endswith(".pdf"):
@@ -115,6 +170,21 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
             if not nuevo.page_count:
                 nuevo.close()
                 sin_paginas.append(f.num_factura or f.nombre or "?")
+                continue
+            huella = _huella(nuevo)
+            suyo = (pdf_previo(tipo, f) if pdf_previo else "") or ""
+            destino, ya_estaba = _destino(carpeta, nombre_factura(f), huella,
+                                          reservados, suyo)
+            if not ya_estaba and os.path.exists(destino) \
+                    and not _a_la_papelera(destino, base):
+                # El viejo está abierto en otro programa: no se pisa.
+                destino, ya_estaba = _destino(carpeta, nombre_factura(f),
+                                              huella, reservados)
+            reservados.add(os.path.normcase(os.path.abspath(destino)))
+            if ya_estaba:
+                nuevo.close()
+                ya_estaban += 1
+                pdfs.append((tipo, f, destino))
                 continue
             temporal = destino + ".tmp"
             nuevo.save(temporal, garbage=3, deflate=True)

@@ -20,6 +20,8 @@ from facturas_excel.lote import (
 from facturas_excel.validacion import ERROR, OK, REVISAR
 
 
+# Se sigue exportando el nombre por compatibilidad; para usarlo, `escritorio()`
+# (con OneDrive el Escritorio de verdad no es «~\\Desktop»).
 ESCRITORIO = os.path.join(os.path.expanduser("~"), "Desktop")
 
 COLOR_ESTADO = {OK: QColor(SUCCESS), REVISAR: QColor(WARNING), ERROR: QColor(DANGER)}

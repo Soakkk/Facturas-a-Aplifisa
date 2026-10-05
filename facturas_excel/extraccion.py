@@ -10,7 +10,9 @@ procesar.py, una vez detectado el cliente.
 from __future__ import annotations
 
 import json
+import random
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -68,6 +70,10 @@ class SinCredito(Exception):
     """La API key no tiene credito / facturacion activa (no reintentar)."""
 
 
+class DemasiadasPeticiones(Exception):
+    """Google pide ir más despacio (429) y no ha bastado con esperar."""
+
+
 class TiempoAgotado(Exception):
     """Gemini no contesto a tiempo: esa pagina se da por no leida."""
 
@@ -82,6 +88,47 @@ class ErrorLectura(Exception):
     def __init__(self, mensaje: str, consumos=None):
         super().__init__(mensaje)
         self.consumos = list(consumos or [])
+
+
+# Sin crédito de verdad (prepago agotado, facturación sin activar). OJO: el
+# 429 de «demasiadas peticiones por minuto» dice «check your plan and billing
+# details»; por eso no basta con ver «billing» (se tiraban bloques ya leídos y
+# pagados como si no hubiera saldo).
+_SIN_CREDITO = ("depleted", "prepayment", "credit", "requires billing",
+                "billing to be enabled", "billing is not enabled",
+                "billing has not been enabled", "billing_disabled")
+
+# Cuántas veces se espera y se repite una hoja cuando Google pide calma.
+ESPERAS_POR_CUOTA = 5
+ESPERA_MAXIMA = 60       # segundos
+
+
+def _es_sin_credito(e: Exception) -> bool:
+    texto = str(e).lower()
+    return any(k in texto for k in _SIN_CREDITO)
+
+
+def _es_limite_de_peticiones(e: Exception) -> bool:
+    """429 / RESOURCE_EXHAUSTED por ir deprisa, no por falta de saldo."""
+    texto = str(e).lower()
+    return (getattr(e, "code", None) == 429
+            or re.search(r"\b429\b", texto) is not None
+            or "resource_exhausted" in texto) and not _es_sin_credito(e)
+
+
+def _es_cuota_diaria(e: Exception) -> bool:
+    """La cuota del día no vuelve esperando un minuto."""
+    texto = str(e).lower()
+    return "perday" in texto or "per day" in texto or "daily" in texto
+
+
+def _segundos_de_espera(e: Exception, vez: int) -> float:
+    """Lo que pide Google (retryDelay) o 5, 10, 20, 40… sin pasar de 60."""
+    base = 5 * (2 ** vez)
+    pedido = re.search(r"retry_?delay\W+(\d+(?:\.\d+)?)\s*s", str(e).lower())
+    if pedido:
+        base = max(base, float(pedido.group(1)))
+    return min(ESPERA_MAXIMA, base) + random.uniform(0, 1)
 
 
 def _es_modelo_retirado(e: Exception) -> bool:
@@ -314,6 +361,57 @@ class Extractor:
         # Modelos que Google ha dado por retirados: no se vuelven a pedir en
         # las siguientes hojas del mismo bloque.
         self._retirados: set = set()
+        # Cuando Google pide calma (429), esperan todas las hojas a la vez:
+        # si no, las diez que se leen a la vez volverían a chocar.
+        self._cerrojo = threading.Lock()
+        self._pausa_hasta = 0.0
+        self._sin_cuota = ""
+        # Al cerrar el programa no se espera a Google: se deja de pedir.
+        self.cancelado = threading.Event()
+
+    def _pausar(self, segundos: float) -> None:
+        with self._cerrojo:
+            self._pausa_hasta = max(self._pausa_hasta,
+                                    time.monotonic() + segundos)
+
+    def _esperar_pausa(self) -> None:
+        """Espera a trozos cortos: si se cierra el programa, deja de esperar."""
+        resto = self._pausa_hasta - time.monotonic()
+        while resto > 0 and not self.cancelado.is_set():
+            trozo = min(resto, 0.5)
+            time.sleep(trozo)
+            resto -= trozo
+
+    def _pedir(self, modelo: str, img: bytes):
+        """La petición a Gemini, esperando cuando Google pide ir más despacio.
+
+        Si ni así hay sitio (o es la cuota del día), las hojas que quedan no
+        se piden: se quedan en rojo para leerlas luego, y lo leído se queda."""
+        for vez in range(ESPERAS_POR_CUOTA + 1):
+            if self._sin_cuota:
+                raise DemasiadasPeticiones(self._sin_cuota)
+            self._esperar_pausa()
+            if self.cancelado.is_set():
+                raise DemasiadasPeticiones(
+                    "No leída: se cerró el programa mientras se leía.")
+            try:
+                return self.client.models.generate_content(
+                    model=modelo,
+                    contents=[types.Part.from_bytes(data=img, mime_type="image/jpeg"),
+                              _PROMPT],
+                    config=self._config(),
+                )
+            except Exception as e:
+                if not _es_limite_de_peticiones(e):
+                    raise
+                if _es_cuota_diaria(e) or vez == ESPERAS_POR_CUOTA:
+                    self._sin_cuota = (
+                        "Gemini ha pedido parar (demasiadas peticiones"
+                        + (" hoy" if _es_cuota_diaria(e) else " seguidas")
+                        + "): esta hoja no se ha leído. Vuelva a cargarla "
+                        "más tarde.")
+                    raise DemasiadasPeticiones(self._sin_cuota) from e
+                self._pausar(_segundos_de_espera(e, vez))
 
     # ------------------------------------------------------------ llamadas
     def _config(self):
@@ -333,16 +431,13 @@ class Extractor:
         ultimo = None
         for intento in range(3):
             try:
-                return self.client.models.generate_content(
-                    model=modelo,
-                    contents=[types.Part.from_bytes(data=img, mime_type="image/jpeg"),
-                              _PROMPT],
-                    config=self._config(),
-                )
-            except Exception as e:  # 503, rate limit, etc.
+                return self._pedir(modelo, img)
+            except DemasiadasPeticiones:
+                raise
+            except Exception as e:  # 503, red, etc.
                 ultimo = e
                 msg = str(e).lower()
-                if any(k in msg for k in ("credit", "billing", "depleted")):
+                if _es_sin_credito(e):
                     raise SinCredito(
                         "Tu API key no tiene crédito/facturación activa. "
                         "Activa la facturación en aistudio.google.com y añade saldo."
@@ -363,7 +458,7 @@ class Extractor:
                     raise TiempoAgotado(
                         f"Gemini no contestó en {TIEMPO_LIMITE} segundos "
                         f"(se intentó dos veces).") from e
-                if "503" in msg or "unavailable" in msg or "429" in msg:
+                if "503" in msg or "unavailable" in msg:
                     time.sleep(2 * (intento + 1))
                     continue
                 raise

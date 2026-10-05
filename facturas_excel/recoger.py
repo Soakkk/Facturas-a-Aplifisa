@@ -51,8 +51,10 @@ _RE_EXCEL = re.compile(r"^(GASTOS|INGRESOS)_(.+?)(?:_\d+)?\.xlsx$", re.IGNORECAS
 # ----------------------------------------------------------------- orígenes
 def carpetas_origen() -> List[str]:
     """Escritorio y Descargas (también los de OneDrive), sin repetir."""
+    from .rutas import escritorio
     casa = Path(os.path.expanduser("~"))
-    posibles = [casa / "Desktop", casa / "Escritorio", casa / "Downloads",
+    posibles = [Path(escritorio()), casa / "Desktop", casa / "Escritorio",
+                casa / "Downloads",
                 casa / "Descargas", casa / "OneDrive" / "Desktop",
                 casa / "OneDrive" / "Escritorio"]
     vistas, salida = set(), []

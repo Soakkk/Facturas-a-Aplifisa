@@ -25,14 +25,15 @@ from facturas_excel.registro import parece_listado
 from facturas_excel.rutas import dir_datos
 from facturas_excel.union_bloques import unir_ultimo_bloque
 
-from facturas_excel.ventana_comun import ESCRITORIO, EXT_FACTURA
+from facturas_excel.rutas import escritorio
+from facturas_excel.ventana_comun import EXT_FACTURA
 from facturas_excel.hilos import Worker
 
 
 class LecturaMixin:
     def _cargar(self):
         rutas, _ = QFileDialog.getOpenFileNames(
-            self, "Elige facturas (PDF o imágenes)", ESCRITORIO,
+            self, "Elige facturas (PDF o imágenes)", escritorio(),
             "Facturas (*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp)")
         if rutas:
             self.procesar_rutas(rutas)
@@ -368,10 +369,16 @@ class LecturaMixin:
 
     def _avisar_paginas_no_leidas(self):
         """Detalla las páginas agotadas o ilegibles sin detener la cola."""
-        fallos = getattr(getattr(self, "worker", None), "fallos", None)
+        worker = getattr(self, "worker", None)
+        fallos = getattr(worker, "fallos", None)
         if not fallos:
             return
         salto = chr(10)
+        credito = getattr(worker, "sin_credito", "")
+        cabecera = (
+            f"Gemini se quedó sin crédito a mitad del bloque. Lo ya leído se ha "
+            f"conservado; lo que falta está en rojo para leerlo cuando haya "
+            f"saldo.{salto}{credito}{salto}{salto}" if credito else "")
         detalle = salto.join(
             f"· {os.path.basename(ruta) or 'documento'}, página {pagina}: {motivo}"
             for ruta, pagina, motivo in fallos[:10])
@@ -379,6 +386,7 @@ class LecturaMixin:
             detalle += f"{salto}· … y {len(fallos) - 10} más"
         QMessageBox.warning(
             self, "Páginas sin leer",
+            f"{cabecera}"
             f"{len(fallos)} página(s) no se han podido leer y están en rojo "
             f"en la tabla:{salto}{salto}{detalle}{salto}{salto}"
             "La cola continúa. Puede volver a cargar solo esas páginas.")

@@ -228,13 +228,20 @@ def aplicar(base, plan):
 
 
 def deshacer_ultimo(base):
+    """Deshace la última «Organizar carpetas» que no se haya deshecho.
+
+    En la misma carpeta quedan también las «Recoger sueltos»: esas tienen su
+    propio deshacer y aquí no se tocan (antes, tras cualquier recogida, esto
+    fallaba con «La ruta sale de la carpeta de escaneos»)."""
     registros = sorted((Path(base) / HISTORIAL).glob("*.json"), reverse=True)
     for ruta in registros:
         registro = json.loads(ruta.read_text(encoding="utf-8"))
-        if registro["estado"] == "deshecho":
+        if (registro.get("tipo") == "recogida" or "indice_despues" not in registro
+                or registro.get("estado") == "deshecho"):
             continue
         for m in reversed(registro["movimientos"]):
-            origen, destino = dentro(base, m["origen"]), dentro(base, m["destino"])
+            origen = dentro(base, m["origen"])
+            dentro(base, m["destino"])        # que no salga de la carpeta
             if origen.exists():
                 if huella(origen) != m["sha256"]:
                     raise ValueError(f"El original ha cambiado: {origen.name}.")

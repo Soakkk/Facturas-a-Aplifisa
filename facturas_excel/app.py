@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, costes, errores, escaner, notas_version,
+    __version__, ajustes, archivo, copias, costes, errores, escaner, notas_version,
     pendientes, revision_gemini, sesion, updater, muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
@@ -148,6 +148,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_muestras.setSingleShot(True)
         self._timer_muestras.setInterval(800)
         self._timer_muestras.timeout.connect(self._guardar_muestra_revision)
+        # El lote se guarda solo poco después de cada cambio (no solo al
+        # cerrar): un apagón no se lleva la revisión ni lecturas ya pagadas.
+        self._timer_sesion = QTimer(self)
+        self._timer_sesion.setSingleShot(True)
+        self._timer_sesion.setInterval(3000)
+        self._timer_sesion.timeout.connect(self._guardar_sesion_automatica)
+        self._aviso_sesion_dado = False
         self._comprobar_updates = comprobar_updates
         self._crear_menu()
 
@@ -157,6 +164,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if restaurar_sesion:
             self._restaurar_sesion()
         QTimer.singleShot(500, self._mostrar_notas_version_al_arrancar)
+        # La copia de seguridad del día, con el programa ya en pantalla.
+        QTimer.singleShot(4000, self._copia_diaria)
         if self._comprobar_updates:
             QTimer.singleShot(
                 1500, lambda: self._comprobar_actualizaciones(silencioso=True))
@@ -1472,6 +1481,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
         config.addAction("Recargo de equivalencia de este cliente…",
                          self._elegir_regimen_recargo)
+        config.addAction("Copias de seguridad…", self._copias_de_seguridad)
 
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
@@ -1494,6 +1504,38 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         """Aviso dentro de la ventana, sin bloquear (ver banda_avisos)."""
         if hasattr(self, "banda"):
             self.banda.mostrar(texto, tipo, deshacer=deshacer, segundos=segundos)
+
+    def _copia_diaria(self) -> None:
+        """Una copia de seguridad al día de lo que el programa recuerda.
+
+        Con el registro vacío y una copia que sí tiene facturas (otro
+        ordenador, o se estropeó), se ofrece restaurarla: una vez por cada
+        equipo del que venga, para no repetirlo cada día a quien comparte la
+        carpeta con otro ordenador a propósito."""
+        try:
+            buena = copias.mejor_que_la_actual()
+            avisados = ajustes.leer("registro_vacio_avisado", []) or []
+            if buena and buena.equipo not in avisados:
+                ajustes.guardar("registro_vacio_avisado",
+                                list(avisados) + [buena.equipo])
+                self._avisar(
+                    "El registro de facturas de este ordenador está vacío, "
+                    f"pero hay una copia de seguridad del {buena.fecha:%d/%m/%Y} "
+                    f"con {buena.facturas} factura(s). Si ha cambiado de "
+                    "ordenador o se ha estropeado, restáurela en "
+                    "Configuración → Copias de seguridad.", AVISO, segundos=0)
+            copias.diaria()
+        except Exception as error:
+            errores.apuntar("Copia de seguridad diaria:\n"
+                            + traceback.format_exc())
+            self._avisar(f"No se pudo hacer la copia de seguridad de hoy "
+                         f"({error}). Se intentará al volver a abrir; también "
+                         "puede hacerla en Configuración → Copias de "
+                         "seguridad.", AVISO, segundos=0)
+
+    def _copias_de_seguridad(self) -> None:
+        from facturas_excel.dialogo_copias import DialogoCopias
+        DialogoCopias(self).exec()
 
     def _mostrar_notas_version_al_arrancar(self):
         self._mostrar_notas_version(forzar=False)
@@ -1577,6 +1619,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
         def terminado(ruta):
             dialogo.close()
+            try:
+                copias.hacer("antes de actualizar")
+            except Exception:
+                errores.apuntar("Copia antes de actualizar:\n"
+                                + traceback.format_exc())
             try:
                 updater.lanzar_instalador(ruta)
             except Exception as e:
@@ -1663,10 +1710,39 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _guardar_sesion(self) -> None:
         """Conserva lote, correcciones, imágenes y bloques para la próxima vez."""
-        if not self._bloques and not self.filas:
+        self._timer_sesion.stop()
+        datos = self._datos_sesion()
+        if datos is None:
             sesion.borrar()
             return
         self._guardar_muestra_revision()
+        sesion.guardar(datos)
+
+    def _guardar_sesion_automatica(self) -> None:
+        """El guardado de cada poco: la foto del lote se toma aquí y se
+        escribe aparte, sin parar la pantalla. Si falla, se avisa una vez."""
+        error = sesion.ultimo_error()
+        try:
+            datos = self._datos_sesion()
+            if datos is None:
+                sesion.borrar()
+            else:
+                sesion.guardar_en_segundo_plano(datos)
+        except Exception as fallo:     # p. ej. algo del lote que no se guarda
+            error = str(fallo) or type(fallo).__name__
+            errores.apuntar("Guardado automático del lote:\n"
+                            + traceback.format_exc())
+        if error and not self._aviso_sesion_dado:
+            self._aviso_sesion_dado = True
+            self._avisar("No se puede guardar el lote mientras trabaja "
+                         f"({error}). Se intentará otra vez al cerrar; "
+                         "exporte lo revisado en cuanto pueda.", AVISO,
+                         segundos=0)
+
+    def _datos_sesion(self) -> dict | None:
+        """Lo que se guarda del lote (None si está vacío)."""
+        if not self._bloques and not self.filas:
+            return None
         filas = [{
             "png": registro.png, "factura": registro.factura,
             "aviso": registro.aviso or "", "bloque": registro.bloque or "",
@@ -1674,7 +1750,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "cuenta": registro.factura.concepto or "",
             "gxx": registro.factura.subclave or "",
         } for registro in self.filas]
-        sesion.guardar({
+        return {
             "bloques": self._bloques,
             "filas": filas,
             "cliente_nif": getattr(self, "_cliente_nif", ""),
@@ -1685,10 +1761,27 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "localizaciones": {clave: localizar.a_guardar(cajas) for clave, cajas
                                in self._localizaciones.items()},
             "su_suma": self.tabla_su_suma.valores(),
-        })
+        }
+
+    def _avisar_sesion_apartada(self, ruta: str) -> None:
+        if not ruta:
+            return
+        self._avisar(
+            "No se pudo abrir el lote de la última vez (puede ser de otra "
+            "versión). No se ha borrado: queda guardado aparte como "
+            f"«{os.path.basename(ruta)}», en la carpeta de datos del "
+            "programa, para poder recuperarlo.", AVISO, segundos=0)
 
     def _restaurar_sesion(self) -> None:
         datos = sesion.cargar()
+        if datos is None:
+            self._avisar_sesion_apartada(sesion.apartada())
+            if sesion.intocable():
+                self._avisar(
+                    "No se pudo abrir el lote de la última vez, y su fichero "
+                    "está bloqueado (¿otra copia del programa abierta, o el "
+                    "antivirus?). No se toca: cierre el programa y vuelva a "
+                    "abrirlo.", AVISO, segundos=0)
         if not datos or not datos.get("bloques"):
             return
         try:
@@ -1753,11 +1846,15 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 + (f"  {n_nombres} línea(s) con el nombre unificado por NIF."
                    if n_nombres else ""))
         except Exception:
-            # Una sesión antigua o dañada nunca debe impedir abrir el programa.
+            # Una sesión antigua o dañada nunca debe impedir abrir el programa,
+            # pero tampoco se pierde: se aparta y se avisa.
+            errores.apuntar("Recuperar el lote de la última vez:\n"
+                            + traceback.format_exc())
             self._bloques = []
             self.tabla.setRowCount(0)
             self.filas = []
             self._limpiar_visor()
+            self._avisar_sesion_apartada(sesion.apartar())
 
     @staticmethod
     def _numero_guardado(valor) -> str:
@@ -1812,6 +1909,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # Lo que se estaba señalando en el documento no hace falta ya.
         if getattr(self, "_hilo_localizar", None):
             self._hilo_localizar.cancelar()
+        # Una lectura esperando a Gemini (pide ir más despacio) deja de
+        # esperar: si no, la ventana se quedaba colgada al cerrar.
+        worker = getattr(self, "worker", None)
+        if worker is not None and worker.isRunning() and hasattr(worker, "cancelar"):
+            worker.cancelar()
         # No destruir QThreads vivos (abortaria el proceso)
         self.esperar_hilos()
         try:

@@ -207,3 +207,42 @@ def test_sin_elegir_el_listado_no_se_exporta_nada(monkeypatch, tmp_path):
     monkeypatch.setattr(QMessageBox, "exec", lambda self: self.defaultButton().click())
     v._exportar_todo()
     assert escritos == []
+
+
+# --------------------- 1.23: si no se puede apuntar lo exportado, se dice
+def test_si_no_se_puede_apuntar_lo_exportado_se_avisa_en_rojo(
+        monkeypatch, tmp_path):
+    """Antes se callaba: la próxima vez no salía «ya exportada» y la misma
+    factura podía entrar dos veces en Aplifisa."""
+    import sqlite3
+    from facturas_excel import registro_facturas
+
+    escritos, criticos = [], []
+    _preparar_exportacion(monkeypatch, tmp_path, escritos)
+    monkeypatch.setattr(modulo_app.QMessageBox, "critical",
+                        lambda *a: criticos.append(a[2]))
+
+    def base_bloqueada(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(registro_facturas, "_apuntar", base_bloqueada)
+
+    v = _ventana(["F-1"])
+    v._exportar_todo()
+
+    assert escritos == [["F-1"]]                      # el Excel sí sale
+    assert criticos and "NO se ha podido apuntar" in criticos[0]
+    assert "database is locked" in criticos[0]
+    assert "no las exporte otra vez" in v.banda.lbl.text()
+
+
+def test_el_registro_ya_no_se_calla_un_fallo_de_la_base(monkeypatch):
+    import sqlite3
+
+    import pytest
+    from facturas_excel import registro_facturas
+
+    def disco_lleno(*_a, **_k):
+        raise sqlite3.OperationalError("database or disk is full")
+    monkeypatch.setattr(registro_facturas, "_apuntar", disco_lleno)
+    with pytest.raises(historial.NoApuntado, match="disk is full"):
+        historial.registrar("12345678Z", {"gasto": [_factura("F-1")]}, {})

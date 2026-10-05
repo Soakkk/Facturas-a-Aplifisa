@@ -57,6 +57,33 @@ def test_plan_no_mueve_y_organizar_es_reversible_con_colisiones(base):
     assert not identidad.deshacer_ultimo(base)
 
 
+def test_deshacer_organizacion_despues_de_una_recogida(base, tmp_path):
+    """Antes, tras cualquier «Recoger sueltos», «Deshacer organización» daba
+    «La ruta sale de la carpeta de escaneos» (cogía el registro de la
+    recogida) y ya no dejaba deshacer la organización de verdad."""
+    import json
+    clientes.marcar_cliente("12345678Z", "ANA LOPEZ PEREZ")
+    rutas = [pdf(base, "ANA LOPEZ PEREZ/2026/Gastos/a.pdf"),
+             pdf(base, "LOPEZ PEREZ ANA/2026/Gastos/b.pdf", b"otro")]
+    anteriores = {str(p.relative_to(base)): p.read_bytes() for p in rutas}
+    identidad.aplicar(base, identidad.planificar(base))
+    historial = base / identidad.HISTORIAL
+    # Una recogida posterior (con rutas de fuera) y otra vacía.
+    for nombre, movimientos in (
+            ("29991231-235958-000000-recogida-aaaaaa.json",
+             [{"origen": str(tmp_path / "Escritorio" / "x.pdf"),
+               "destino": str(base / "x.pdf"), "sha256": "0"}]),
+            ("29991231-235959-000000-recogida-bbbbbb.json", [])):
+        (historial / nombre).write_text(json.dumps(
+            {"tipo": "recogida", "movimientos": movimientos,
+             "completados": movimientos, "estado": "completado"}),
+            encoding="utf-8")
+
+    assert identidad.deshacer_ultimo(base)
+    assert all((base / p).read_bytes() == c for p, c in anteriores.items())
+    assert not identidad.deshacer_ultimo(base)
+
+
 def test_identidad_ambigua_no_propone_mezclar_clientes(base):
     clientes.marcar_cliente("12345678Z", "ANA LOPEZ PEREZ")
     clientes.marcar_cliente("B12345674", "ANA LOPEZ PEREZ")

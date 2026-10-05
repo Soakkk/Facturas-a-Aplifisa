@@ -23,6 +23,7 @@ buscar = _registro.buscar
 olvidar = _registro.olvidar
 del_ejercicio = _registro.del_ejercicio
 exportadas_de = _registro.exportadas_de
+NoApuntado = _registro.NoApuntado
 
 
 def registrar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],

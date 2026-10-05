@@ -105,7 +105,9 @@ class ArchivoMixin:
                  + ".")
         if r["errores"]:
             texto += f" No se pudieron mover {len(r['errores'])}: " + "; ".join(r["errores"][:3])
-        self._avisar(texto, AVISO if r["errores"] else EXITO,
+        sin_expediente = self._texto_expedientes_sin_actualizar()
+        texto += sin_expediente
+        self._avisar(texto, AVISO if r["errores"] or sin_expediente else EXITO,
                      deshacer=self._deshacer_recogida, segundos=0)
 
     def _deshacer_recogida(self) -> None:
@@ -119,10 +121,15 @@ class ArchivoMixin:
                      else "No hay ninguna recogida que deshacer.", INFO)
 
     def _actualizar_expedientes(self, afectados) -> int:
-        """Rehace en silencio los expedientes de esos (nombre, nif, ejercicio)."""
-        from facturas_excel import expediente
+        """Rehace los expedientes de esos (nombre, nif, ejercicio).
+
+        Los que no se pueden (un PDF abierto en otro programa…) quedan en
+        `_expedientes_sin_actualizar`, para decirlo: ver
+        `_texto_expedientes_sin_actualizar`."""
+        from facturas_excel import errores, expediente
         base = archivo.carpeta_escaneos()
         hechos = 0
+        self._expedientes_sin_actualizar = []
         for nombre, nif, ejercicio in afectados:
             e = expediente.buscar(base, nif, nombre, ejercicio)
             if not e:
@@ -130,9 +137,19 @@ class ArchivoMixin:
             try:
                 expediente.crear(base, e)
                 hechos += 1
-            except (OSError, ValueError, RuntimeError):
-                pass
+            except (OSError, ValueError, RuntimeError) as error:
+                errores.apuntar(f"Expediente {nombre or nif} {ejercicio}: {error}")
+                self._expedientes_sin_actualizar.append(
+                    f"{nombre or nif} {ejercicio} ({error})")
         return hechos
+
+    def _texto_expedientes_sin_actualizar(self) -> str:
+        fallidos = getattr(self, "_expedientes_sin_actualizar", [])
+        if not fallidos:
+            return ""
+        return (f" No se pudo poner al día el expediente de "
+                f"{'; '.join(fallidos[:3])}: ¿tiene abierto su PDF? Ciérrelo y "
+                "vuelva a abrir Expedientes.")
 
     def _ver_registro_facturas(self) -> None:
         from facturas_excel.dialogo_registro_facturas import DialogoRegistroFacturas
@@ -260,7 +277,10 @@ class ArchivoMixin:
         try:
             documentos = {t: list(exportadas.get(t, [])) + list((apartadas or {}).get(t, []))
                           for t in set(exportadas) | set(apartadas or {})}
-            partido = separar.separar(documentos, base, nombre, nif)
+            partido = separar.separar(
+                documentos, base, nombre, nif,
+                pdf_previo=lambda tipo, f: registro_facturas.pdf_de(
+                    nif, f, tipo, nombre))
         except Exception as error:  # nunca debe estropear la exportación
             partido = None
             avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
@@ -289,6 +309,8 @@ class ArchivoMixin:
         hechos = self._actualizar_expedientes(sorted(afectados))
         if hechos:
             avisos.append(f"Expediente del cliente actualizado ({hechos}).")
+        if self._texto_expedientes_sin_actualizar():
+            avisos.append(self._texto_expedientes_sin_actualizar().strip())
         return "".join(f"\n{a}" for a in avisos)
 
     def _cambiar_origen(self, viejo: str, nuevo: str) -> None:
