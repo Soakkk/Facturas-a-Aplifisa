@@ -271,14 +271,24 @@ class ValidacionMixin:
         posibles = {}
         for r in range(n):
             f = facturas[r]
-            if r in exportadas or f.total_impreso is None or not f.num_factura:
+            numero = registro_facturas.numero_clave(f.num_factura)
+            # Un número corto («1», «2») se repite cada año (el alquiler, las
+            # ventas de cuota fija): con eso no basta para sospechar.
+            if r in exportadas or f.total_impreso is None or len(numero) < 3:
                 continue
             ficha = por_numero_total.get((
-                registro_facturas.lado(tipos[r]),
-                registro_facturas.numero_clave(f.num_factura),
+                registro_facturas.lado(tipos[r]), numero,
                 round(float(f.total_impreso), 2)))
-            if ficha:
-                posibles[r] = ficha
+            if not ficha:
+                continue
+            dia = fecha_de(f.fecha)
+            if dia and ficha.get("ejercicio") and ficha["ejercicio"] != dia.year:
+                continue                # otro año: otra factura
+            nif_a, nif_b = normaliza_nif(f.nif), normaliza_nif(ficha.get("nif"))
+            if (nif_a and nif_b and nif_a != nif_b and validar_nif(nif_a)
+                    and validar_nif(nif_b)):
+                continue                # dos NIF buenos y distintos: otra empresa
+            posibles[r] = ficha
         return {
             "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
             "otro_nombre": _otro_nombre_del_mismo_nif(facturas),

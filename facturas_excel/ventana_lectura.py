@@ -263,7 +263,11 @@ class LecturaMixin:
         self._pintar_cliente()
         # Primero se confirma quién es el cliente; solo después tiene sentido
         # decidir si la otra parte contradice un NIF guardado de proveedor.
-        if self._analisis_del_lote().dudoso:
+        analisis = self._analisis_del_lote()
+        # Un homónimo del cliente se pregunta una vez por lote: si ya se eligió
+        # este cliente, no se repregunta después de cada bloque de la cola.
+        ya_elegido = getattr(self, "_cliente_elegido_lote", "") == nif
+        if analisis.empate or (analisis.homonimo and not ya_elegido):
             self._cambiar_cliente(automatico=True)
         self._resolver_conflictos_nif()
         self._preparar_recargo()
@@ -437,8 +441,13 @@ class LecturaMixin:
         # Lo que dice una persona manda y se recuerda; y a los demas del lote
         # se les apunta como proveedores, que es lo que son.
         marcar_cliente(elegido.nif, elegido.nombre)
+        self._cliente_elegido_lote = elegido.nif
         for otro in analisis.candidatos:
-            if otro.nif != elegido.nif and otro.nombre and otro.nif:
+            # Un homónimo del cliente (su nombre con otro NIF) no se apunta
+            # como proveedor: estropearía la memoria de quien sí le compra.
+            if (otro.nif != elegido.nif and otro.nombre and otro.nif
+                    and clave_proveedor(otro.nombre)
+                    != clave_proveedor(elegido.nombre)):
                 recordar_nif(otro.nombre, otro.nif, manual=True)
         self._rehacer_con_cliente(elegido.nombre, elegido.nif)
 

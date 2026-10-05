@@ -1,5 +1,118 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
+## Para seguir (nota del 05/10/2026, sesión interrumpida)
+
+**Estado.** Publicadas la 1.22.1, la 1.23.0 y la 1.24.0 (la 1.24.0, el
+05/10/2026). La **1.25.0 «memoria y lectura»** está en la rama
+`claude/serene-franklin-7smpxl`, **sin publicar**. Ya tiene la versión en
+`__init__.py`, sus notas en `notas_version.py` y «Lo nuevo de la 1.25» en
+`config/pendientes.md`. El usuario pidió: «avísame cuando esté publicada».
+
+### 1.25: lo que falta
+
+La revisión adversarial de la 1.25 dio 9 hallazgos y están **todos arreglados
+en el código**. Sus reproducciones están en
+`docs/revisiones/rev125_reproducciones.py`. Falta:
+
+1. **Pruebas** en `tests/test_memoria_lectura.py`, una o más por hallazgo:
+   1. Un `cuentas_cliente` raro (lista, dict, lista de un elemento) no rompe
+      el lote ni el guardado (`procesar._cuentas_por_cliente`).
+   2. La cuenta anterior a la 1.25 (sin cliente) se guarda bajo `"*"` y se
+      sigue poniendo en silencio en los demás clientes. Un cliente sin NIF no
+      queda en ámbar para siempre.
+   3. «…en otro cliente»:
+      - lo quita `quitar_aviso_cuenta`;
+      - no sale si Gemini propone la misma cuenta;
+      - «Marcar revisada» guarda la cuenta (`app._marcar_revisada` →
+        `_cuenta_escrita_a_mano`).
+   4. Bien de inversión:
+      - la memoria no pisa la 200;
+      - el texto «va a la 200» solo sale con el concepto 200
+        (`validacion.texto_motivo_revision(motivo, f)`);
+      - una venta con bien de inversión no dice «200».
+   5. Varios:
+      - **Homónimo del cliente:** se pregunta una vez por lote
+        (`_cliente_elegido_lote`, en `ventana_lectura`), y el homónimo no se
+        apunta como proveedor. Probarlo en la ventana, con dos bloques y
+        `DialogoCliente.exec` parcheado. La reproducción antigua simula el
+        diálogo viejo y ya no aplica tal cual.
+      - **«POSIBLEMENTE YA EXPORTADA»:** no salta con un número corto (menos
+        de 3 caracteres), de otro año, ni con dos NIF válidos distintos.
+      - **Margen de redondeo:** probar con un abono (base negativa).
+   6. Doble lectura sin falsos ámbar (`doble_lectura.comparar`):
+      - ya no compara `fecha_operacion` ni `sustituye_a`;
+      - en IRPF y suplidos, None vale 0;
+      - la cuenta se compara como «629 (G22)» (`cuenta_de`), y una subclave
+        única se da por puesta; ya no hay discrepancia aparte de subclave;
+      - si las dos lecturas dicen bien de inversión, no se compara la cuenta;
+      - `es_bien_inversion` lleva `campo_factura` "".
+   7. Ficha: «Usar este» y «Es correcto» con la cuenta ponen cuenta y
+      subclave en todas las líneas (y en sus fuentes), y la recuerdan
+      (`ventana_ficha._poner_cuenta_leida`). Lo mismo para `base_irpf` y
+      `pct_irpf` que para `cuota_irpf`. **Sin probar aún en la ventana.**
+   8. Palabras clave:
+      - «impuestos incluidos» no va a la 631;
+      - «caja registradora» no va a la 623;
+      - «registro mercantil» y «registradores» sí van a la 623.
+   9. Ficha: la fecha elegida de cualquiera de las dos lecturas queda en
+      dd/mm/aaaa (`normalizar_fecha`). **Sin probar aún en la ventana.**
+2. Pasar la suite completa y la emulada (`-p letra_grande -p
+   pantalla_pequena`), y pyflakes. Hoy hay 35 avisos antiguos; no añadir más.
+3. Publicar:
+   1. Commit y PR «v1.25.0: memoria y lectura», y esperar al CI.
+   2. Squash-merge con el `expectedHeadSha` completo.
+   3. Lanzar `build.yml` en master con `publicar=true` y comprobar
+      `releases/latest`.
+4. **Avisar al usuario** de que la 1.25 está publicada.
+5. Reiniciar la rama sobre master:
+   ```
+   git fetch origin +refs/heads/<rama>:refs/remotes/origin/<rama>
+   git checkout -B <rama> origin/master
+   git merge -s ours origin/<rama>
+   ```
+   El fetch necesita el refspec explícito: uno simple solo actualiza
+   FETCH_HEAD.
+
+### Después: «El resto dale con todo»
+
+Fuera de todo esto queda lo de **tamaño de pantalla** (modo portátil,
+anchos, letra, tamaño de ventana): el usuario tiene una pantalla 2K y dijo
+«no hace falta ajustar nada más». Las revisiones completas están en
+`docs/revisiones/`. Antes de cada PR se hace una revisión adversarial con
+un subagente.
+
+- **1.26 aplicación** (`aplicacion.md`):
+  - **Pendientes:** puntos 2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15 (exigir el
+    `.sha256`), 16, 18, 20 y 22.
+  - **Si cabe:** 17 (truststore) y 19 (estimar el coste antes de leer).
+  - **Ya hechos:** 1, 4, 6 y 7.
+  - **Fuera:** 21 (pantalla).
+- **1.27 organización** (`organizacion.md`):
+  - **Pendientes:** puntos 3 (clave de las facturas sin número), 4, 6, 7,
+    10, 11, 12, 14, 15, 16, 17, 18, 19 y 20.
+  - **Ya hechos:** 1, 2, 5 y 8.
+  - **A medias:** el 9 (falta el historial de movimientos).
+  - **En la 1.26:** el 13 y el 21.
+- **1.28 diseño funcional** (`diseno.md`, sin lo de tamaño):
+  - repaso del teclado;
+  - «Exportar» que diga «Faltan N»;
+  - que el Cuadre año no se cierre con «Ver en el lote»;
+  - un solo cuadre;
+  - botones repetidos y menús;
+  - una guía cuando la pantalla está vacía;
+  - los textos que confunden;
+  - «Escanear otro igual».
+- **1.29 estructura** (`estructura.md`).
+- **Funcionamiento** (`funcionamiento.md`): casi todo hecho en la 1.24 y la
+  1.25; repasar lo que quede.
+
+### Preguntas al usuario sin contestar (`config/pendientes.md`, 4–7)
+
+- Formato de Aplifisa para la ISP, el tipo de factura y la clave de régimen.
+- La fecha de deducción de las facturas del año anterior: hoy salen en rojo.
+- Sectores diferenciados en el recargo de equivalencia.
+- Las ventas de un cliente en recargo.
+
 ## v1.16.0 — una factura, un PDF (24/09/2026)
 
 Estado: **implementado**. El usuario pidió guardar por proveedor/cliente y

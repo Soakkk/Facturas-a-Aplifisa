@@ -30,7 +30,8 @@ DEFAULT_VENTA = "700"        # y 700 en ventas (subclave I01)
 # los tributos y suministros van antes que reparacion/combustible para evitar
 # falsos positivos (p.ej. "traccion mecanica" no debe ir a reparacion).
 REGLAS_GASTOS = [
-    ("631", ["impuesto*", "tributo*", "tasa", "tasas", "ivtm",
+    # «impuesto» sin raíz: «impuestos incluidos» sale en muchos tiques.
+    ("631", ["impuesto", "tributo", "tributos", "tasa", "tasas", "ivtm",
              "vehiculos de traccion",
              "agencia tributaria", "ayuntamiento", "suma gestion"]),
     ("628", ["telefon*", "telecomunicacion", "internet", "movil", "orange",
@@ -45,7 +46,11 @@ REGLAS_GASTOS = [
              "acuambiente", "canal de isabel", "agua potable", "alcantarillado",
              "saneamiento y depuracion"]),
     ("628", ["gas natural", "butano", "propano", "redexis", "nedgia"]),
-    ("623", ["notari*", "registr*", "abogad*", "procurador", "gestoria",
+    # El registro, con nombre y apellidos: «registr*» cazaba la caja
+    # registradora o el registro sanitario de un proveedor de comida.
+    ("623", ["notari*", "registro mercantil", "registro de la propiedad",
+             "registro de bienes muebles", "registrador", "registradores",
+             "registral", "registrales", "abogad*", "procurador", "gestoria",
              "asesoria", "auditor"]),
     ("625", ["seguro*", "poliza", "mutua", "mapfre"]),
     ("626", ["comision bancaria", "banco", "interes"]),

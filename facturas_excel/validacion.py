@@ -346,7 +346,7 @@ def validar(f: Factura) -> Resultado:
     if motivo:
         # Ya no se aparta de la exportación (eso dejaba facturas sin
         # registrar): se mira en ámbar y sale con «Marcar revisada».
-        marcar_revisar(texto_motivo_revision(motivo))
+        marcar_revisar(texto_motivo_revision(motivo, f))
 
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
@@ -447,7 +447,7 @@ def validar(f: Factura) -> Resultado:
     return Resultado(estado=estado, mensajes=msgs)
 
 
-def texto_motivo_revision(motivo: str) -> str:
+def texto_motivo_revision(motivo: str, f: Optional[Factura] = None) -> str:
     """El aviso ámbar de una factura que antes se apartaba como «manual»."""
     if motivo.startswith("Sustituida"):
         return (f"{motivo}: si es la factura anterior, elimínela del lote "
@@ -456,10 +456,13 @@ def texto_motivo_revision(motivo: str) -> str:
         return ("Factura con suplido: el suplido va como otra línea sin IVA. "
                 "Compruébelo con el documento y pulse «Marcar revisada».")
     if motivo == "Bien de inversión":
-        return ("Posible bien de inversión: va a la 200 (se amortiza, y su IVA "
-                "va en las casillas de bienes de inversión del 303). Si es un "
-                "gasto corriente, ponga su cuenta; si no, pulse «Marcar "
-                "revisada».")
+        if f is not None and str(f.concepto or "").strip() == "200":
+            return ("Posible bien de inversión: va a la 200 (se amortiza, y su "
+                    "IVA va en las casillas de bienes de inversión del 303). Si "
+                    "es un gasto corriente, ponga su cuenta; si no, pulse "
+                    "«Marcar revisada».")
+        return ("Posible bien de inversión: compruebe la cuenta con el "
+                "documento y pulse «Marcar revisada».")
     if motivo == "Marcada por el usuario":
         return ("La apartó usted para gestión manual en una versión anterior: "
                 "compruébela y pulse «Marcar revisada» para exportarla.")

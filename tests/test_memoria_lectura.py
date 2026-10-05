@@ -164,14 +164,15 @@ def test_posiblemente_ya_exportada_con_otro_nif(monkeypatch, tmp_path):
     from facturas_excel import historial
     from facturas_excel.app import VentanaPrincipal
     QApplication.instance() or QApplication([])
-    vieja = Factura(num_factura="M-1", fecha="03/09/2026", nombre="MAKRO",
+    # Un número de al menos 3 cifras: «1», «2» se repiten cada año.
+    vieja = Factura(num_factura="M-1047", fecha="03/09/2026", nombre="MAKRO",
                     nif=None, base_iva=100.0, total_impreso=121.0)
     historial.registrar(CLIENTE_A, {"gasto": [vieja]}, {})
 
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     v._cliente_nif, v._cliente_nombre = CLIENTE_A, "CLIENTE"
     v._bloques = [{"nombre": "b1", "cliente": "CLIENTE", "nif": CLIENTE_A}]
-    nueva = Factura(num_factura="M-1", fecha="04/09/2026", nombre="MAKRO",
+    nueva = Factura(num_factura="M-1047", fecha="04/09/2026", nombre="MAKRO",
                     nif=MAKRO, concepto="600", subclave="G01", base_iva=100.0,
                     pct_iva=21.0, cuota_iva=21.0, total_impreso=121.0)
     v._anadir_fila(b"", nueva, "gasto", "600", "G01", "", "b1")

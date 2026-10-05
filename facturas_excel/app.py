@@ -2238,6 +2238,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
+        self._cliente_elegido_lote = ""
         self._periodo_manual_valor = "auto"
         self._periodo_lote = PeriodoLote()
         self.txt_buscar.clear()
@@ -2960,6 +2961,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 confirmadas.append(f)
         ya_corregidas = any(self.filas[fila].presentacion == CORREGIDA
                             for fila in filas)
+        # Revisar una cuenta que venía de otro cliente es decir que en este
+        # también va ahí: se recuerda para este cliente y no vuelve a salir.
+        for fila in filas:
+            if "en otro cliente" in (self.filas[fila]["aviso"] or ""):
+                self._cuenta_escrita_a_mano(fila)
         self._revalidar_todo()
         if confirmadas:
             texto = (f"{len(confirmadas)} línea(s) revisada(s): ya pueden "

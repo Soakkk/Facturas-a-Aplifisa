@@ -89,6 +89,10 @@ class Candidato:
 class Analisis:
     candidatos: List["Candidato"]
     dudoso: bool
+    # Por qué: empate entre dos partes, o un homónimo del cliente confirmado
+    # con otro NIF válido (1.25).
+    homonimo: bool = False
+    empate: bool = False
 
     @property
     def mejor(self) -> "Candidato | None":
@@ -156,8 +160,9 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     # solo la propuesta del dialogo; decide la persona, y se recuerda.
     orden = sorted(cuenta.values(),
                    key=lambda c: (-c.puntos, -c.como_receptor, c.nif))
-    dudoso = homonimo or (len(orden) > 1 and orden[0].puntos == orden[1].puntos)
-    return Analisis(candidatos=orden, dudoso=dudoso)
+    empate = len(orden) > 1 and orden[0].puntos == orden[1].puntos
+    return Analisis(candidatos=orden, dudoso=homonimo or empate,
+                    homonimo=homonimo, empate=empate)
 
 
 def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
@@ -483,10 +488,11 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
 _CAMPO_FACTURA = {
     "num_factura": "num_factura", "fecha": "fecha", "total": "total_impreso",
     "cuota_irpf": "cuota_irpf", "lineas_iva": "base_iva", "suplidos": "base_iva",
+    # La cuenta llega como «629 (G22)»: cuenta y subclave van juntas.
     "cuenta_gasto": "concepto", "cuenta_ingreso": "concepto",
-    "es_bien_inversion": "concepto", "subclave_gxx": "subclave",
-    "fecha_operacion": "fecha_operacion", "base_irpf": "base_irpf",
-    "pct_irpf": "pct_irpf",
+    "base_irpf": "base_irpf", "pct_irpf": "pct_irpf",
+    # «Bien de inversión» no es una columna: se decide con la cuenta (la 200).
+    "es_bien_inversion": "",
 }
 # Lo contable que solo cuenta de un lado: la cuenta de gasto en una venta (o
 # la de ingreso en un gasto) no es una discrepancia que importe.
@@ -1302,6 +1308,21 @@ def recordar_nombre_proveedor(nif, nombre) -> bool:
     return guardado
 
 
+# La cuenta de antes de la 1.25 (no se sabe de qué cliente era): se conserva
+# con esta clave y se sigue poniendo como hasta ahora.
+CUENTA_DE_ANTES = "*"
+
+
+def _cuentas_por_cliente(ficha) -> dict:
+    """{cliente: [cuenta, gxx]} de una ficha, a prueba de datos raros (una
+    lista, un dict, un valor suelto): nunca puede tumbar un lote."""
+    valor = (ficha or {}).get("cuentas_cliente") if isinstance(ficha, dict) else None
+    if not isinstance(valor, dict):
+        return {}
+    return {str(k): (list(v) + [None])[:2] for k, v in valor.items()
+            if isinstance(v, (list, tuple)) and v}
+
+
 def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
                               cliente_nif: str = "") -> bool:
     """La cuenta contable que el usuario le pone a este proveedor.
@@ -1317,8 +1338,12 @@ def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
     ficha = proveedores.buscar_por_nif(nif) if nif else None
     clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
         else clave_proveedor(nombre)
-    por_cliente = dict((ficha or proveedores.leer_todo().get(clave) or {})
-                       .get("cuentas_cliente") or {})
+    anterior = ficha or proveedores.leer_todo().get(clave) or {}
+    por_cliente = _cuentas_por_cliente(anterior)
+    if (not por_cliente and anterior.get("cuenta_manual")
+            and anterior.get("cuenta")):
+        # La primera por cliente: la de antes no se pierde.
+        por_cliente[CUENTA_DE_ANTES] = [anterior.get("cuenta"), anterior.get("gxx")]
     cliente = normaliza_nif(cliente_nif)
     if cliente:
         por_cliente[cliente] = [cuenta, gxx or None]
@@ -1345,12 +1370,21 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
         ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
         if not ficha or not ficha.get("cuenta_manual"):
             continue
-        por_cliente = ficha.get("cuentas_cliente") or {}
-        de_otro = bool(por_cliente) and cliente not in por_cliente
-        cuenta, gxx = (por_cliente.get(cliente) or
-                       [ficha.get("cuenta"), ficha.get("gxx")])[:2]
+        if any(f.tratamiento_manual == "Bien de inversión" for f in pr.facturas):
+            continue        # va a la 200: no la pisa la cuenta de sus gastos
+        por_cliente = _cuentas_por_cliente(ficha)
+        propia = por_cliente.get(cliente) if cliente else None
+        de_antes = por_cliente.get(CUENTA_DE_ANTES)
+        # De otro cliente: solo si este cliente tiene NIF y no hay ni la suya
+        # ni una de antes (que se pone como siempre).
+        de_otro = bool(por_cliente) and bool(cliente) and not propia \
+            and not de_antes
+        cuenta, gxx = propia or de_antes or [ficha.get("cuenta"), ficha.get("gxx")]
         if not es_valido(cuenta, gxx):
             continue
+        if de_otro and (cuenta, gxx) == (pr.cuenta, pr.gxx) \
+                and not _AVISO_CUENTA.search(pr.aviso or ""):
+            continue        # la IA ya propone esa misma: nada que avisar
         pr.cuenta, pr.gxx = cuenta, gxx
         for f in pr.facturas:
             f.concepto, f.subclave = cuenta, gxx
@@ -1374,7 +1408,9 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
 _AVISO_CUENTA = re.compile(
     r"(?:La subclave \S+ no existe para la \S+: se ha puesto \S+, la única "
     r"que admite\.|Cuenta \S+ (?:propuesta por palabras clave|puesta por "
-    r"descarte)[^:]*:[^.]*\.(?: Elija la cuenta correcta\.)?)")
+    r"descarte)[^:]*:[^.]*\.(?: Elija la cuenta correcta\.)?"
+    r"|La cuenta \S+(?: \(\S+\))? es la que usted le puso a .*? en otro "
+    r"cliente: compruebe que en este también va ahí\.)")
 
 
 def quitar_aviso_cuenta(aviso: str) -> str:
