@@ -77,6 +77,43 @@ def test_no_se_duplica_si_ya_se_habia_separado(tmp_path):
     assert (r["creados"], r["ya_estaban"]) == ([], 1)
 
 
+def test_dos_facturas_con_el_mismo_nombre_tienen_cada_una_su_pdf(tmp_path):
+    """«A/1» y «A:1» del mismo día se llamarían igual: antes la segunda
+    se daba por «ya estaba» y su ficha apuntaba al PDF de la primera."""
+    base = str(tmp_path / "archivo")
+    carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
+    taco = _taco(os.path.join(carpeta, "taco.pdf"), 2)
+    una = _f("A/1", "GASOLINERA", "12/02/2026", taco, 1, doc="d1")
+    otra = _f("A:1", "GASOLINERA", "12/02/2026", taco, 2, doc="d2")
+    r = separar.separar({"gasto": [una, otra]}, base, *CLIENTE)
+
+    assert len(r["creados"]) == 2 and r["ya_estaban"] == 0
+    rutas = {f.num_factura: ruta for _t, f, ruta in r["pdfs"]}
+    assert rutas["A/1"] != rutas["A:1"]
+    assert rutas["A:1"].endswith(" (2).pdf")
+    assert _texto(rutas["A/1"]) == ["hoja 1"] and _texto(rutas["A:1"]) == ["hoja 2"]
+
+
+def test_un_pdf_de_otra_factura_con_ese_nombre_no_se_toma_por_suyo(tmp_path):
+    """Dos tiques sin número de la misma gasolinera y el mismo día, en dos
+    exportaciones: el segundo no puede quedarse con el PDF del primero."""
+    base = str(tmp_path / "archivo")
+    carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
+    taco = _taco(os.path.join(carpeta, "taco.pdf"), 2)
+    primero = separar.separar(
+        {"gasto": [_f("", "GASOLINERA", "12/02/2026", taco, 1, doc="t1")]},
+        base, *CLIENTE)
+    taco2 = os.path.join(carpeta, "..", "Tacos escaneados", "taco.pdf")
+    segundo = separar.separar(
+        {"gasto": [_f("", "GASOLINERA", "12/02/2026", taco2, 2, doc="t2")]},
+        base, *CLIENTE)
+
+    [(_t, _f1, ruta1)] = primero["pdfs"]
+    [(_t, _f2, ruta2)] = segundo["pdfs"]
+    assert ruta1 != ruta2 and segundo["creados"] == [ruta2]
+    assert _texto(ruta1) == ["hoja 1"] and _texto(ruta2) == ["hoja 2"]
+
+
 def test_hojas_unidas_a_mano_de_dos_archivos(tmp_path):
     base = str(tmp_path / "archivo")
     carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])

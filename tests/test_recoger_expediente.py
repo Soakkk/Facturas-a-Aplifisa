@@ -217,3 +217,26 @@ def test_tambien_se_reconoce_el_excel_numerado(entorno):
     [c] = [c for c in recoger.buscar(recoger.carpetas_origen(), entorno.base)
            if c.clase == "excel"]
     assert (c.nif, c.tipo, c.ejercicio) == (CLIENTE[0], "gastos", 2026)
+
+
+def test_un_expediente_que_no_se_puede_rehacer_se_dice(monkeypatch):
+    """Antes se callaba (un PDF abierto en otro programa, por ejemplo)."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from facturas_excel import expediente
+    from facturas_excel.app import VentanaPrincipal
+
+    QApplication.instance() or QApplication([])
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+
+    def abierto(*_a, **_k):
+        raise PermissionError("El archivo está abierto en otro programa")
+    monkeypatch.setattr(expediente, "buscar", lambda *a, **k: object())
+    monkeypatch.setattr(expediente, "crear", abierto)
+    hechos = v._actualizar_expedientes([("CLIENTE", "12345678Z", 2026)])
+
+    assert hechos == 0
+    texto = v._texto_expedientes_sin_actualizar()
+    assert "CLIENTE 2026" in texto and "abierto" in texto

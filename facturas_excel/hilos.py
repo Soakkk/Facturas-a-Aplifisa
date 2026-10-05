@@ -32,6 +32,7 @@ class Worker(QThread):
         self.rutas = rutas
         self.api_key = api_key
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
+        self.sin_credito = ""   # el aviso de Google si se acabó el crédito
 
     def run(self):
         try:
@@ -46,22 +47,30 @@ class Worker(QThread):
 
             consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
             sin_credito = []
+            leidas = []
+
+            def sin_leer(img, origen, pagina):
+                motivo = "No leída: la API key se quedó sin crédito"
+                self.fallos.append((origen, pagina, motivo))
+                return {"emisor_nombre": None, "lineas_iva": [{}],
+                        "_error": motivo}
 
             def tarea(idx):
                 origen, pagina, img = imagenes[idx]
                 if sin_credito:
                     # Se acabó el crédito en otra hoja: no se pide nada más.
-                    return idx, (img, origen, pagina, {
-                        "emisor_nombre": None, "lineas_iva": [{}],
-                        "_error": "No leída: la API key se quedó sin crédito"})
+                    return idx, (img, origen, pagina, sin_leer(img, origen, pagina))
                 try:
                     leido = extractor.extraer(img, origen, pagina)
                     consumo.extend(leido.consumos or [(
                         leido.modelo, leido.tokens_entrada, leido.tokens_salida)])
                     datos = leido.crudo
-                except SinCredito:
-                    sin_credito.append(True)
-                    raise  # detiene todo el lote con aviso
+                    leidas.append(idx)
+                except SinCredito as e:
+                    # No se tira lo ya leído (y pagado): esta hoja y las que
+                    # faltan quedan en rojo para leerlas cuando haya saldo.
+                    sin_credito.append(str(e))
+                    datos = sin_leer(img, origen, pagina)
                 except Exception as e:  # una factura ilegible no tumba el lote
                     # Lo pagado por los intentos fallidos también cuenta.
                     consumo.extend(getattr(e, "consumos", []) or [])
@@ -82,11 +91,15 @@ class Worker(QThread):
                     hechas += 1
                     self.progreso.emit(hechas, total)
             finally:
-                # Si algo corta el lote (sin crédito), las hojas que aún no
-                # han empezado se cancelan: no se sigue pagando por nada.
+                # Si algo corta el lote, las hojas que aún no han empezado se
+                # cancelan: no se sigue pagando por nada.
                 ex.shutdown(wait=True, cancel_futures=True)
                 self._registrar_consumo(consumo)
 
+            if sin_credito:
+                self.sin_credito = sin_credito[0]
+                if not leidas:
+                    raise SinCredito(sin_credito[0])
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)

@@ -107,3 +107,111 @@ def test_una_sesion_corrupta_no_impide_abrir(tmp_path, monkeypatch):
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
 
     assert not v._bloques and v.tabla.rowCount() == 0
+
+
+# ------------------------------------------- 1.23: no perder el lote nunca
+def test_una_sesion_que_no_se_puede_abrir_se_aparta_y_no_se_borra(
+        tmp_path, monkeypatch):
+    """Antes se vaciaba el lote y, al cerrar, se borraba el fichero: las
+    lecturas pagadas y la revisión se perdían sin decir nada."""
+    ruta = tmp_path / "sesion.pkl.gz"
+    ruta.write_bytes(b"no es una sesion")
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    v.closeEvent(QCloseEvent())
+
+    apartadas = list(tmp_path.glob("sesion_lote.no-recuperada-*.pkl.gz"))
+    assert len(apartadas) == 1
+    assert apartadas[0].read_bytes() == b"no es una sesion"
+    assert "No se ha borrado" in v.banda.lbl.text()
+
+
+def test_si_falla_al_montar_el_lote_tambien_se_aparta(tmp_path, monkeypatch):
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    primera = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    _anadir_bloque(primera)
+    primera._guardar_sesion()
+
+    def falla(*_a, **_k):
+        raise KeyError("campo de otra versión")
+    monkeypatch.setattr(VentanaPrincipal, "_reparar_abonos_emitidos_guardados",
+                        falla)
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    v._guardar_sesion()        # lote vacío: antes borraba la sesión
+
+    assert v.tabla.rowCount() == 0
+    [apartada] = tmp_path.glob("sesion_lote.no-recuperada-*.pkl.gz")
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(apartada))
+    assert sesion.cargar()["bloques"]          # se puede recuperar entera
+
+
+def test_el_lote_se_guarda_solo_mientras_se_trabaja(tmp_path, monkeypatch):
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    _anadir_bloque(v)
+    v.tabla.item(0, C_BASE).setText("99,00")
+    assert v._timer_sesion.isActive()       # cada cambio programa un guardado
+
+    v._guardar_sesion_automatica()
+    sesion.esperar()
+    datos = sesion.cargar()
+    assert datos and datos["filas"][0]["factura"].base_iva == 99.0
+
+
+def test_un_guardado_viejo_que_acaba_tarde_no_pisa_al_nuevo(
+        tmp_path, monkeypatch):
+    import threading
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    soltar = threading.Event()
+    escribir = sesion._escribir
+
+    def lento(paquete, numero):
+        if pickle_dice(paquete) == "viejo":
+            soltar.wait(5)
+        escribir(paquete, numero)
+    monkeypatch.setattr(sesion, "_escribir", lento)
+
+    sesion.guardar_en_segundo_plano({"bloques": ["viejo"]})
+    sesion.guardar({"bloques": ["nuevo"]})
+    soltar.set()
+    sesion.esperar()
+    assert sesion.cargar() == {"bloques": ["nuevo"]}
+
+    # Y tras «Vaciar todo», un guardado pendiente no resucita el lote.
+    soltar.clear()
+    sesion.guardar_en_segundo_plano({"bloques": ["viejo"]})
+    sesion.borrar()
+    soltar.set()
+    sesion.esperar()
+    assert not ruta.exists()
+
+
+def pickle_dice(paquete):
+    import pickle
+    return pickle.loads(paquete)["datos"]["bloques"][0]
+
+
+def test_si_no_se_puede_guardar_se_avisa_una_vez(tmp_path, monkeypatch):
+    ruta = tmp_path / "no-existe" / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    _anadir_bloque(v)
+    v._guardar_sesion_automatica()
+    sesion.esperar()
+    assert sesion.ultimo_error()
+    v._guardar_sesion_automatica()      # el aviso sale en el siguiente
+    sesion.esperar()
+    assert "No se puede guardar el lote" in v.banda.lbl.text()
+
+
+def test_se_quedan_solo_las_cinco_ultimas_apartadas(tmp_path, monkeypatch):
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    for _ in range(7):
+        ruta.write_bytes(b"roto")
+        assert sesion.cargar() is None
+    assert len(list(tmp_path.glob("sesion_lote.no-recuperada-*"))) == 5

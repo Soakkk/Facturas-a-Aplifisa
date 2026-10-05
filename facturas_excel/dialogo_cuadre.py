@@ -529,13 +529,13 @@ class DialogoCuadre(QDialog):
     def _guardar_informe(self) -> None:
         if not self.cuadre:
             return
-        from .ventana_comun import ESCRITORIO
+        from .rutas import escritorio
         nif, nombre = self.cliente()
         limpio = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", nombre or nif or "CLIENTE").strip()
         desde = min(d for d, _h in self.cuadre.periodos.values())
         hasta = max(h for _d, h in self.cuadre.periodos.values())
         sugerido = os.path.join(
-            ESCRITORIO, f"CUADRE APLIFISA {limpio} "
+            escritorio(), f"CUADRE APLIFISA {limpio} "
             f"{desde:%d-%m-%Y} a {hasta:%d-%m-%Y}.pdf")
         ruta, _ = QFileDialog.getSaveFileName(
             self, "Guardar informe del cuadre", sugerido, "Documento PDF (*.pdf)")

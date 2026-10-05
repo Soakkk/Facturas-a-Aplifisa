@@ -34,7 +34,7 @@ from facturas_excel.rutas import ruta_config
 from facturas_excel.tabla_facturas import C_ESTADO
 from facturas_excel.validacion import ERROR, REVISAR, fecha_de
 
-from facturas_excel.ventana_comun import ESCRITORIO
+from facturas_excel.rutas import escritorio
 
 
 class AplifisaMixin:
@@ -70,7 +70,7 @@ class AplifisaMixin:
             return
         if not ruta:
             ruta, _ = QFileDialog.getOpenFileName(
-                self, "Listado de apuntes de Aplifisa (PDF)", ESCRITORIO,
+                self, "Listado de apuntes de Aplifisa (PDF)", escritorio(),
                 "Listado de Aplifisa (*.pdf)")
         if not ruta:
             return
@@ -182,7 +182,11 @@ class AplifisaMixin:
         self._revalidar_todo()
 
         def deshacer():
-            historial.registrar(cliente, por_tipo, {}, nombre)
+            try:
+                historial.registrar(cliente, por_tipo, {}, nombre)
+            except historial.NoApuntado as error:
+                self._avisar("No se ha podido volver a apuntar como exportadas "
+                             f"({error}).", AVISO, segundos=0)
             self._revalidar_todo()
         self._avisar(f"{cuantas} factura(s) quitadas del historial de "
                      "exportadas.", INFO, deshacer=deshacer)
@@ -516,9 +520,7 @@ class AplifisaMixin:
         # Solo con el Excel ya verificado: se recuerda lo exportado (para
         # avisar si vuelve a aparecer) y se aprenden sus NIF, ya revisados.
         exportadas = {t: por_tipo[t] for t in tipos_exportados}
-        historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
-                            rutas_por_tipo, getattr(self, "_cliente_nombre", ""),
-                            leidas_en=self._momentos_de_lectura())
+        sin_apuntar = self._apuntar_exportadas(exportadas, rutas_por_tipo)
         # A partir de aquí el Excel ya es bueno y está apuntado: un fallo al
         # archivar no puede esconder el aviso final con su nombre (si no,
         # parece que no se exportó y se exporta otra vez).
@@ -534,6 +536,7 @@ class AplifisaMixin:
                 f"\nOJO: el Excel está bien, pero no se pudo poner al día el "
                 f"archivo del cliente ({error}). El detalle queda en "
                 f"{registro_errores.FICHERO}.")
+        texto_expediente = sin_apuntar + texto_expediente
         self._perfil_columnas = (None,)      # el registro ha cambiado
         self._revalidar_todo()
         detalle = "\n".join(
@@ -562,6 +565,29 @@ class AplifisaMixin:
               "en pantalla, línea por línea. No se han creado Excel parciales."
             + texto_expediente,
             EXITO, segundos=0)
+
+    def _apuntar_exportadas(self, exportadas, rutas_por_tipo) -> str:
+        """Apunta en el registro lo que acaba de salir en el Excel.
+
+        Si no se puede (base bloqueada, disco lleno…), se dice bien claro: sin
+        ese apunte, al volver a cargar esas facturas no saldría «ya
+        exportada» y se podrían meter dos veces en Aplifisa."""
+        try:
+            historial.registrar(getattr(self, "_cliente_nif", ""), exportadas,
+                                rutas_por_tipo, getattr(self, "_cliente_nombre", ""),
+                                leidas_en=self._momentos_de_lectura())
+            return ""
+        except historial.NoApuntado as error:
+            cuantas = sum(len(v) for v in exportadas.values())
+            QMessageBox.critical(
+                self, "No se ha apuntado lo exportado",
+                "El Excel está bien y se puede importar en Aplifisa, pero NO "
+                f"se ha podido apuntar que estas {cuantas} línea(s) ya se "
+                f"exportaron ({error}).\n\nSi vuelve a cargar estas facturas, "
+                "el programa no avisará de «ya exportada»: no las exporte otra "
+                f"vez. El detalle queda en {registro_errores.FICHERO}.")
+            return ("\nOJO: no se ha podido apuntar en el registro que estas "
+                    "facturas ya se exportaron: no las exporte otra vez.")
 
     @staticmethod
     def _retirar_excel_fallidos(rutas, borrar: bool) -> str:

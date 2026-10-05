@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from facturas_excel import ajustes, historial, registro_facturas
+from facturas_excel.rutas import escritorio
 from facturas_excel.banda_avisos import AVISO
 from facturas_excel.clientes import regimen_recargo
 from facturas_excel.conceptos import catalogo
@@ -69,7 +70,7 @@ from facturas_excel.validacion import (
 )
 
 from facturas_excel.ventana_comun import (
-    ESCRITORIO, ESTILO_PRESENTACION, COLOR_CONTADOR, TODOS_LOS_BLOQUES,
+    ESTILO_PRESENTACION, COLOR_CONTADOR, TODOS_LOS_BLOQUES,
     _sin_aviso_ejercicios_antiguo, _ayuda_estado, _cabeceras_resumen,
 )
 
@@ -435,6 +436,8 @@ class ValidacionMixin:
             self._aplicar_filtro()
         self._refrescar_ficha()
         self._timer_muestras.start()
+        if hasattr(self, "_timer_sesion"):
+            self._timer_sesion.start()
 
     def _pintar_alerta(self):
         """Banner rojo arriba con las duplicadas y las sustituidas: las dos
@@ -1035,7 +1038,7 @@ class ValidacionMixin:
         cliente = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ -]+", "", (
             getattr(self, "_cliente_nombre", "") or "CLIENTE")).strip()
         sugerido = os.path.join(
-            ESCRITORIO, f"COMPROBACION TOTALES {cliente or 'CLIENTE'}.pdf")
+            escritorio(), f"COMPROBACION TOTALES {cliente or 'CLIENTE'}.pdf")
         ruta, _ = QFileDialog.getSaveFileName(
             self, "Guardar listado de comprobación", sugerido,
             "Documento PDF (*.pdf)")

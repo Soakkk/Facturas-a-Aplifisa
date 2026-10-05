@@ -20,6 +20,7 @@ from typing import List, Optional
 
 from . import ajustes, identidad_archivo
 from .escaner import carpeta_por_defecto, nombre_libre, ruta_destino, sanear
+from .rutas import escritorio
 
 SIN_IDENTIFICAR = "Sin identificar"
 PAPELERA = "_Papelera"
@@ -131,7 +132,7 @@ def ruta_excel_consolidado(cliente: str, ejercicio: int, tipo: str,
     ``ejercicio`` se conserva en la firma por compatibilidad con llamadas de
     versiones anteriores, pero no forma parte del nombre solicitado.
     """
-    carpeta = carpeta_base or os.path.join(os.path.expanduser("~"), "Desktop")
+    carpeta = carpeta_base or escritorio()
     os.makedirs(carpeta, exist_ok=True)
     cliente_limpio = sanear(cliente or "Cliente")
     tipo_limpio = "ingresos" if str(tipo).lower().startswith(("i", "v")) else "gastos"
@@ -161,7 +162,7 @@ def eliminar_excel_temporales(cliente: str, tipo: str,
     La selección es deliberadamente estricta: no toca otros libros del
     Escritorio, ni el consolidado, ni documentos de otro cliente.
     """
-    carpeta = carpeta_base or os.path.join(os.path.expanduser("~"), "Desktop")
+    carpeta = carpeta_base or escritorio()
     if not os.path.isdir(carpeta):
         return []
     cliente_limpio = sanear(cliente or "Cliente")

@@ -6,6 +6,39 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.23.0": """
+<h2>Novedades de la versión 1.23.0: no perder nada</h2>
+<ul>
+  <li><b>El lote se guarda solo mientras trabaja</b>, unos segundos después de
+      cada cambio, y no solo al cerrar. Un apagón o un cuelgue ya no se lleva
+      la revisión ni las lecturas ya pagadas. Y si un lote guardado no se
+      puede abrir (por ejemplo, tras una actualización), ya no se borra: se
+      guarda aparte y se avisa.</li>
+  <li><b>Copias de seguridad.</b> Cada día, al abrir el programa, y antes de
+      cada actualización, se copia lo que el programa recuerda: el registro
+      de facturas (qué se exportó y dónde está su PDF), clientes, proveedores,
+      cuentas y notas. Van a «_Copias de seguridad», dentro de la carpeta de
+      documentación, y se guardan las 15 últimas. En Configuración → Copias
+      de seguridad puede hacer una al momento o volver a una anterior.</li>
+  <li><b>Gemini con prisas ya no tira lo leído.</b> Cuando Google pedía ir
+      más despacio, el programa lo tomaba por «sin crédito» y descartaba el
+      bloque entero, con las hojas ya leídas y pagadas. Ahora espera y sigue.
+      Y si de verdad se acaba el crédito, se queda con lo ya leído; lo que
+      falta queda en rojo para leerlo después.</li>
+  <li><b>Si no se puede apuntar lo exportado, se dice.</b> Si el registro no
+      puede apuntar que unas facturas ya se exportaron, sale un aviso en rojo.
+      Antes se callaba, y la próxima vez no salía «ya exportada».</li>
+  <li><b>Cada factura, su PDF.</b> Dos facturas a las que les tocaba el mismo
+      nombre de archivo («A/1» y «A:1», o dos tiques sin número de la misma
+      gasolinera el mismo día) acababan en un solo PDF. Ahora la segunda lleva
+      « (2)».</li>
+  <li><b>Escritorio en OneDrive.</b> Si su Escritorio está en OneDrive, el
+      Excel exportado y los informes van al Escritorio que se ve. La carpeta
+      de documentación sigue donde estaba.</li>
+  <li><b>«Deshacer organización»</b> ya funciona después de haber recogido
+      facturas sueltas.</li>
+</ul>
+""",
     "1.22.1": """
 <h2>Novedades de la versión 1.22.1</h2>
 <p>A partir de ahora, en el programa manda la ley: el trato fiscal de cada

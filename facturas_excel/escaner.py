@@ -134,8 +134,15 @@ def nombre_libre(carpeta: str, base: str) -> str:
 
 
 def carpeta_por_defecto() -> str:
-    return os.path.join(
-        os.path.expanduser("~"), "Desktop", "Documentación Facturas")
+    """«Documentación Facturas» en el Escritorio que se ve. Si ya existía en
+    «~\\Desktop» (versiones de antes) se sigue usando esa: el archivo no se
+    cambia de sitio solo."""
+    from .rutas import escritorio
+    antigua = os.path.join(os.path.expanduser("~"), "Desktop",
+                           "Documentación Facturas")
+    if os.path.isdir(antigua):
+        return antigua
+    return os.path.join(escritorio(), "Documentación Facturas")
 
 
 # ---------------------------------------------------------------- WIA
