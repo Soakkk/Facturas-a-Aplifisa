@@ -170,7 +170,25 @@ def test_el_recargo_que_no_toca_a_su_tipo_de_iva_se_avisa():
 
     res = validar(con(21.0, 1.4))
     assert res.estado == REVISAR
-    assert any("es 5,2%, no 1,4%" in m for m in res.mensajes)
+    assert any("es 5,2% (o 1,75% en el tabaco), no 1,4%" in m
+               for m in res.mensajes)
+    res = validar(con(10.0, 5.2))
+    assert any("es 1,4%, no 5,2%" in m for m in res.mensajes)
+
+
+def test_los_recargos_que_marca_la_ley_no_se_avisan():
+    """Ley del IVA, art. 161: el tabaco (al 21 %) lleva el 1,75 %, y entre
+    2022 y 2024 lo que iba al 5 % (luz, gas, algunos alimentos) el 0,62 %."""
+    from facturas_excel.modelo import Factura
+    from facturas_excel.validacion import validar
+
+    for tipo, recargo in ((21.0, 1.75), (5.0, 0.62)):
+        f = Factura(nombre="PROVEEDOR", nif="B12345674", fecha="31/01/2024",
+                    num_factura="1", concepto="600", subclave="G01",
+                    base_iva=100.0, pct_iva=tipo, cuota_iva=tipo,
+                    base_requiv=100.0, pct_requiv=recargo, cuota_requiv=recargo)
+        f.total_impreso = round(100.0 + tipo + recargo, 2)
+        assert validar(f).estado == "ok", (tipo, recargo)
 
 
 def test_una_cuota_de_recargo_mal_calculada_es_error():
@@ -256,7 +274,7 @@ def test_el_minorista_registra_por_el_total(monkeypatch, tmp_path):
 
     assert v._por_el_total()
     assert not v.fila_recargo.isHidden()
-    assert v.chk_hay_recargo.isChecked()
+    assert v.lbl_hay_recargo.text() == "Factura(s) con recargo detectado"
     assert v.tabla.rowCount() == 1                     # un solo apunte
     assert v.tabla.item(0, C_PCT).text() == ""         # sin desglose de IVA
     assert v.tabla.item(0, C_CUOTA).text() == ""
@@ -346,3 +364,198 @@ def test_por_el_total_una_venta_mal_clasificada_recupera_su_iva(
     control = v.tabla.cellWidget(0, C_TIPO)
     control.setCurrentIndex(control.findData("gasto"))
     assert v.tabla.item(0, C_BASE).text() == "145,11"
+
+
+# --------------- 1.22.1: manda la ley (el régimen del cliente), no lo impreso
+TELEFONO = "A12345674"        # CIF de ejemplo
+SOCIEDAD = "B76543214"        # cliente S.L. de ejemplo
+
+
+def datos_telefono(num="T-1", base=100.0, receptor=CLIENTE, **extra):
+    """Un servicio (teléfono): no lleva recargo aunque el cliente esté en él."""
+    extra.setdefault("total", round(base * 1.21, 2))
+    d = datos_coca(num=num, base=base, iva=round(base * 0.21, 2), requiv=None,
+                   receptor_nif=receptor,
+                   emisor_nombre="TELEFONIA DE PRUEBA, S.A.",
+                   emisor_nif=TELEFONO, cuenta_gasto="628", **extra)
+    for campo in ("base_requiv", "pct_requiv", "cuota_requiv"):
+        d[campo] = None
+    return d
+
+
+def _ventana_lote(monkeypatch, tmp_path, lista, regimen="", cliente=CLIENTE):
+    from facturas_excel import clientes
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.procesar import preparar_lote
+
+    _preparar_ventana(monkeypatch, tmp_path)
+    if regimen:
+        clientes.guardar_regimen_recargo(cliente, regimen, "TIENDA")
+    crudos = [(b"", "taco.pdf", i + 1, d) for i, d in enumerate(lista)]
+    v = VentanaPrincipal(comprobar_updates=False)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(preparar_lote(crudos, "TIENDA", cliente),
+                    "TIENDA", cliente, crudos)
+    return v
+
+
+def _bases(v):
+    from facturas_excel.app import C_BASE, C_PCT
+    return [(v.tabla.item(r, C_BASE).text(), v.tabla.item(r, C_PCT).text())
+            for r in range(v.tabla.rowCount())]
+
+
+def test_el_minorista_lleva_por_el_total_tambien_lo_que_no_trae_recargo(
+        monkeypatch, tmp_path):
+    """No presenta el 303: no paga ni deduce IVA. Su teléfono va por el total
+    aunque en el lote no haya ni una factura con recargo impreso."""
+    from facturas_excel.clientes import TOTAL
+
+    v = _ventana_lote(monkeypatch, tmp_path, [datos_telefono()], TOTAL)
+
+    assert v._facturas_con_recargo() == 0
+    assert v._por_el_total()
+    assert not v.fila_recargo.isHidden()
+    assert v.lbl_hay_recargo.text() == "Cliente en recargo"
+    assert _bases(v) == [("121,00", "")]
+    assert v.filas[0].factura.iva_incluido_en_base
+    assert "recargo de equivalencia" in v.lbl_resumen_titulo.text()
+
+
+def test_el_minorista_con_lote_mezclado_lo_lleva_todo_por_el_total(
+        monkeypatch, tmp_path):
+    from facturas_excel.clientes import TOTAL
+
+    v = _ventana_lote(monkeypatch, tmp_path,
+                      [datos_coca(), datos_telefono()], TOTAL)
+
+    assert v._por_el_total()
+    assert v.lbl_hay_recargo.text() == "Factura(s) con recargo detectado"
+    assert sorted(_bases(v)) == [("121,00", ""), ("145,11", "")]
+
+
+def test_el_minorista_con_retencion_sigue_desglosado_y_avisado(
+        monkeypatch, tmp_path):
+    """El alquiler del local lleva retención: el IRPF hay que declararlo, así
+    que esa factura no se resume (y se avisa), ni siquiera en recargo."""
+    from facturas_excel.clientes import TOTAL
+
+    alquiler = datos_telefono(num="ALQ-1", base_irpf=100.0, pct_irpf=19.0,
+                              cuota_irpf=19.0, total=102.0)
+    v = _ventana_lote(monkeypatch, tmp_path, [alquiler], TOTAL)
+
+    assert v._por_el_total()
+    assert _bases(v) == [("100,00", "21,00")]
+    assert "retención" in (v.filas[0]["aviso"] or "")
+
+
+def test_sin_estar_en_recargo_lo_que_no_trae_recargo_no_cambia(
+        monkeypatch, tmp_path):
+    from facturas_excel import clientes
+
+    v = _ventana_lote(monkeypatch, tmp_path, [datos_telefono()],
+                      clientes.DESGLOSE)
+    assert not v._por_el_total() and v.fila_recargo.isHidden()
+    assert _bases(v) == [("100,00", "21,00")]
+
+    # Sin régimen guardado y sin recargo en el lote no se pregunta nada.
+    otra = _ventana_lote(monkeypatch, tmp_path / "otro", [datos_telefono()])
+    assert not otra._por_el_total() and otra.fila_recargo.isHidden()
+    assert clientes.regimen_recargo(CLIENTE) == ""
+
+
+def test_la_ley_no_deja_a_una_sociedad_estar_en_recargo():
+    """Art. 148 de la Ley del IVA: solo personas físicas y comunidades de
+    bienes. Una S.L. o una S.A., nunca."""
+    from facturas_excel.clientes import puede_estar_en_recargo
+
+    for nif in ("12345678Z", "X1234567L", "E12345674", "J12345674", ""):
+        assert puede_estar_en_recargo(nif), nif
+    for nif in ("B12345674", "A12345674", "F12345674", "ESB12345674"):
+        assert not puede_estar_en_recargo(nif), nif
+
+
+def test_una_sociedad_registra_con_desglose_aunque_le_cobren_recargo(
+        monkeypatch, tmp_path):
+    from facturas_excel import clientes
+    from facturas_excel.dialogo_recargo import DialogoRecargo
+
+    def no_se_pregunta(self):
+        raise AssertionError("a una sociedad no se le pregunta el régimen")
+
+    # Aunque se hubiera guardado «por el total» (versiones de antes).
+    v = _ventana_lote(monkeypatch, tmp_path, [datos_coca(receptor_nif=SOCIEDAD)],
+                      clientes.TOTAL, cliente=SOCIEDAD)
+    assert not v._por_el_total()
+    assert not v.fila_recargo.isHidden()
+    assert "sociedad" in v.lbl_hay_recargo.text()
+    assert not v.combo_recargo.isEnabled()
+    assert _bases(v) == [("114,98", "21,00")]
+
+    # Y si no tiene nada guardado, ni se pregunta ni se guarda nada.
+    monkeypatch.setattr(DialogoRecargo, "exec", no_se_pregunta)
+    otra = _ventana_lote(monkeypatch, tmp_path / "otro",
+                         [datos_coca(receptor_nif=SOCIEDAD)], cliente=SOCIEDAD)
+    monkeypatch.setattr(DialogoRecargo, "exec", no_se_pregunta)
+    otra._elegir_regimen_recargo()
+    assert clientes.regimen_recargo(SOCIEDAD) == ""
+    assert not otra._por_el_total()
+
+
+def test_desde_el_menu_se_dice_que_esta_en_recargo_sin_esperar_a_una_factura(
+        monkeypatch, tmp_path):
+    """Configuración → Recargo de equivalencia de este cliente."""
+    from facturas_excel import clientes
+    from facturas_excel.dialogo_recargo import DialogoRecargo
+
+    v = _ventana_lote(monkeypatch, tmp_path, [datos_telefono()])
+    assert _bases(v) == [("100,00", "21,00")]
+
+    elegido = {"valor": clientes.TOTAL}
+    monkeypatch.setattr(DialogoRecargo, "exec", lambda self: 1)
+    monkeypatch.setattr(DialogoRecargo, "elegido", lambda self: elegido["valor"])
+    v._elegir_regimen_recargo()
+    assert clientes.regimen_recargo(CLIENTE) == clientes.TOTAL
+    assert v._por_el_total() and not v.fila_recargo.isHidden()
+    assert _bases(v) == [("121,00", "")]
+
+    elegido["valor"] = clientes.DESGLOSE
+    v._elegir_regimen_recargo()
+    assert not v._por_el_total() and v.fila_recargo.isHidden()
+    assert _bases(v) == [("100,00", "21,00")]
+
+
+def test_el_dialogo_desde_el_menu_explica_que_va_todo_por_el_total():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    from facturas_excel.dialogo_recargo import DialogoRecargo
+
+    QApplication.instance() or QApplication([])
+    d = DialogoRecargo("TIENDA", 0)
+    textos = " ".join(x.text() for x in d.findChildren(QLabel))
+    assert "0 factura" not in textos
+    assert "también las que no traen recargo impreso" in textos
+
+
+def test_un_lote_guardado_antes_se_abre_con_el_criterio_de_la_ley(
+        monkeypatch, tmp_path):
+    """Una sesión de antes de la 1.22.1 (el teléfono de un minorista con su
+    desglose) se rehace por el total al abrirla."""
+    from facturas_excel import clientes, sesion
+    from facturas_excel.app import VentanaPrincipal
+
+    guardada = {}
+    monkeypatch.setattr(sesion, "guardar", guardada.update)
+    v = _ventana_lote(monkeypatch, tmp_path, [datos_telefono()])
+    v._guardar_sesion()
+    assert not guardada["hay_recargo"]
+    assert _bases(v) == [("100,00", "21,00")]
+
+    clientes.guardar_regimen_recargo(CLIENTE, clientes.TOTAL, "TIENDA")
+    monkeypatch.setattr(sesion, "cargar", lambda: guardada)
+    nueva = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    nueva._restaurar_sesion()
+    assert nueva._por_el_total()
+    assert _bases(nueva) == [("121,00", "")]

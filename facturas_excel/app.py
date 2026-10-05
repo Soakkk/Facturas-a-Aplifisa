@@ -15,7 +15,7 @@ import traceback
 from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QActionGroup, QColor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QApplication, QBoxLayout, QButtonGroup, QComboBox, QDialog,
     QFileDialog, QFrame, QHeaderView,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QProgressBar, QPushButton, QProgressDialog, QScrollArea,
@@ -38,7 +38,8 @@ from facturas_excel.dialogo_notas_version import DialogoNotasVersion
 from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
-    DESGLOSE, TOTAL, guardar_regimen_recargo, regimen_recargo,
+    DESGLOSE, TOTAL, guardar_regimen_recargo, puede_estar_en_recargo,
+    regimen_recargo,
 )
 from facturas_excel.conceptos import descripcion_de, es_valido
 from facturas_excel.control_facturas import clave_documento
@@ -224,8 +225,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._rotulos_cliente = (etiqueta, lbl_periodo)
         # El cliente se queda con el sitio que sobre en la cinta.
         self.layout_cinta.insertWidget(self.posicion_cliente, cliente_bar, 1)
-        # Solo aparece si el lote trae facturas con recargo de equivalencia:
-        # para el resto de clientes no significa nada y estorba.
+        # Solo aparece si el lote trae facturas con recargo de equivalencia o
+        # el cliente está en recargo: para el resto no significa nada y estorba.
         self.fila_recargo = QWidget()
         lr_recargo = QHBoxLayout(self.fila_recargo)
         lr_recargo.setContentsMargins(0, 0, 0, 0)
@@ -233,14 +234,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         lbl_recargo = QLabel("Recargo de equivalencia:")
         lbl_recargo.setObjectName("textoSuave")
         lr_recargo.addWidget(lbl_recargo)
-        self.chk_hay_recargo = QCheckBox("Factura(s) con recargo detectado")
-        self.chk_hay_recargo.setChecked(True)
-        self.chk_hay_recargo.setFocusPolicy(Qt.NoFocus)
-        self.chk_hay_recargo.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.chk_hay_recargo.setStyleSheet("font-weight: 600; color: #A16207;")
-        self.chk_hay_recargo.setToolTip(
-            "Solo aparece cuando el lote contiene recargo de equivalencia.")
-        lr_recargo.addWidget(self.chk_hay_recargo)
+        # Por qué está a la vista: el lote trae recargo, o el cliente está en
+        # recargo aunque ninguna factura del lote lo lleve impreso.
+        self.lbl_hay_recargo = QLabel()
+        self.lbl_hay_recargo.setStyleSheet("font-weight: 600; color: #A16207;")
+        lr_recargo.addWidget(self.lbl_hay_recargo)
         self.combo_recargo = ComboSinRueda()
         self.combo_recargo.addItem(
             "registrar por el TOTAL factura (minorista)", TOTAL)
@@ -252,7 +250,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "el gasto va por el total.\n"
             "  · Mayorista en estimación directa: registra el IVA y el recargo "
             "por separado.\n"
-            "Se recuerda por NIF.")
+            "Se recuerda por NIF. Al minorista se le registran así TODAS las "
+            "compras, también las que no traen recargo (teléfono, "
+            "reparaciones, publicidad…).")
         self.combo_recargo.currentIndexChanged.connect(self._on_recargo)
         lr_recargo.addWidget(self.combo_recargo, 1)
         self.fila_recargo.setVisible(False)
@@ -1470,6 +1470,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                          self._examen_precision)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
+        config.addAction("Recargo de equivalencia de este cliente…",
+                         self._elegir_regimen_recargo)
 
         menu = self.menuBar().addMenu("Ayuda")
         menu.addAction("Buscar actualizaciones",
@@ -1693,18 +1695,24 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._bloques = datos["bloques"]
             self._cliente_nif = datos.get("cliente_nif", "")
             self._cliente_nombre = datos.get("cliente_nombre", "")
-            self._hay_recargo = bool(datos.get("hay_recargo"))
             self._periodo_manual_valor = datos.get("periodo_modo", "auto")
             self._localizaciones = {
                 clave: localizar.de_guardado(cajas)
                 for clave, cajas in (datos.get("localizaciones") or {}).items()}
-            self.fila_recargo.setVisible(self._hay_recargo)
-            self.chk_hay_recargo.setChecked(self._hay_recargo)
-            regimen = datos.get("regimen_recargo", DESGLOSE)
-            indice = self.combo_recargo.findData(regimen)
-            self.combo_recargo.blockSignals(True)
-            self.combo_recargo.setCurrentIndex(max(0, indice))
-            self.combo_recargo.blockSignals(False)
+            # El régimen del lote guardado; si no traía recargo, el del cliente
+            # (que puede estar en recargo aunque el lote no lo lleve impreso).
+            if datos.get("hay_recargo"):
+                regimen = datos.get("regimen_recargo", DESGLOSE)
+            else:
+                regimen = regimen_recargo(self._cliente_nif)
+            self._hay_recargo = bool(datos.get("hay_recargo")) or (
+                regimen == TOTAL and puede_estar_en_recargo(self._cliente_nif))
+            self._mostrar_recargo(regimen)
+            # Un lote guardado con otro criterio (de antes de la 1.22.1: un
+            # minorista sin recargo impreso, o una sociedad «por el total»)
+            # se rehace desde lo leído al abrirlo.
+            antes_por_el_total = bool(datos.get("hay_recargo")) and \
+                datos.get("regimen_recargo") == TOTAL
             self._actualizar_combo_bloques()
             self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
             # Lotes de antes: el mismo NIF podía quedarse con dos nombres.
@@ -1721,6 +1729,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     fila["png"], fila["factura"], fila["tipo"],
                     fila["cuenta"], fila["gxx"], fila.get("aviso", ""),
                     fila.get("bloque", ""), fila.get("fuentes"))
+            if self._por_el_total() != antes_por_el_total:
+                self._rellenar_tabla()
             self._pintar_cliente()
             self._revalidar_todo()
             # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
@@ -2116,7 +2126,6 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_cliente.setEnabled(False)
         self._hay_recargo = False
         self.fila_recargo.setVisible(False)
-        self.chk_hay_recargo.setChecked(False)
         self.combo_filtro_estado.setCurrentIndex(0)
         self.combo_filtro_bloque.setCurrentIndex(0)
         self.combo_filtro_mes.setCurrentIndex(0)
@@ -2133,9 +2142,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         sesion.borrar()
 
     def _por_el_total(self) -> bool:
-        """El cliente registra sus compras con recargo por el total factura."""
+        """El cliente registra sus compras por el total factura (minorista en
+        recargo: todas, traigan o no el recargo impreso). Nunca una sociedad:
+        la ley no la deja estar en recargo."""
         return (getattr(self, "_hay_recargo", False)
-                and self.combo_recargo.currentData() == TOTAL)
+                and self.combo_recargo.currentData() == TOTAL
+                and puede_estar_en_recargo(getattr(self, "_cliente_nif", "")))
 
     def _rellenar_tabla(self):
         self._invalidar_contraste_registro()
@@ -2217,26 +2229,85 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         Dos clientes con recargo se llevan distinto segun SU regimen (minorista
         sin 303 -> por el total; mayorista en estimacion directa -> con
         desglose), y eso no se ve en la factura: hay que preguntarlo.
+
+        El minorista en recargo no presenta el 303: no paga ni deduce IVA, asi
+        que TODAS sus compras van por el total, tambien las que no traen
+        recargo impreso (telefono, reparaciones, publicidad...). Por eso manda
+        el regimen guardado del cliente, no solo lo que traiga el lote.
         """
         cuantas = self._facturas_con_recargo()
-        self._hay_recargo = bool(cuantas)
-        self.fila_recargo.setVisible(self._hay_recargo)
-        self.chk_hay_recargo.setChecked(self._hay_recargo)
-        if not cuantas:
-            return
         nif = getattr(self, "_cliente_nif", "")
+        if not puede_estar_en_recargo(nif):
+            # Una sociedad no puede estar en recargo (art. 148 de la Ley del
+            # IVA): no hay nada que preguntar, sus compras van con desglose.
+            self._hay_recargo = bool(cuantas)
+            self._mostrar_recargo(DESGLOSE)
+            return
         guardado = regimen_recargo(nif)
-        if not guardado and nif:
+        if cuantas and not guardado and nif:
             dialogo = DialogoRecargo(getattr(self, "_cliente_nombre", ""),
                                      cuantas, self)
-            guardado = dialogo.elegido() if dialogo.exec() == QDialog.Accepted                 else DESGLOSE
+            guardado = (dialogo.elegido() if dialogo.exec() == QDialog.Accepted
+                        else DESGLOSE)
             guardar_regimen_recargo(nif, guardado,
                                     getattr(self, "_cliente_nombre", ""))
             self._perfil_columnas = (None,)
+        self._hay_recargo = bool(cuantas) or guardado == TOTAL
+        self._mostrar_recargo(guardado)
+
+    def _mostrar_recargo(self, regimen: str) -> None:
+        """La fila del recargo, con el porqué de que esté a la vista."""
+        self.fila_recargo.setVisible(self._hay_recargo)
+        sociedad = not puede_estar_en_recargo(getattr(self, "_cliente_nif", ""))
+        self.combo_recargo.setEnabled(not sociedad)
+        if sociedad:
+            regimen = DESGLOSE
+            self.lbl_hay_recargo.setText(
+                "Cobrado a una sociedad: no le corresponde")
+            self.lbl_hay_recargo.setToolTip(
+                "La Ley del IVA (art. 148) deja el recargo de equivalencia solo "
+                "a personas físicas y comunidades de bienes. Sus compras van "
+                "con el desglose normal; el recargo que le haya cobrado un "
+                "proveedor no corresponde: pídale la factura rectificada.")
+        elif self._facturas_con_recargo():
+            self.lbl_hay_recargo.setText("Factura(s) con recargo detectado")
+            self.lbl_hay_recargo.setToolTip(
+                "El lote trae facturas con recargo de equivalencia.")
+        else:
+            self.lbl_hay_recargo.setText("Cliente en recargo")
+            self.lbl_hay_recargo.setToolTip(
+                "Ninguna factura del lote trae recargo impreso, pero el cliente "
+                "está en recargo de equivalencia: no presenta el 303 ni deduce "
+                "el IVA, así que todas sus compras van por el total factura.")
         self.combo_recargo.blockSignals(True)
         self.combo_recargo.setCurrentIndex(
-            max(0, self.combo_recargo.findData(guardado or DESGLOSE)))
+            max(0, self.combo_recargo.findData(regimen or DESGLOSE)))
         self.combo_recargo.blockSignals(False)
+
+    def _elegir_regimen_recargo(self) -> None:
+        """Configuración → Recargo de equivalencia del cliente: decirlo sin
+        esperar a que llegue una factura con recargo impreso."""
+        nif = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        if not nif:
+            self._avisar("Primero cargue o escanee facturas del cliente: el "
+                         "régimen de recargo se recuerda por su NIF.", INFO)
+            return
+        if not puede_estar_en_recargo(nif):
+            self._avisar(f"{nombre or nif} es una sociedad: la Ley del IVA "
+                         "(art. 148) no la deja estar en recargo de "
+                         "equivalencia. Sus compras van con el desglose "
+                         "normal.", INFO)
+            return
+        dialogo = DialogoRecargo(nombre, self._facturas_con_recargo(), self,
+                                 elegido=regimen_recargo(nif) or DESGLOSE)
+        if dialogo.exec() != QDialog.Accepted or not dialogo.elegido():
+            return
+        guardar_regimen_recargo(nif, dialogo.elegido(), nombre)
+        self._perfil_columnas = (None,)
+        self._preparar_recargo()
+        self._rellenar_tabla()
+        self._revalidar_todo()
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
                      fuentes=None):

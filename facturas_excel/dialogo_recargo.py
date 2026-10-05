@@ -10,6 +10,10 @@ porque lo que manda es SU regimen, no la factura:
 
 El programa no puede adivinarlo de la factura (las dos traen recargo impreso),
 asi que se pregunta la primera vez y se recuerda por NIF.
+
+El minorista en recargo registra asi TODAS sus compras, tambien las que no
+traen recargo impreso (telefono, reparaciones, publicidad...): no paga ni
+deduce IVA.
 """
 
 from __future__ import annotations
@@ -38,10 +42,18 @@ class DialogoRecargo(QDialog):
         self.setMinimumWidth(560)
         raiz = QVBoxLayout(self)
 
-        intro = QLabel(
-            f"En este lote hay <b>{cuantas} factura(s) con recargo de "
-            f"equivalencia</b>" + (f" de <b>{cliente}</b>" if cliente else "")
-            + ".<br>¿Cómo se registran las suyas?")
+        de_quien = f" de <b>{cliente}</b>" if cliente else ""
+        if cuantas:
+            texto = (f"En este lote hay <b>{cuantas} factura(s) con recargo de "
+                     f"equivalencia</b>{de_quien}.<br>¿Cómo se registran las "
+                     "suyas?")
+        else:
+            # Desde el menú: el cliente puede estar en recargo aunque ninguna
+            # factura del lote lo lleve impreso (teléfono, reparaciones…).
+            texto = (f"¿Cómo se registran las compras{de_quien}?<br>Si está en "
+                     "recargo de equivalencia, van todas por el total, también "
+                     "las que no traen recargo impreso.")
+        intro = QLabel(texto)
         intro.setWordWrap(True)
         raiz.addWidget(intro)
 

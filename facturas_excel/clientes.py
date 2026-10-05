@@ -157,6 +157,23 @@ def buscar_confirmado_por_nombre(nombre: str) -> tuple[str, str] | None:
 TOTAL = "total"          # minorista: un apunte por el total factura
 DESGLOSE = "desglose"    # mayorista: base, IVA y recargo cada uno en lo suyo
 
+# Ley del IVA, art. 148: el recargo de equivalencia es solo para comerciantes
+# minoristas personas fisicas o entidades en atribucion de rentas (comunidades
+# de bienes). Una sociedad (S.A., S.L., cooperativa, asociacion...) no puede
+# estar en recargo aunque un proveedor se lo cobre. La J (sociedad civil) no
+# se descarta: puede estar en atribucion de rentas.
+_PERSONAS_JURIDICAS = frozenset("ABCDFGNPQRSUVW")
+
+
+def puede_estar_en_recargo(nif) -> bool:
+    """Si la ley permite que este cliente este en recargo de equivalencia.
+
+    Con el NIF vacio no se descarta nada: no se sabe quien es."""
+    nif = _normaliza(nif)
+    if len(nif) == 11 and nif.startswith("ES"):     # NIF-IVA
+        nif = nif[2:]
+    return not nif or nif[0] not in _PERSONAS_JURIDICAS
+
 
 def regimen_recargo(nif) -> str:
     """Como se registran las facturas con recargo de este cliente.

@@ -1,9 +1,25 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 4 de octubre de 2026 (versión 1.22.0). Apunta abajo lo que
+Actualizado el 5 de octubre de 2026 (versión 1.22.1). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.22.1: manda la ley
+
+Lo que me pediste: en el programa manda la ley, siempre. Lo primero, el
+recargo de equivalencia:
+
+- **Un cliente en recargo lleva TODAS sus compras por el total factura**, también las
+  que no traen recargo impreso (teléfono, reparaciones…): no presenta el 303,
+  ni paga ni deduce IVA. Antes solo pasaba si el lote traía alguna factura con
+  recargo. Las que llevan retención (el alquiler del local) siguen
+  desglosadas y avisadas, porque el IRPF hay que declararlo.
+- Se puede decir que un cliente está en recargo sin esperar a una factura con
+  recargo: **Configuración → Recargo de equivalencia de este cliente**.
+- **Una sociedad no puede estar en recargo** (art. 148 de la Ley del IVA): si
+  a una S.L. le cobran recargo, va con desglose y se avisa.
+- **El tabaco lleva el 1,75 %** de recargo: ya no sale como equivocado.
 
 ### Lo nuevo de la 1.22: facturas sin NIF
 
@@ -239,8 +255,10 @@ arriba un desplegable para decir cómo se registran las de ese cliente:
 **minorista** (sin 303: cada gasto por el TOTAL de la factura) o **mayorista en
 estimación directa** (con su desglose de IVA y recargo). Se pregunta la primera
 vez, se recuerda por NIF y se puede cambiar cuando quiera: el lote se rehace al
-momento sin volver a leer nada. Si el lote no tiene recargo, el desplegable ni
-aparece. Además se comprueban los pares 21→5,2 / 10→1,4 / 4→0,5.
+momento sin volver a leer nada. Al minorista se le llevan así **todas** las
+compras, traigan o no recargo, y el desplegable sale aunque el lote no lo
+traiga. Para el resto de clientes, si el lote no tiene recargo, ni aparece.
+Además se comprueban los pares 21→5,2 (1,75 el tabaco) / 10→1,4 / 4→0,5.
 
 **Tus anotaciones a mano.** El programa ya distingue: el CIF que anotas cuando
 no se lee, y la numeración que pones para los requerimientos, **se usan y no dan
@@ -342,10 +360,7 @@ lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.
    Si se descarta, el programa puede detectar ese sello y avisarte, como ya hace
    con las sustituidas.
 
-3. **Un proveedor que factura sin recargo** a un cliente que está en recargo de
-   equivalencia: entiendo que también va por el total factura. ¿Correcto?
-
-4. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
+3. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
    para la cuenta?
 
 ---
