@@ -22,7 +22,10 @@ TOLERANCIA = 0.02  # euros de margen por redondeos
 
 # El recargo de equivalencia va SIEMPRE emparejado con su tipo de IVA: es el
 # regimen quien lo fija, no el proveedor (confirmado por el usuario 2026-09-02).
-RECARGO_DE_IVA = {21.0: 5.2, 10.0: 1.4, 4.0: 0.5}
+# Ley del IVA, art. 161: 5,2 % con el IVA al 21, 1,4 % al 10 y 0,5 % al 4; el
+# tabaco, que va al 21, lleva el 1,75 %. Entre 2022 y 2024, la luz, el gas y
+# algunos alimentos al 5 % de IVA llevaron el 0,62 %.
+RECARGO_DE_IVA = {21.0: (5.2, 1.75), 10.0: (1.4,), 5.0: (0.62,), 4.0: (0.5,)}
 
 
 # Tipos de IVA que existen o han existido recientemente en España: los
@@ -325,11 +328,13 @@ def validar(f: Factura) -> Resultado:
     # la base. Un recargo mal leido no descuadra siempre el total (son céntimos),
     # asi que hay que comprobarlo aparte.
     if f.pct_requiv is not None and f.pct_iva is not None:
-        esperado = RECARGO_DE_IVA.get(round(float(f.pct_iva), 2))
-        if esperado is not None and abs(f.pct_requiv - esperado) > 0.01:
+        validos = RECARGO_DE_IVA.get(round(float(f.pct_iva), 2))
+        if validos and all(abs(f.pct_requiv - v) > 0.01 for v in validos):
+            esperado = f"{porcentaje(validos[0])}%" + "".join(
+                f" (o {porcentaje(v)}% en el tabaco)" for v in validos[1:])
             marcar_revisar(
                 f"El recargo del {porcentaje(f.pct_iva)}% de IVA es "
-                f"{porcentaje(esperado)}%, no {porcentaje(f.pct_requiv)}%",
+                f"{esperado}, no {porcentaje(f.pct_requiv)}%",
                 "pct_requiv")
     if f.base_requiv is not None and f.pct_requiv is not None:
         esperada = round(f.base_requiv * f.pct_requiv / 100.0, 2)

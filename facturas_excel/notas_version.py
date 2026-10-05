@@ -6,6 +6,32 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.22.1": """
+<h2>Novedades de la versión 1.22.1</h2>
+<p>A partir de ahora, en el programa manda la ley: el trato fiscal de cada
+factura sale de la norma, no de lo que traiga impreso.</p>
+<ul>
+  <li><b>Cliente en recargo de equivalencia: todas sus compras por el
+      total.</b> No presenta el 303, así que ni paga ni deduce IVA. Antes solo
+      se registraban por el total si el lote traía alguna factura con recargo
+      impreso; un lote solo con el teléfono o unas reparaciones salía con su
+      IVA desglosado. Ahora basta con que el cliente esté en recargo, y arriba
+      se ve «Cliente en recargo». Las facturas con retención (el alquiler del
+      local) siguen con su desglose y su aviso: el IRPF hay que declararlo.</li>
+  <li><b>Decir que un cliente está en recargo sin esperar a una factura con
+      recargo:</b> Configuración → Recargo de equivalencia de este
+      cliente.</li>
+  <li><b>Una sociedad no puede estar en recargo</b> (art. 148 de la Ley del
+      IVA: solo personas físicas y comunidades de bienes). Si a una S.L. o una
+      S.A. le cobran recargo, sus compras van con el desglose normal y se
+      avisa de que ese recargo no le corresponde.</li>
+  <li><b>El tabaco lleva un recargo del 1,75 %</b> (y lo que en 2022-2024
+      iba al 5 % de IVA, el 0,62 %): ya no se marca como un recargo
+      equivocado.</li>
+  <li>Un lote que dejó abierto con el criterio de antes se rehace solo al
+      abrirlo, sin volver a leer las facturas.</li>
+</ul>
+""",
     "1.22.0": """
 <h2>Novedades de la versión 1.22.0</h2>
 <ul>

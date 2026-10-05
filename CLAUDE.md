@@ -81,6 +81,24 @@ borra el trabajo del otro sin avisar.
   falta, y él contesta en
   `%APPDATA%\FacturasAplifisa\notas-para-claude.md`: **leerlo al empezar**.
 
+## Criterio fiscal: manda la ley, siempre
+
+Lo pidió el usuario el 2026-10-05 para todo el programa: **el tratamiento
+fiscal de cada factura sale de la ley vigente en su fecha** (Ley 37/1992 del
+IVA y su Reglamento; Ley 35/2006 del IRPF y su Reglamento), no de lo que traiga
+impreso la factura ni de una costumbre o suposición nuestra.
+
+- Si una factura no casa con la ley (un recargo que no toca a su tipo de IVA,
+  un recargo cobrado a una sociedad…), **se avisa diciendo por qué**.
+- Lo que la ley deja abierto o depende de datos que el programa no tiene (el
+  régimen del cliente, a qué actividad va una compra…) **se le pregunta y se
+  recuerda**: sus criterios contables mandan dentro de la ley.
+- Antes de programar algo fiscal, comprobar qué dice la norma. Si no hay
+  certeza, se le pregunta en vez de suponer.
+- Ejemplo: cliente en recargo de equivalencia (arts. 148 a 163 LIVA) → no
+  presenta 303 ni deduce IVA → **todas** sus compras por el total, traigan o no
+  recargo impreso; y una sociedad no puede estar en recargo (art. 148).
+
 ## Con quién se habla
 
 El usuario es asesor fiscal, **no programador**. Explicarle en su idioma: qué
