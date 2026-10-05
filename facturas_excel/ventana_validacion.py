@@ -21,10 +21,10 @@ from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHeaderView, QMenu, QTableWidgetItem,
 )
 
-from facturas_excel import ajustes, historial, registro_facturas
+from facturas_excel import ajustes, fiscal, historial, registro_facturas
 from facturas_excel.rutas import escritorio
 from facturas_excel.banda_avisos import AVISO
-from facturas_excel.clientes import regimen_recargo
+from facturas_excel.clientes import DESGLOSE, TOTAL, regimen_recargo
 from facturas_excel.conceptos import catalogo
 from facturas_excel.control_facturas import controles_documentos, sin_cuadre_antiguo
 from facturas_excel.consulta import PeriodoLote, clave_factura, facturas_unicas
@@ -128,6 +128,13 @@ class ValidacionMixin:
         aviso_irpf = self._aviso_irpf_transportista(r, f)
         if aviso_irpf:
             anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
+        # Lo que dice la ley según sea gasto o venta (fiscal.py).
+        for texto, campos, gravedad in fiscal.avisos(f, pasada["tipos"][r]):
+            anadir(texto, *campos, gravedad=gravedad)
+        rectificada = self._rectificada_fuera_del_lote(f, pasada["tipos"][r],
+                                                       pasada["facturas"])
+        if rectificada:
+            anadir(rectificada, "num_factura")
         for texto in pasada["errores_documento"].get(r, []):
             anadir(texto, gravedad=ERROR)
         otros = pasada.get("otro_nombre", {}).get(r)
@@ -234,6 +241,9 @@ class ValidacionMixin:
         cliente_nombre = getattr(self, "_cliente_nombre", "")
         # Todo lo exportado del cliente en una sola consulta al registro.
         ya = historial.exportadas_de(cliente_nif, cliente_nombre) if n else {}
+        # Para los huecos de numeración y las rectificativas: lo exportado
+        # antes del cliente también cuenta.
+        self._exportadas_cliente = ya
         exportadas = {}
         for r in range(n):
             k = historial.clave(facturas[r], tipos[r])
@@ -276,6 +286,33 @@ class ValidacionMixin:
                 ejercicios.append(fecha.year)
         return (Counter(ejercicios).most_common(1)[0][0]
                 if ejercicios else None)
+
+    def _rectificada_fuera_del_lote(self, f: Factura, tipo: str,
+                                    facturas) -> str:
+        """Una rectificativa cuya factura original no está en este lote: hay
+        que comprobar que la original está registrada (se busca en el
+        registro) y el signo (un abono en positivo suma en vez de restar)."""
+        original = registro_facturas.numero_clave(getattr(f, "rectifica_a", ""))
+        if not original:
+            return ""
+        nif = normaliza_nif(f.nif)
+        if any(registro_facturas.numero_clave(otra.num_factura) == original
+               and normaliza_nif(otra.nif) == nif for otra in facturas):
+            return ""          # está en el lote: ya lo trata «SUSTITUIDA»
+        lado = registro_facturas.lado(tipo)
+        previa = next((ficha for ficha in getattr(
+            self, "_exportadas_cliente", {}).values()
+            if ficha.get("tipo") == lado
+            and registro_facturas.numero_clave(ficha.get("num_factura")) == original
+            and normaliza_nif(ficha.get("nif")) == nif), None)
+        donde = (f"la original consta como exportada el {previa['exportada']}"
+                 if previa and previa.get("exportada") else
+                 "la original no consta en el registro: compruebe que está "
+                 "registrada")
+        signo = (" Si es un abono, los importes van en negativo."
+                 if (f.base_iva or 0) > 0 else "")
+        return (f"Rectifica a la factura {f.rectifica_a}, que no está en este "
+                f"lote: {donde}.{signo}")
 
     def _aviso_ejercicio(self, f: Factura) -> str:
         fecha = fecha_de(f.fecha)
@@ -368,7 +405,8 @@ class ValidacionMixin:
         # suelen llevar retención (transportista, o ya las tuvo antes).
         clave = (nif, nombre)
         if getattr(self, "_perfil_columnas", (None,))[0] != clave:
-            self._perfil_columnas = (clave, bool(nif and regimen_recargo(nif)),
+            self._perfil_columnas = (clave, bool(nif) and regimen_recargo(nif)
+                                     in (TOTAL, DESGLOSE),
                                      registro_facturas.usa_retenciones(nif, nombre))
         _, recargo_cliente, retenciones_cliente = self._perfil_columnas
         visibles = columnas_visibles(
@@ -477,10 +515,15 @@ class ValidacionMixin:
                 f"{self._periodo_lote.etiqueta}.")
         # Una hoja que se quedo pegada en el alimentador no da ningun error:
         # simplemente esa factura no esta. El salto de numeracion la delata.
+        ejercicio = getattr(self, "_ejercicio_lote", None)
+        anteriores = [ficha.get("num_factura") for ficha in getattr(
+            self, "_exportadas_cliente", {}).values()
+            if ficha.get("tipo") == "venta"
+            and (not ejercicio or ficha.get("ejercicio") == ejercicio)]
         avisos += huecos_de_numeracion(
             [d["factura"] for d in self.filas],
             [self._tipo_fila(r) for r in range(len(self.filas))],
-            getattr(self, "_cliente_nombre", ""))
+            getattr(self, "_cliente_nombre", ""), anteriores)
         sustituidas = [r for r in range(len(self.filas))
                        if "SUSTITUIDA" in (self.filas[r]["aviso"] or "")]
         for r in sustituidas:
@@ -571,7 +614,7 @@ class ValidacionMixin:
             "Comprobación de totales"
             + (f"  ·  {periodo_txt}" if periodo.ejercicio else "")
             + (f"  ·  {self._texto_filtro()}" if filtro_activo else "")
-            + ("  ·  cliente en recargo de equivalencia" if recargo else ""))
+            + (f"  ·  {self._motivo_por_el_total()}" if recargo else ""))
 
         lineas = []   # (bloque, tipo, Totales, es_total)
         for tipo, etiqueta in (("gasto", "Gastos"), ("venta", "Ingresos")):
@@ -741,21 +784,23 @@ class ValidacionMixin:
         # Por ámbito: (nombre, globo, fondo, [(texto, color, globo)] del nº
         # de facturas y de cada importe).
         ambitos = []
+        motivo = (self._motivo_por_el_total()[:1].upper()
+                  + self._motivo_por_el_total()[1:]) if recargo else ""
         for ambito, tipo, t, _es_total in lineas:
             solo_total = recargo and tipo == "Gastos" and not t.iva_por_tipo
             fondo = QColor(ACCENT_FAINT) if ambito == "FILTRO ACTUAL" else None
             nota = None
             if recargo and tipo == "Gastos" and not solo_total:
-                nota = ("Cliente en recargo de equivalencia: las facturas sin "
-                        "retención van por el total factura (dentro de la "
-                        "base); las que llevan retención, con su desglose.")
+                nota = (f"{motivo}: los gastos van por el total factura "
+                        "(dentro de la base). Alguno lleva todavía desglose "
+                        "de IVA: compruébelo.")
             cifras = [(str(t.facturas), INK,
                        f"{t.facturas} factura(s) · {t.lineas} línea(s)")]
             for clave, _cabecera, importe in columnas:
                 if solo_total and clave not in SOLO_TOTAL:
                     cifras.append(("—", COLOR_CERO,
-                                   "Cliente en recargo de equivalencia: los "
-                                   "gastos van a Aplifisa por el total factura."))
+                                   f"{motivo}: los gastos van a Aplifisa por "
+                                   "el total factura."))
                     continue
                 valor = importe(t)
                 cero = abs(valor) < 0.005

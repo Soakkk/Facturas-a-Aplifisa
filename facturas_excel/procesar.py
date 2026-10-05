@@ -16,7 +16,7 @@ from copy import deepcopy
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from . import clientes, proveedores
@@ -290,6 +290,12 @@ def catalogo_de(lado: str):
     return catalogo(lado)
 
 
+def _opcion(valor) -> Optional[str]:
+    """Una opción cerrada de la lectura, sin las que no dicen nada."""
+    texto = str(valor or "").strip().lower()
+    return None if texto in ("", "ninguna", "no", "factura", "null") else texto
+
+
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
               origen: str = "", pagina: int = 0) -> FacturaProcesada:
     cliente_nif = normaliza_nif(cliente_nif)
@@ -365,6 +371,15 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
                       or None),
         tratamiento_manual=("Bien de inversión"
                             if datos.get("es_bien_inversion") else None),
+        tipo_documento=_opcion(datos.get("tipo_documento")),
+        moneda=(str(datos.get("moneda") or "").strip().upper() or None),
+        mencion_iva=_opcion(datos.get("mencion_iva")),
+        posible_no_deducible=_opcion(datos.get("posible_no_deducible")),
+        # Un gasto sin el NIF del cliente impreso (un tique): sin él, el IVA
+        # no se puede deducir (art. 97 de la Ley del IVA).
+        sin_nif_destinatario=(tipo == "gasto" and not r_nif
+                              and not datos.get("_error")),
+        rectifica_a=str(datos.get("sustituye_a") or "").strip(),
     )
     facturas = []
     for i, linea in enumerate(lineas):
@@ -622,19 +637,17 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
 def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
     """Deja un unico apunte por el TOTAL (base + IVA + recargo + suplidos).
 
-    Para clientes en recargo de equivalencia: no deducen IVA, asi que el gasto es
-    el importe integro y en Aplifisa se registra como total factura, sin desglose.
+    Para clientes en recargo de equivalencia o sin derecho a deducir, y para
+    una factura cuyo IVA no se deduce: el gasto es el importe integro y en
+    Aplifisa se registra como total factura, sin desglose.
 
-    Si la factura lleva retencion NO se toca: el IRPF hay que declararlo aparte
-    (modelo 111) y colapsarlo lo perderia. Se avisa para hacerla a mano.
+    La retencion (el alquiler del local, un profesional) se CONSERVA tal cual:
+    el IVA no deducible va al gasto, pero la retencion se declara aparte
+    (modelos 111 y 115) y no se puede perder.
     """
     if pr.tipo != "gasto" or not pr.facturas:
         return pr
-    if any(f.cuota_irpf for f in pr.facturas):
-        copia = replace(pr, facturas=[replace(f) for f in pr.facturas])
-        _anadir_aviso(copia, "Lleva retención de IRPF: NO se ha pasado a total "
-                             "factura (la retención hay que declararla). Revísala.")
-        return copia
+    retenida = next((f for f in pr.facturas if f.cuota_irpf), None)
 
     # La linea del suplido ya entra aqui con su base: es una linea mas.
     total = sum((f.base_iva or 0) + (f.cuota_iva or 0) for f in pr.facturas)
@@ -648,6 +661,10 @@ def a_total_factura(pr: FacturaProcesada) -> FacturaProcesada:
     base.es_suplido = False   # el suplido ya esta dentro del total
     base.iva_incluido_en_base = True
     base.lineas_factura = 1
+    if retenida is not None:
+        base.base_irpf = retenida.base_irpf
+        base.pct_irpf = retenida.pct_irpf
+        base.cuota_irpf = retenida.cuota_irpf
     return replace(pr, facturas=[base])
 
 

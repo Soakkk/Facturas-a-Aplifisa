@@ -166,13 +166,18 @@ def filas_de_bloques(bloques, por_el_total: bool, a_total_factura) -> List[Fila]
             # solo los gastos se resumen por el total.
             tipo = next((f.tipo_revision for f in fuentes if f.tipo_revision),
                         None) or pr.tipo
+            # Por el total: todo el lote (cliente en recargo o sin derecho a
+            # deducir) o esta factura, si una persona dijo que su IVA no se
+            # deduce («Por el total»).
+            resumir = por_el_total or any(
+                getattr(f, "no_deducible", False) for f in fuentes)
             vista = (a_total_factura(replace(pr, facturas=fuentes, tipo=tipo))
-                     if por_el_total else pr)
-            visibles = vista.facturas if por_el_total else fuentes
+                     if resumir else pr)
+            visibles = vista.facturas if resumir else fuentes
             for f in visibles:
                 filas.append(Fila(
                     png, f, f.tipo_revision or vista.tipo, vista.aviso,
-                    bloque["nombre"], list(fuentes if por_el_total else [f])))
+                    bloque["nombre"], list(fuentes if resumir else [f])))
     return filas
 
 

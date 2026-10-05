@@ -23,9 +23,10 @@ TOLERANCIA = 0.02  # euros de margen por redondeos
 # El recargo de equivalencia va SIEMPRE emparejado con su tipo de IVA: es el
 # regimen quien lo fija, no el proveedor (confirmado por el usuario 2026-09-02).
 # Ley del IVA, art. 161: 5,2 % con el IVA al 21, 1,4 % al 10 y 0,5 % al 4; el
-# tabaco, que va al 21, lleva el 1,75 %. Entre 2022 y 2024, la luz, el gas y
-# algunos alimentos al 5 % de IVA llevaron el 0,62 %.
-RECARGO_DE_IVA = {21.0: (5.2, 1.75), 10.0: (1.4,), 5.0: (0.62,), 4.0: (0.5,)}
+# tabaco, que va al 21, lleva el 1,75 %. Los tipos temporales de 2022-2024
+# llevaron el suyo: 0,62 % al 5, 0,26 % al 2 y 1 % al 7,5.
+RECARGO_DE_IVA = {21.0: (5.2, 1.75), 10.0: (1.4,), 7.5: (1.0,), 5.0: (0.62,),
+                  4.0: (0.5,), 2.0: (0.26,)}
 
 
 # Tipos de IVA que existen o han existido recientemente en España: los
@@ -33,6 +34,26 @@ RECARGO_DE_IVA = {21.0: (5.2, 1.75), 10.0: (1.4,), 5.0: (0.62,), 4.0: (0.5,)}
 # gas y alimentos) y la exención (0). Un 22 % o un 12 % solo sale de una mala
 # lectura, aunque la cuota cuadre con él.
 TIPOS_IVA_VALIDOS = {0.0, 2.0, 4.0, 5.0, 7.5, 10.0, 21.0}
+
+# Los temporales, solo en su época (según la fecha de la factura): un 5 % en
+# una factura de 2026 es un tipo mal leído. El 5 % (luz desde julio de 2022,
+# gas, aceites y pastas) duró hasta 2024; el 2 % y el 7,5 % (alimentos), de
+# octubre a diciembre de 2024.
+VIGENCIA_IVA = {
+    5.0: (date(2022, 7, 1), date(2024, 12, 31),
+          "entre julio de 2022 y 2024 (luz, gas y algunos alimentos)"),
+    2.0: (date(2024, 10, 1), date(2024, 12, 31),
+          "de octubre a diciembre de 2024 (algunos alimentos)"),
+    7.5: (date(2024, 10, 1), date(2024, 12, 31),
+          "de octubre a diciembre de 2024 (algunos alimentos)"),
+}
+
+# Retenciones que existen o han existido (un requerimiento puede traer
+# facturas de cualquier año): actividades agrícolas y módulos (1, 2),
+# profesionales (7, 9, 15, 18, 19, 21), alquileres y capital (19, 19,5, 20,
+# 21), no residentes (24) y consejeros (35). Un 1,5 % es una mala lectura.
+TIPOS_IRPF = {1.0, 2.0, 7.0, 9.0, 15.0, 18.0, 19.0, 19.5, 20.0, 21.0, 24.0,
+              35.0}
 
 
 class Incidencia(str):
@@ -285,6 +306,12 @@ def validar(f: Factura) -> Resultado:
         marcar_error(f"Tipo de IVA {porcentaje(abs(f.pct_iva))}% no existe en "
                      "España (21, 10, 5, 4, 2 o 0): revise el tipo leído",
                      "pct_iva")
+    elif f.pct_iva is not None and dia is not None:
+        vigencia = VIGENCIA_IVA.get(round(abs(float(f.pct_iva)), 2))
+        if vigencia and not vigencia[0] <= dia <= vigencia[1]:
+            marcar_revisar(f"El IVA del {porcentaje(abs(f.pct_iva))}% solo se "
+                           f"aplicó {vigencia[2]}, y la factura es del "
+                           f"{f.fecha}: revise el tipo leído.", "pct_iva")
 
     # Doble lectura: cada dato en el que los dos modelos no coinciden se
     # revisa con los dos valores a la vista. No se elige ninguno en silencio.
@@ -353,6 +380,18 @@ def validar(f: Factura) -> Resultado:
             marcar_error(
                 f"Cuota IRPF descuadra: {f.cuota_irpf} pero base×% = {esperada}",
                 "cuota_irpf")
+    if f.pct_irpf and round(abs(float(f.pct_irpf)), 2) not in TIPOS_IRPF:
+        marcar_revisar(f"Retención del {porcentaje(abs(f.pct_irpf))}%: no es un "
+                       "tipo de retención (1, 2, 7, 15, 19, 24…): revise el "
+                       "tipo leído.", "pct_irpf")
+    # La retención va sobre la misma base que el IVA (la del profesional, el
+    # alquiler…). Con varias líneas o por el total no se puede comparar.
+    if (f.cuota_irpf and f.base_irpf is not None and f.base_iva is not None
+            and f.lineas_factura == 1 and not f.iva_incluido_en_base
+            and not f.es_suplido
+            and abs(abs(f.base_irpf) - abs(f.base_iva)) > TOLERANCIA):
+        marcar_revisar(f"La base de la retención ({f.base_irpf}) no es la base "
+                       f"imponible ({f.base_iva}): compruébela.", "base_irpf")
 
     # Cuadre con el total impreso: si no cuadra puede haber suplidos, retencion
     # o financiacion (ej. moviles a plazos) que no son base imponible -> revisar,
@@ -455,7 +494,8 @@ def _trozos(num_factura: str):
 
 
 def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None,
-                         cliente_nombre: str = "") -> List[str]:
+                         cliente_nombre: str = "",
+                         ventas_anteriores=()) -> List[str]:
     """Numeros que faltan en una serie seguida del mismo emisor.
 
     Devuelve avisos ya escritos. Es un AVISO, no un error: puede que esa
@@ -466,6 +506,11 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
     cliente de la asesoria, mientras ``Factura.nombre`` es cada comprador. Por
     eso todas las ventas del lote se comprueban juntas, no comprador a
     comprador. Las varias lineas de IVA de un mismo apunte cuentan una vez.
+
+    `ventas_anteriores`: los numeros de las ventas ya exportadas del cliente
+    (del registro). La ultima de la misma serie se toma como punto de
+    partida: asi se ve que falta la primera del trimestre (antes, solo los
+    huecos dentro del lote abierto).
     """
     series: Dict[tuple, Dict[str, tuple]] = {}
     for indice, f in enumerate(facturas):
@@ -487,7 +532,7 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
             numero_completo, (numeros, quien))
 
     avisos = []
-    for (_, texto, cuantos), por_numero in series.items():
+    for (identidad, texto, cuantos), por_numero in series.items():
         entradas = list(por_numero.values())
         if len(entradas) < MINIMO_SERIE:
             continue
@@ -499,6 +544,22 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
             continue
         col = cambian[0]
         vistos = {int(numeros[col]) for numeros, _ in entradas}
+        if identidad == "__SERIE_INGRESOS__":
+            # La última venta ya exportada de esta misma serie, justo antes.
+            modelo_serie = entradas[0][0]
+            anteriores = []
+            for numero in ventas_anteriores:
+                trozos = _trozos(numero)
+                if not trozos or trozos[0] != texto or len(trozos[1]) != cuantos:
+                    continue
+                otros = [p for i, p in enumerate(trozos[1]) if i != col]
+                if otros != [p for i, p in enumerate(modelo_serie) if i != col]:
+                    continue
+                valor = int(trozos[1][col])
+                if valor < min(vistos):
+                    anteriores.append(valor)
+            if anteriores:
+                vistos.add(max(anteriores))
         faltan = [n for n in range(min(vistos), max(vistos)) if n not in vistos]
         if not faltan or len(faltan) > MAXIMO_HUECO:
             continue

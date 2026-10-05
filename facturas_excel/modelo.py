@@ -81,6 +81,22 @@ class Factura:
     # Hojas exactas de la factura cuando se unieron a mano (pueden ser de
     # archivos distintos o no seguidas): ((origen, página), ...).
     paginas_documento: tuple = ()
+    # Lo que dice el propio documento (1.24): qué es (factura, proforma,
+    # albarán…), en qué moneda va y qué mención de IVA trae (inversión del
+    # sujeto pasivo, intracomunitaria, exenta…). Para avisar según la ley.
+    tipo_documento: Optional[str] = None
+    moneda: Optional[str] = None
+    mencion_iva: Optional[str] = None
+    # Gasto cuyo IVA puede no ser deducible (art. 96 de la Ley del IVA):
+    # restauración, regalos, alimentos y tabaco, joyas, espectáculos.
+    posible_no_deducible: Optional[str] = None
+    # La factura de gasto no trae el NIF del cliente (un tique): sin él no
+    # se puede deducir el IVA (art. 97).
+    sin_nif_destinatario: bool = False
+    # Una persona ha decidido registrarla por el total (IVA no deducible).
+    no_deducible: bool = False
+    # Nº de la factura que esta rectifica o sustituye, si lo dice.
+    rectifica_a: str = ""
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -93,7 +109,9 @@ class Factura:
                      "avisos_vistos",
                      "tratamiento_manual", "iva_incluido_en_base", "eliminada",
                      "tipo_revision", "verificacion", "discrepancias",
-                     "paginas_documento"}
+                     "paginas_documento", "tipo_documento", "moneda",
+                     "mencion_iva", "posible_no_deducible",
+                     "sin_nif_destinatario", "no_deducible", "rectifica_a"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 
