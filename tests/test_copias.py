@@ -58,10 +58,11 @@ def test_restaurar_vuelve_a_lo_de_la_copia_y_guarda_lo_de_ahora():
     clientes.guardar_regimen_recargo("12345678Z", clientes.DESGLOSE, "TIENDA")
     pendientes.guardar_notas("notas de después")
 
-    antes = copias.restaurar(buena)
+    antes = copias.restaurar(buena).antes
 
     assert _regimen("12345678Z") == clientes.TOTAL
-    assert "notas de antes" in pendientes.leer_notas()
+    # Unas notas que existen no se pisan (se perdería lo apuntado después).
+    assert "notas de después" in pendientes.leer_notas()
     # Y lo que había justo antes de restaurar se puede recuperar.
     copias.restaurar(antes)
     assert _regimen("12345678Z") == clientes.DESGLOSE
@@ -134,3 +135,157 @@ def test_sin_carpeta_de_documentacion_la_copia_va_a_los_datos(monkeypatch):
     monkeypatch.setattr(archivo, "carpeta_escaneos", sin_carpeta)
     ruta = copias.hacer()
     assert ruta.startswith(os.path.join(dir_datos(), copias.CARPETA))
+
+
+# ------------------------------------------- lo que encontró la revisión
+def _con_facturas(n=3):
+    """Un registro con n facturas exportadas (datos de prueba)."""
+    from facturas_excel import historial
+    from facturas_excel.modelo import Factura
+    facturas = [Factura(num_factura=f"F-{i}", fecha="03/09/2026",
+                        nombre="PROVEEDOR PRUEBA SL", nif="B12345674",
+                        base_iva=100.0, pct_iva=21.0, cuota_iva=21.0)
+                for i in range(n)]
+    historial.registrar("12345678Z", {"gasto": facturas}, {})
+
+
+def _vaciar_registro():
+    with closing(sqlite3.connect(almacen.ruta(dir_datos()))) as con, con:
+        con.execute("DELETE FROM facturas")
+
+
+def test_la_rotacion_no_se_lleva_la_ultima_copia_buena():
+    """Cambio de ordenador (o registro estropeado): quince días copiando un
+    registro vacío no pueden borrar la última copia con facturas."""
+    _con_facturas()
+    buena = copias.hacer()
+    _envejecer(buena)
+    _vaciar_registro()
+    for _ in range(copias.GUARDAR + 5):
+        copias.hacer("a mano")
+    assert os.path.isdir(buena)
+    assert len(copias.listar()) == copias.GUARDAR + 1
+
+
+def _envejecer(ruta, dias=30):
+    resumen = os.path.join(ruta, copias.RESUMEN)
+    with open(resumen, encoding="utf-8") as fh:
+        datos = json.load(fh)
+    datos["fecha"] = (datetime.now() - timedelta(days=dias)).isoformat(
+        timespec="seconds")
+    with open(resumen, "w", encoding="utf-8") as fh:
+        json.dump(datos, fh)
+
+
+def test_las_copias_de_otro_equipo_no_se_rotan_ni_cuentan_como_de_hoy(
+        monkeypatch):
+    monkeypatch.setenv("COMPUTERNAME", "OTRO-PC")
+    del_otro = copias.hacer()
+    monkeypatch.setenv("COMPUTERNAME", "ESTE-PC")
+    assert not copias.hecha_hoy()
+    for _ in range(copias.GUARDAR + 2):
+        copias.hacer("a mano")
+    assert os.path.isdir(del_otro)
+    [otra] = [c for c in copias.listar() if c.equipo == "OTRO-PC"]
+    assert otra.ruta == del_otro
+
+
+def test_con_el_registro_vacio_se_ofrece_la_copia_buena(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    from facturas_excel.app import VentanaPrincipal
+    QApplication.instance() or QApplication([])
+    _con_facturas(4)
+    copias.hacer()
+    _vaciar_registro()
+    assert copias.mejor_que_la_actual().facturas == 4
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._copia_diaria()
+    assert "4 factura(s)" in v.banda.lbl.text()
+    assert "Copias de seguridad" in v.banda.lbl.text()
+    # Una sola vez por equipo de origen: no se repite cada día.
+    v.banda.lbl.setText("")
+    v._copia_diaria()
+    assert v.banda.lbl.text() == ""
+
+
+def test_se_restaura_aunque_la_base_en_uso_este_danada():
+    _con_facturas(2)
+    buena = copias.hacer()
+    db = almacen.ruta(dir_datos())
+    with open(db, "r+b") as fh:            # cabecera de SQLite estropeada
+        fh.write(b"\0" * 100)
+
+    resultado = copias.restaurar(buena)
+
+    assert copias._contar_facturas(db) == 2
+    assert os.path.isdir(resultado.antes)
+    # La copia «antes» guarda la base dañada tal cual, para rescatarla.
+    assert os.path.exists(os.path.join(resultado.antes, almacen.FICHERO))
+    assert not [n for n in os.listdir(copias.carpeta())
+                if not os.path.exists(os.path.join(copias.carpeta(), n,
+                                                   copias.RESUMEN))]
+
+
+def test_si_la_copia_falla_no_queda_una_carpeta_a_medias(monkeypatch):
+    def falla(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+    _con_facturas(1)
+    monkeypatch.setattr(copias, "_contar_facturas", falla)
+    try:
+        copias.hacer()
+    except sqlite3.OperationalError:
+        pass
+    assert os.listdir(copias.carpeta()) == []
+
+
+def test_restaurar_no_cambia_la_carpeta_de_documentacion(tmp_path):
+    from facturas_excel import ajustes
+    from facturas_excel.archivo import carpeta_escaneos
+    vieja = carpeta_escaneos()
+    buena = copias.hacer()
+    nueva = str(tmp_path / "Documentacion nueva")
+    ajustes.guardar("carpeta_escaneos", nueva)
+    os.makedirs(os.path.join(nueva, copias.CARPETA))
+    # La copia elegida (de la carpeta vieja) se restaura desde la nueva.
+    copias.restaurar(buena)
+    assert carpeta_escaneos() == nueva != vieja
+    assert copias.listar()          # la copia «antes de restaurar» se ve
+
+
+def test_las_notas_y_el_indice_solo_vuelven_si_faltan(tmp_path):
+    from facturas_excel.archivo import carpeta_escaneos
+    pendientes.guardar_notas("notas buenas")
+    indice = os.path.join(carpeta_escaneos(), ".clientes.json")
+    with open(indice, "w", encoding="utf-8") as fh:
+        json.dump({"12345678Z": {"nombre": "TIENDA", "carpeta": "TIENDA"}}, fh)
+    buena = copias.hacer()
+    os.remove(pendientes.ruta_notas())
+    with open(indice, "w", encoding="utf-8") as fh:
+        fh.write("{roto")
+
+    resultado = copias.restaurar(buena)
+
+    assert "notas buenas" in pendientes.leer_notas()
+    with open(indice, encoding="utf-8") as fh:
+        assert "TIENDA" in fh.read()
+    assert not resultado.avisos
+    assert not [n for n in os.listdir(os.path.dirname(indice))
+                if n.endswith(".restaurando")]
+
+
+def test_contar_facturas_no_crea_una_base_vacia(tmp_path):
+    db = str(tmp_path / "no-existe.db")
+    assert copias._contar_facturas(db) is None
+    assert not os.path.exists(db)
+
+
+def test_una_copia_con_una_base_vacia_de_cero_bytes_no_se_restaura():
+    import pytest
+    clientes.guardar_regimen_recargo("12345678Z", clientes.TOTAL, "TIENDA")
+    ruta = copias.hacer()
+    open(os.path.join(ruta, almacen.FICHERO), "wb").close()
+    with pytest.raises(ValueError, match="no tiene un registro"):
+        copias.restaurar(ruta)
+    assert _regimen("12345678Z") == clientes.TOTAL     # nada tocado

@@ -12,6 +12,7 @@ import glob
 import gzip
 import os
 import pickle
+import shutil
 import threading
 from datetime import datetime
 
@@ -31,6 +32,9 @@ _escrita = 0       # número de la última escrita (o anulada al borrar)
 _hilos: list[threading.Thread] = []
 _ultimo_error = ""
 _apartada = ""
+# Una sesión que no se pudo abrir NI apartar (bloqueada por el antivirus u
+# otra copia del programa): en esta ejecución no se borra ni se pisa.
+_intocable = ""
 
 
 def _ruta() -> str:
@@ -56,6 +60,9 @@ def _escribir(paquete: bytes, numero: int) -> None:
         if numero <= _escrita:
             return
         ruta = _ruta()
+        if _intocable and os.path.normcase(ruta) == os.path.normcase(_intocable):
+            raise OSError("el lote de la última vez no se pudo abrir ni "
+                          "apartar, y no se pisa")
         temporal = ruta + ".tmp"
         try:
             with gzip.open(temporal, "wb", compresslevel=3) as fh:
@@ -144,13 +151,19 @@ def apartar() -> str:
     while os.path.exists(destino):
         n += 1
         destino = f"{base}-{n}.pkl.gz"
+    global _intocable
     with _cerrojo_fichero:
         if not os.path.exists(ruta):
             return ""
         try:
             os.replace(ruta, destino)
         except OSError:
-            return ""
+            # Bloqueada: al menos una copia; y si ni eso, no se toca.
+            try:
+                shutil.copy2(ruta, destino)
+            except OSError:
+                _intocable = ruta
+                return ""
     _apartada = destino
     viejas = sorted(glob.glob(os.path.join(carpeta, APARTADAS + "*")))
     for vieja in viejas[:-MAX_APARTADAS]:
@@ -159,6 +172,11 @@ def apartar() -> str:
         except OSError:
             pass
     return destino
+
+
+def intocable() -> str:
+    """La sesión que no se pudo abrir ni apartar ("" si ninguna)."""
+    return _intocable
 
 
 def apartada() -> str:
@@ -173,7 +191,10 @@ def borrar() -> None:
         hasta = _pedidas
     with _cerrojo_fichero:
         _escrita = max(_escrita, hasta)
+        ruta = _ruta()
+        if _intocable and os.path.normcase(ruta) == os.path.normcase(_intocable):
+            return
         try:
-            os.remove(_ruta())
+            os.remove(ruta)
         except OSError:
             pass

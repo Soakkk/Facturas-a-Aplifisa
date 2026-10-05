@@ -14,7 +14,14 @@ se copia en «Documentación Facturas/_Copias de seguridad/FECHA»:
 - el directorio de clientes compartido con la suite (solo copia: no se
   restaura, porque lo escriben también los otros programas).
 
-Se guardan las últimas 15. Restaurar hace antes una copia de lo de ahora.
+Se guardan las 15 últimas de cada ordenador (la carpeta puede estar
+compartida), y nunca se borra la que más facturas tiene: si el registro se
+queda vacío o se estropea, sus copias no pueden llevarse la última buena. Al
+abrir con el registro vacío y una copia con facturas, se ofrece restaurarla.
+
+Restaurar hace antes una copia de lo de ahora, devuelve el registro (también
+si la base en uso está dañada) y no cambia la carpeta de documentación. Las
+notas y el índice solo vuelven si faltan o están dañados.
 """
 
 from __future__ import annotations
@@ -22,10 +29,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
+from pathlib import Path
 from typing import List, Optional
 
 from . import almacen
@@ -46,6 +55,7 @@ class Copia:
     motivo: str
     tamano: int
     facturas: Optional[int]
+    equipo: str = ""
 
     @property
     def tamano_legible(self) -> str:
@@ -89,53 +99,98 @@ def _ruta_suite() -> str:
     return ruta_directorio()
 
 
-def _copiar_base(origen: str, destino: str) -> None:
-    """SQLite copia la base entera y coherente, también con su diario (WAL)."""
-    with closing(sqlite3.connect(origen, timeout=15)) as fuente, \
-            closing(sqlite3.connect(destino)) as copia:
-        fuente.backup(copia)
+def equipo() -> str:
+    """Este ordenador: la carpeta de copias puede estar compartida (OneDrive)."""
+    return (os.environ.get("COMPUTERNAME") or socket.gethostname() or "").upper()
+
+
+def _solo_lectura(db: str):
+    return sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True,
+                           timeout=15)
 
 
 def _contar_facturas(db: str) -> Optional[int]:
+    """Cuántas facturas tiene el registro de esa base (None si no se puede
+    leer). En solo lectura: nunca crea una base vacía donde no la había."""
     try:
-        with closing(sqlite3.connect(db)) as con:
+        if not os.path.isfile(db) or not os.path.getsize(db):
+            return None
+        with closing(_solo_lectura(db)) as con:
             return con.execute("SELECT COUNT(*) FROM facturas").fetchone()[0]
     except sqlite3.Error:
         return None
 
 
+def _base_sana(db: str) -> bool:
+    """Se abre, pasa la comprobación de SQLite y tiene el registro."""
+    try:
+        if not os.path.isfile(db) or not os.path.getsize(db):
+            return False
+        with closing(_solo_lectura(db)) as con:
+            if con.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                return False
+            return con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND "
+                "name = 'facturas'").fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
+def _copiar_base(origen: str, destino: str) -> bool:
+    """SQLite copia la base entera y coherente, también con su diario (WAL).
+    Si está dañada, se guarda tal cual (con su diario) para poder rescatarla.
+    Devuelve si es una copia buena."""
+    try:
+        with closing(sqlite3.connect(origen, timeout=15)) as fuente, \
+                closing(sqlite3.connect(destino)) as copia:
+            fuente.backup(copia)
+        return True
+    except sqlite3.Error:
+        for extra in ("", "-wal", "-shm"):
+            if os.path.exists(origen + extra):
+                shutil.copy2(origen + extra, destino + extra)
+        return False
+
+
 def hacer(motivo: str = "diaria", rotar_despues: bool = True) -> str:
-    """Hace una copia ahora y devuelve su carpeta."""
+    """Hace una copia ahora y devuelve su carpeta. Si algo falla, no deja
+    una copia a medias."""
     momento = datetime.now()
     nombre = f"{momento:%Y-%m-%d_%H%M%S}"
-    destino = os.path.join(carpeta(), nombre)
+    raiz = carpeta()
+    destino = os.path.join(raiz, nombre)
     n = 2
     while os.path.exists(destino):
-        destino = os.path.join(carpeta(), f"{nombre}-{n}")
+        destino = os.path.join(raiz, f"{nombre}-{n}")
         n += 1
     os.makedirs(destino)
-    contenido = []
-    db = _base_de_datos()
-    if os.path.exists(db):
-        _copiar_base(db, os.path.join(destino, almacen.FICHERO))
-        contenido.append(almacen.FICHERO)
-    for origen, como in ((_ruta_notas, NOTAS), (_ruta_indice, INDICE),
-                         (_ruta_suite, SUITE)):
-        try:
-            ruta = origen()
-            if os.path.exists(ruta):
-                shutil.copy2(ruta, os.path.join(destino, como))
-                contenido.append(como)
-        except OSError:
-            continue
-    from . import __version__
-    with open(os.path.join(destino, RESUMEN), "w", encoding="utf-8") as fh:
-        json.dump({"fecha": momento.isoformat(timespec="seconds"),
-                   "motivo": motivo, "version": __version__,
-                   "contenido": contenido,
-                   "facturas": _contar_facturas(
-                       os.path.join(destino, almacen.FICHERO))},
-                  fh, ensure_ascii=False, indent=2)
+    try:
+        contenido, buena = [], None
+        db = _base_de_datos()
+        if os.path.exists(db):
+            buena = _copiar_base(db, os.path.join(destino, almacen.FICHERO))
+            contenido.append(almacen.FICHERO)
+        for origen, como in ((_ruta_notas, NOTAS), (_ruta_indice, INDICE),
+                             (_ruta_suite, SUITE)):
+            try:
+                ruta = origen()
+                if os.path.exists(ruta):
+                    shutil.copy2(ruta, os.path.join(destino, como))
+                    contenido.append(como)
+            except OSError:
+                continue
+        from . import __version__
+        with open(os.path.join(destino, RESUMEN), "w", encoding="utf-8") as fh:
+            json.dump({"fecha": momento.isoformat(timespec="seconds"),
+                       "motivo": motivo, "version": __version__,
+                       "equipo": equipo(), "contenido": contenido,
+                       "base_danada": buena is False,
+                       "facturas": _contar_facturas(
+                           os.path.join(destino, almacen.FICHERO))},
+                      fh, ensure_ascii=False, indent=2)
+    except BaseException:
+        shutil.rmtree(destino, ignore_errors=True)
+        raise
     if rotar_despues:
         rotar()
     return destino
@@ -155,24 +210,39 @@ def listar() -> List[Copia]:
             with open(os.path.join(ruta, RESUMEN), encoding="utf-8") as fh:
                 resumen = json.load(fh)
             fecha = datetime.fromisoformat(resumen["fecha"])
+            tamano = sum(os.path.getsize(os.path.join(ruta, f))
+                         for f in os.listdir(ruta)
+                         if os.path.isfile(os.path.join(ruta, f)))
         except (OSError, ValueError, KeyError, TypeError):
             continue
-        tamano = sum(os.path.getsize(os.path.join(ruta, f))
-                     for f in os.listdir(ruta)
-                     if os.path.isfile(os.path.join(ruta, f)))
         copias.append(Copia(ruta, fecha, str(resumen.get("motivo") or ""),
-                            tamano, resumen.get("facturas")))
+                            tamano, resumen.get("facturas"),
+                            str(resumen.get("equipo") or "")))
     return sorted(copias, key=lambda c: c.fecha, reverse=True)
 
 
+def _mias(copias: List[Copia]) -> List[Copia]:
+    yo = equipo()
+    return [c for c in copias if not c.equipo or c.equipo == yo]
+
+
 def rotar(guardar: int = GUARDAR) -> None:
-    for vieja in listar()[guardar:]:
-        shutil.rmtree(vieja.ruta, ignore_errors=True)
+    """Se quedan las últimas de este ordenador (las de otro las rota el
+    otro). La más completa (la que más facturas tiene) no se borra nunca:
+    con un registro vacío o estropeado, quince días de copias de ese
+    registro no pueden llevarse la última buena."""
+    mias = _mias(listar())
+    if len(mias) <= guardar:
+        return
+    completa = max(mias, key=lambda c: (c.facturas or 0, c.fecha))
+    for vieja in mias[guardar:]:
+        if vieja.ruta != completa.ruta:
+            shutil.rmtree(vieja.ruta, ignore_errors=True)
 
 
 def hecha_hoy(hoy: Optional[date] = None) -> bool:
     hoy = hoy or date.today()
-    return any(c.fecha.date() == hoy for c in listar())
+    return any(c.fecha.date() == hoy for c in _mias(listar()))
 
 
 def diaria() -> str:
@@ -182,28 +252,97 @@ def diaria() -> str:
     return hacer("diaria")
 
 
-def restaurar(ruta_copia: str) -> str:
-    """Vuelve a lo que había en esa copia (base de datos, notas e índice).
+def mejor_que_la_actual() -> Optional[Copia]:
+    """Si el registro de este ordenador está vacío (o no se puede leer) y hay
+    una copia con facturas, esa copia (la más nueva): ha cambiado de
+    ordenador o se ha estropeado, y hay que ofrecer restaurarla."""
+    if _contar_facturas(_base_de_datos()):
+        return None
+    return next((c for c in listar() if (c.facturas or 0) > 0), None)
 
-    Antes copia lo de ahora («antes de restaurar»), por si hay que volver
-    atrás, y devuelve esa carpeta. El programa debe volver a abrirse."""
+
+@dataclass
+class Restauracion:
+    antes: str                      # la copia de lo que había antes
+    avisos: List[str] = field(default_factory=list)
+
+
+def restaurar(ruta_copia: str) -> Restauracion:
+    """Vuelve al registro de esa copia (facturas, clientes, proveedores,
+    cuentas y ajustes). La carpeta de documentación no cambia.
+
+    Antes copia lo de ahora («antes de restaurar»). Las notas y el índice de
+    carpetas solo vuelven si aquí faltan o están dañados: si no, se perdería
+    lo apuntado y los clientes dados de alta después de la copia. El
+    programa debe volver a abrirse."""
+    from . import ajustes
     db_copia = os.path.join(ruta_copia, almacen.FICHERO)
-    if not os.path.exists(db_copia):
-        raise ValueError("Esa copia no tiene la base de datos del programa.")
+    if not _base_sana(db_copia):
+        raise ValueError("Esa copia no tiene un registro del programa que se "
+                         "pueda usar.")
+    # Lo que tiene que quedar como está, leído antes de cambiar la base: la
+    # carpeta de documentación (es un ajuste, y va en la base) y lo que
+    # cuelga de ella.
+    from .archivo import carpeta_escaneos
+    carpeta_doc = carpeta_escaneos()
+    ruta_indice, ruta_notas = _ruta_indice(), _ruta_notas()
     # Sin quitar copias viejas todavía: podría irse la que se restaura.
     antes = hacer("antes de restaurar", rotar_despues=False)
     db = _base_de_datos()
-    # La copia vuelve encima de la base en uso (no se cambia el fichero:
-    # así no se mezcla con su diario WAL).
-    with closing(sqlite3.connect(db_copia)) as fuente, \
-            closing(sqlite3.connect(db, timeout=15)) as actual:
-        fuente.backup(actual)
-    for como, destino in ((NOTAS, _ruta_notas), (INDICE, _ruta_indice)):
+    if _base_sana(db):
+        # Encima de la base en uso, sin cambiar el fichero: así no se mezcla
+        # con su diario (WAL).
+        with closing(_solo_lectura(db_copia)) as fuente, \
+                closing(sqlite3.connect(db, timeout=15)) as actual:
+            fuente.backup(actual)
+    else:
+        # Dañada: se sustituye el fichero entero, sin su diario viejo.
+        temporal = db + ".restaurando"
+        shutil.copy2(db_copia, temporal)
+        for extra in ("-wal", "-shm"):
+            try:
+                os.remove(db + extra)
+            except FileNotFoundError:
+                pass
+        os.replace(temporal, db)
+    if ajustes.leer("carpeta_escaneos", None) != carpeta_doc:
+        ajustes.guardar("carpeta_escaneos", carpeta_doc)
+    resultado = Restauracion(antes)
+    for como, ruta, sano in ((NOTAS, ruta_notas, _notas_sanas),
+                             (INDICE, ruta_indice, _indice_sano)):
         origen = os.path.join(ruta_copia, como)
-        if os.path.exists(origen):
-            ruta = destino()
-            temporal = ruta + ".restaurando"
+        if not os.path.exists(origen) or sano(ruta):
+            continue
+        temporal = ruta + ".restaurando"
+        try:
             shutil.copy2(origen, temporal)
             os.replace(temporal, ruta)
+        except OSError as error:
+            resultado.avisos.append(f"No se pudo recuperar {como} ({error}).")
+        finally:
+            if os.path.exists(temporal):
+                try:
+                    os.remove(temporal)
+                except OSError:
+                    pass
     rotar()
-    return antes
+    return resultado
+
+
+def _notas_sanas(ruta: str) -> bool:
+    try:
+        with open(ruta, encoding="utf-8") as fh:
+            return bool(fh.read().strip())
+    except (OSError, ValueError):
+        return False
+
+
+def _indice_sano(ruta: str) -> bool:
+    from .identidad_archivo import leer
+    if not os.path.exists(ruta):
+        return False
+    try:
+        leer(os.path.dirname(ruta))
+        return True
+    except (OSError, ValueError):
+        return False

@@ -111,9 +111,9 @@ def _es_sin_credito(e: Exception) -> bool:
 def _es_limite_de_peticiones(e: Exception) -> bool:
     """429 / RESOURCE_EXHAUSTED por ir deprisa, no por falta de saldo."""
     texto = str(e).lower()
-    return (getattr(e, "code", None) == 429 or "429" in texto
-            or "resource_exhausted" in texto or "rate limit" in texto
-            or "quota" in texto) and not _es_sin_credito(e)
+    return (getattr(e, "code", None) == 429
+            or re.search(r"\b429\b", texto) is not None
+            or "resource_exhausted" in texto) and not _es_sin_credito(e)
 
 
 def _es_cuota_diaria(e: Exception) -> bool:
@@ -366,6 +366,8 @@ class Extractor:
         self._cerrojo = threading.Lock()
         self._pausa_hasta = 0.0
         self._sin_cuota = ""
+        # Al cerrar el programa no se espera a Google: se deja de pedir.
+        self.cancelado = threading.Event()
 
     def _pausar(self, segundos: float) -> None:
         with self._cerrojo:
@@ -373,9 +375,12 @@ class Extractor:
                                     time.monotonic() + segundos)
 
     def _esperar_pausa(self) -> None:
+        """Espera a trozos cortos: si se cierra el programa, deja de esperar."""
         resto = self._pausa_hasta - time.monotonic()
-        if resto > 0:
-            time.sleep(resto)
+        while resto > 0 and not self.cancelado.is_set():
+            trozo = min(resto, 0.5)
+            time.sleep(trozo)
+            resto -= trozo
 
     def _pedir(self, modelo: str, img: bytes):
         """La petición a Gemini, esperando cuando Google pide ir más despacio.
@@ -386,6 +391,9 @@ class Extractor:
             if self._sin_cuota:
                 raise DemasiadasPeticiones(self._sin_cuota)
             self._esperar_pausa()
+            if self.cancelado.is_set():
+                raise DemasiadasPeticiones(
+                    "No leída: se cerró el programa mientras se leía.")
             try:
                 return self.client.models.generate_content(
                     model=modelo,

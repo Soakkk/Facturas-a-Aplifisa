@@ -114,6 +114,30 @@ def test_un_pdf_de_otra_factura_con_ese_nombre_no_se_toma_por_suyo(tmp_path):
     assert _texto(ruta1) == ["hoja 1"] and _texto(ruta2) == ["hoja 2"]
 
 
+def test_si_a_la_factura_se_le_une_otra_hoja_su_pdf_se_rehace_sin_duplicar(
+        tmp_path):
+    """Exportada con una hoja; se le une la que faltaba y se vuelve a
+    exportar: su PDF se rehace en su sitio (el viejo, a la papelera), en vez
+    de quedar dos («F-9» y «F-9 (2)») en el archivo y en el expediente."""
+    base = str(tmp_path / "archivo")
+    carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
+    taco = _taco(os.path.join(carpeta, "taco.pdf"), 2)
+    f = _f("F-9", "PROV", "12/02/2026", taco, 1)
+    [(_t, _f1, ruta)] = separar.separar({"gasto": [f]}, base, *CLIENTE)["pdfs"]
+    assert _texto(ruta) == ["hoja 1"]
+
+    taco = os.path.join(carpeta, "..", "Tacos escaneados", "taco.pdf")
+    f.origen_imagen, f.ultima_pagina_origen = taco, 2
+    r = separar.separar({"gasto": [f]}, base, *CLIENTE,
+                        pdf_previo=lambda tipo, factura: ruta)
+
+    assert r["pdfs"][0][2] == ruta and r["creados"] == [ruta]
+    assert _texto(ruta) == ["hoja 1", "hoja 2"]
+    assert not os.path.exists(ruta.replace(".pdf", " (2).pdf"))
+    papelera = os.listdir(os.path.join(base, archivo.PAPELERA))
+    assert papelera == [os.path.basename(ruta)]
+
+
 def test_hojas_unidas_a_mano_de_dos_archivos(tmp_path):
     base = str(tmp_path / "archivo")
     carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])

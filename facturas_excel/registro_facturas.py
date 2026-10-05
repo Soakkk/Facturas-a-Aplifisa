@@ -435,6 +435,21 @@ def buscar(cliente_nif: str, f, tipo: str, cliente_nombre: str = "") -> Optional
     return _info(fila) if fila else None
 
 
+def pdf_de(cliente_nif: str, f, tipo: str, cliente_nombre: str = "") -> str:
+    """El PDF propio que tiene apuntado esta factura ("" si ninguno)."""
+    k = clave(f, tipo)
+    if not k:
+        return ""
+    try:
+        with _con() as con:
+            fila = con.execute(
+                "SELECT pdf FROM facturas WHERE id = ?",
+                (_id(cliente_de(cliente_nif, cliente_nombre), k),)).fetchone()
+    except sqlite3.Error:
+        return ""
+    return (fila["pdf"] if fila else "") or ""
+
+
 def exportadas_de(cliente_nif: str, cliente_nombre: str = "") -> Dict[str, dict]:
     """{clave: ficha} de todo lo exportado de un cliente (una sola consulta)."""
     cliente = cliente_de(cliente_nif, cliente_nombre)

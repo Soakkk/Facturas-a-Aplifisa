@@ -53,8 +53,12 @@ class DialogoCopias(QDialog):
             facturas = ("" if copia.facturas is None
                         else f" · {copia.facturas} factura(s) en el registro")
             motivo = "" if copia.motivo == "diaria" else f" · {copia.motivo}"
+            # Con la carpeta compartida, que no se restaure lo de otro equipo
+            # sin saberlo.
+            otro = (f" · del equipo {copia.equipo}"
+                    if copia.equipo and copia.equipo != copias.equipo() else "")
             item = QListWidgetItem(
-                f"{copia.fecha:%d/%m/%Y %H:%M}{motivo}{facturas} · "
+                f"{copia.fecha:%d/%m/%Y %H:%M}{motivo}{facturas}{otro} · "
                 f"{copia.tamano_legible}")
             item.setData(Qt.UserRole, copia.ruta)
             self.lista.addItem(item)
@@ -65,7 +69,7 @@ class DialogoCopias(QDialog):
     def _hacer(self) -> None:
         try:
             copias.hacer("a mano")
-        except (OSError, ValueError) as error:
+        except Exception as error:      # también los de la base de datos
             QMessageBox.warning(self, "Copia de seguridad",
                                 f"No se pudo hacer la copia:\n{error}")
         self._llenar()
@@ -83,15 +87,18 @@ class DialogoCopias(QDialog):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
-            copias.restaurar(item.data(Qt.UserRole))
+            resultado = copias.restaurar(item.data(Qt.UserRole))
         except Exception as error:      # también los de la base de datos
             QMessageBox.critical(self, "Restaurar copia",
                                  f"No se pudo restaurar:\n{error}")
             self._llenar()
             return
         self.restaurada = item.data(Qt.UserRole)
+        avisos = "".join(f"\n\n{a}" for a in resultado.avisos)
         QMessageBox.information(
             self, "Restaurar copia",
-            "Copia restaurada. Cierre el programa y vuelva a abrirlo para "
-            "que todo se vea al día.")
+            "Registro restaurado (facturas, clientes, proveedores, cuentas y "
+            "ajustes). Lo que había justo antes queda en la copia «antes de "
+            f"restaurar», en esta misma lista.{avisos}\n\nCierre el programa "
+            "y vuelva a abrirlo para que todo se vea al día.")
         self._llenar()

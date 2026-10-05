@@ -18,8 +18,11 @@ NOTAS = {
       cada actualización, se copia lo que el programa recuerda: el registro
       de facturas (qué se exportó y dónde está su PDF), clientes, proveedores,
       cuentas y notas. Van a «_Copias de seguridad», dentro de la carpeta de
-      documentación, y se guardan las 15 últimas. En Configuración → Copias
-      de seguridad puede hacer una al momento o volver a una anterior.</li>
+      documentación, y se guardan las 15 últimas (la más completa no se
+      borra nunca). En Configuración → Copias de seguridad puede hacer una al
+      momento o volver a una anterior. Si al abrir el programa el registro
+      está vacío y hay una copia con facturas (cambio de ordenador), se
+      avisa para restaurarla.</li>
   <li><b>Gemini con prisas ya no tira lo leído.</b> Cuando Google pedía ir
       más despacio, el programa lo tomaba por «sin crédito» y descartaba el
       bloque entero, con las hojas ya leídas y pagadas. Ahora espera y sigue.

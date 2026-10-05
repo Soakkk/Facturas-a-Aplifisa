@@ -33,6 +33,12 @@ class Worker(QThread):
         self.api_key = api_key
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
+        self._extractor = None
+
+    def cancelar(self) -> None:
+        """Al cerrar el programa: no se espera a Google ni se piden más hojas."""
+        if self._extractor is not None:
+            self._extractor.cancelado.set()
 
     def run(self):
         try:
@@ -42,6 +48,7 @@ class Worker(QThread):
             if not imagenes:
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
+            self._extractor = extractor
             total = len(imagenes)
             registros = [None] * total
 

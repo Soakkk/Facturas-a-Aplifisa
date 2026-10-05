@@ -215,3 +215,24 @@ def test_se_quedan_solo_las_cinco_ultimas_apartadas(tmp_path, monkeypatch):
         ruta.write_bytes(b"roto")
         assert sesion.cargar() is None
     assert len(list(tmp_path.glob("sesion_lote.no-recuperada-*"))) == 5
+
+
+def test_una_sesion_bloqueada_que_no_se_puede_apartar_no_se_borra(
+        tmp_path, monkeypatch):
+    """Si ni se lee ni se puede apartar (antivirus, otra copia del programa
+    abierta), en esta ejecución no se borra ni se pisa."""
+    import shutil
+    ruta = tmp_path / "sesion.pkl.gz"
+    ruta.write_bytes(b"bloqueada")
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+
+    def bloqueado(*_a, **_k):
+        raise PermissionError("en uso por otro proceso")
+    monkeypatch.setattr(sesion.os, "replace", bloqueado)
+    monkeypatch.setattr(shutil, "copy2", bloqueado)
+    monkeypatch.setattr(sesion, "_intocable", "")
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert "bloqueado" in v.banda.lbl.text()
+    v._guardar_sesion()            # lote vacío: antes la borraba
+    assert ruta.read_bytes() == b"bloqueada"

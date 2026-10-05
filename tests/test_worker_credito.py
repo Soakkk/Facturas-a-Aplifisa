@@ -99,7 +99,31 @@ def test_el_429_por_ir_deprisa_espera_y_vuelve_a_pedir(monkeypatch):
     e, esperas = _extractor(monkeypatch, [Exception(CUOTA_POR_MINUTO)] * 2)
     assert e._llamar("gemini-3.8-flash", b"img") == "ok"
     assert e.client.pedidas == 3
-    assert len(esperas) == 2 and esperas[0] >= 7     # lo que pide Google
+    assert sum(esperas) >= 7 + 10                     # lo que pide Google
+
+
+def test_al_cerrar_no_se_espera_a_google(monkeypatch):
+    """Cerrar con una lectura esperando colgaba la ventana (y la cerraba
+    Windows de malas maneras): ahora se deja de esperar y de pedir."""
+    from facturas_excel import extraccion
+    e, esperas = _extractor(monkeypatch, [Exception(CUOTA_POR_MINUTO)] * 50)
+    monkeypatch.setattr(extraccion.time, "sleep",
+                        lambda s: (esperas.append(s), e.cancelado.set()))
+    with pytest.raises(extraccion.DemasiadasPeticiones, match="se cerró"):
+        e._llamar("gemini-3.8-flash", b"img")
+    assert sum(esperas) <= 0.5 and e.client.pedidas == 1
+    with pytest.raises(extraccion.DemasiadasPeticiones):
+        e._llamar("gemini-3.8-flash", b"otra")
+    assert e.client.pedidas == 1
+
+
+def test_un_error_que_solo_menciona_429_de_pasada_no_es_un_429():
+    from facturas_excel import extraccion
+    assert not extraccion._es_limite_de_peticiones(
+        Exception("400 INVALID_ARGUMENT: image 4290x3000 too large"))
+    assert not extraccion._es_limite_de_peticiones(
+        Exception("quota project not set"))
+    assert extraccion._es_limite_de_peticiones(Exception(CUOTA_POR_MINUTO))
 
 
 def test_el_prepago_agotado_si_es_sin_credito(monkeypatch):

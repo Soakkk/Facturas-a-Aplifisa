@@ -277,7 +277,10 @@ class ArchivoMixin:
         try:
             documentos = {t: list(exportadas.get(t, [])) + list((apartadas or {}).get(t, []))
                           for t in set(exportadas) | set(apartadas or {})}
-            partido = separar.separar(documentos, base, nombre, nif)
+            partido = separar.separar(
+                documentos, base, nombre, nif,
+                pdf_previo=lambda tipo, f: registro_facturas.pdf_de(
+                    nif, f, tipo, nombre))
         except Exception as error:  # nunca debe estropear la exportación
             partido = None
             avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
