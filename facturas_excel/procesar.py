@@ -920,6 +920,13 @@ def _clave_linea_fiscal(linea: dict) -> tuple:
     ))
 
 
+# Lo que Gemini contesta cuando la hoja no dice nada: al unir hojas, cuenta
+# como vacío (la mención «Inversión del sujeto pasivo» suele ir junto a los
+# totales, en la última hoja).
+_POR_DEFECTO = {"tipo_documento": ("factura",), "moneda": ("EUR",),
+                "mencion_iva": ("ninguna",), "posible_no_deducible": ("no",)}
+
+
 def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
     fusion = deepcopy(primera)
 
@@ -929,7 +936,10 @@ def _fusionar_datos_paginas(primera: dict, siguiente: dict) -> dict:
         if campo in ("lineas_iva", *_CAMPOS_FISCALES, *_CAMPOS_BOOLEANOS,
                      "confianza"):
             continue
-        if fusion.get(campo) in (None, "", []):
+        vacio = (None, "", []) + _POR_DEFECTO.get(campo, ())
+        if fusion.get(campo) in vacio and valor not in vacio:
+            fusion[campo] = deepcopy(valor)
+        elif fusion.get(campo) in (None, "", []):
             fusion[campo] = deepcopy(valor)
 
     # Si la ultima hoja trae un resumen fiscal que cuadra por si solo, contiene

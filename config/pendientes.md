@@ -1,9 +1,20 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de octubre de 2026 (versión 1.23.0). Apunta abajo lo que
+Actualizado el 5 de octubre de 2026 (versión 1.24.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.24: manda la ley
+
+Avisos con su artículo de la Ley del IVA: lo que no es una factura (proforma,
+albarán), las copias, otra moneda, inversión del sujeto pasivo e
+intracomunitarias, IVA no deducible (tiques sin tu cliente, restaurantes,
+regalos), rectificativas cuya original no está en el lote y ventas que faltan
+contando las ya exportadas. Botón **«Por el total»** para una factura cuyo IVA
+no se deduce, y régimen de cliente **sin derecho a deducir** (actividad
+exenta) en Configuración → Régimen de IVA de este cliente. Por el total, la
+retención se conserva.
 
 ### Lo nuevo de la 1.23: no perder nada
 
@@ -377,6 +388,23 @@ lote y lo que llevas del mes. Un lote de 24 facturas costó 7 céntimos.
 
 3. **Un proveedor con dos CIF en la cabecera** (dos sedes): ¿cuál es el bueno
    para la cuenta?
+
+4. **Cómo espera Aplifisa la inversión del sujeto pasivo y las
+   intracomunitarias** al importar el Excel. Su configuración tiene casillas
+   para «ISP», «Tipo de factura» y «Clave de régimen especial»: ¿qué hay que
+   poner en cada una (S/N, códigos del SII…)? Con eso el programa las marca
+   solas.
+
+5. **Una factura del año anterior que llega ahora** (la del 28/12 en enero):
+   ¿la registras en el periodo actual con fecha de deducción (art. 99)? ¿Usa
+   Aplifisa la casilla «Fecha de deducción» para eso? Hoy queda en rojo.
+
+6. **Cliente en recargo con otra actividad que no está en recargo** (sectores
+   diferenciados): ¿tienes alguno? Las compras de esa otra actividad sí
+   deducen el IVA.
+
+7. **Las ventas de un cliente en recargo**: ¿las llevas con el IVA
+   desglosado (como ahora) o por el total?
 
 ---
 

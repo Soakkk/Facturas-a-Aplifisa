@@ -304,9 +304,11 @@ pasivo", "ISP", "art. 84 LIVA", "Reverse charge" o "Autoliquidacion", pon
 "no_sujeta". Si no lleva ninguna, "ninguna".
 
 GASTO QUE PUEDE NO DEDUCIR EL IVA: en "posible_no_deducible" pon
-"restauracion" (restaurante, cafeteria, bar, comidas), "regalo" (regalos o
-atenciones a clientes), "alimentos_tabaco", "joyas" o "espectaculos" si la
-factura es claramente de eso; si no, "no".
+"restauracion" (una comida o consumicion en restaurante, cafeteria o bar),
+"regalo" (regalos o atenciones a clientes), "alimentos_tabaco", "joyas" o
+"espectaculos" SOLO si es para consumo propio, no si es mercancia para
+vender o material de la actividad (las bebidas que compra un bar, las joyas
+de una joyeria: eso es "no"). Si no, "no".
 
 ANOTACIONES A MANO: pon "manuscrito_en_importes" a true SOLO si lo escrito a
 mano toca a los IMPORTES (un total corregido, una cifra tachada, un articulo

@@ -129,7 +129,8 @@ class ValidacionMixin:
         if aviso_irpf:
             anadir(aviso_irpf, "base_irpf", "pct_irpf", "cuota_irpf")
         # Lo que dice la ley según sea gasto o venta (fiscal.py).
-        for texto, campos, gravedad in fiscal.avisos(f, pasada["tipos"][r]):
+        for texto, campos, gravedad in fiscal.avisos(
+                f, pasada["tipos"][r], sin_deducir=pasada["sin_deducir"]):
             anadir(texto, *campos, gravedad=gravedad)
         rectificada = self._rectificada_fuera_del_lote(f, pasada["tipos"][r],
                                                        pasada["facturas"])
@@ -257,6 +258,8 @@ class ValidacionMixin:
                          for lado in ("gasto", "ingreso")},
             "errores_documento": getattr(self, "_errores_documento", {}),
             "exportadas": exportadas,
+            # Recargo o actividad exenta: el cliente no deduce el IVA.
+            "sin_deducir": bool(getattr(self, "_por_el_total", lambda: False)()),
         }
 
     @staticmethod
@@ -305,10 +308,19 @@ class ValidacionMixin:
             if ficha.get("tipo") == lado
             and registro_facturas.numero_clave(ficha.get("num_factura")) == original
             and normaliza_nif(ficha.get("nif")) == nif), None)
-        donde = (f"la original consta como exportada el {previa['exportada']}"
-                 if previa and previa.get("exportada") else
-                 "la original no consta en el registro: compruebe que está "
-                 "registrada")
+        exportada = previa.get("exportada") if previa else ""
+        rectificativa = (str(getattr(f, "tipo_documento", "") or "") ==
+                         "rectificativa" or (f.base_iva or 0) < 0)
+        if not rectificativa:
+            # Sustituye a la otra (una «POST-FACTURACIÓN»): la original NO se
+            # registra; si ya se registró, hay que anularla.
+            return (f"Sustituye a la factura {f.rectifica_a}, que no está en "
+                    "este lote: la original no se registra"
+                    + (f"; ya se exportó el {exportada}: anúlela en Aplifisa"
+                       if exportada else "") + ".")
+        donde = (f"la original consta como exportada el {exportada}"
+                 if exportada else "la original no consta en el registro: "
+                 "compruebe que está registrada")
         signo = (" Si es un abono, los importes van en negativo."
                  if (f.base_iva or 0) > 0 else "")
         return (f"Rectifica a la factura {f.rectifica_a}, que no está en este "

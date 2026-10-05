@@ -223,7 +223,8 @@ def test_los_tipos_temporales_solo_valen_en_su_epoca():
     assert "solo se aplicó" not in luz_2023
     hoy = _validar(fecha="15/03/2026", pct_iva=5.0, cuota_iva=5.0,
                    total_impreso=105.0)
-    assert "IVA del 5% solo se aplicó entre julio de 2022 y 2024" in hoy
+    assert "IVA del 5% solo se aplicó entre julio de 2022 y septiembre de " \
+        "2024" in hoy
     assert "solo se aplicó" in _validar(fecha="15/03/2025", pct_iva=2.0,
                                         cuota_iva=2.0, total_impreso=102.0)
     assert "solo se aplicó" not in _validar(fecha="15/11/2024", pct_iva=7.5,
@@ -296,3 +297,131 @@ def test_falta_la_primera_venta_del_trimestre():
     serie = [_f(num_factura=f"2026-{n:03d}") for n in (5, 6, 7)]
     assert huecos_de_numeracion(serie, ["venta"] * 3, "CLIENTE",
                                 ventas_anteriores=["2025-001"]) == []
+
+
+# ------------------------------------- lo que encontró la revisión de la 1.24
+def _fila(v, numero):
+    return next(r for r in range(v.tabla.rowCount())
+                if v.filas[r].factura.num_factura == numero)
+
+
+def _msgs(v, r):
+    return " ".join(str(m) for m in v.filas[r]["mensajes"])
+
+
+def test_un_recibo_no_dice_que_no_se_registra():
+    """La prima del seguro, la cuota de comunidad o del colegio llegan como
+    recibo y se registran así."""
+    seguro = _f(tipo_documento="recibo", pct_iva=0.0, cuota_iva=0.0,
+                concepto="625", subclave="G20", total_impreso=100.0)
+    assert _textos(seguro) == ""
+
+
+def test_la_mercancia_de_un_bar_o_una_joyeria_no_se_avisa():
+    bebidas = _f(posible_no_deducible="alimentos_tabaco", concepto="600",
+                 subclave="G01")
+    assert _textos(bebidas) == ""
+    joyas = _f(posible_no_deducible="joyas", concepto="600", subclave="G01")
+    assert _textos(joyas) == ""
+    # El consumo propio sí (una comida, un regalo: no son mercancía).
+    assert "art. 96" in _textos(_f(posible_no_deducible="alimentos_tabaco"))
+    assert "art. 96" in _textos(_f(posible_no_deducible="restauracion",
+                                   concepto="600", subclave="G01"))
+
+
+def test_la_copia_de_una_venta_propia_no_se_avisa():
+    assert _textos(_f(tipo_documento="copia"), "venta") == ""
+    assert "copia" in _textos(_f(tipo_documento="copia"), "gasto")
+
+
+def test_la_moneda_euro_escrita_de_otra_forma_es_euros():
+    for moneda in ("EURO", "Euros", "eur", "€"):
+        assert _textos(_f(moneda=moneda)) == "", moneda
+
+
+def test_isp_de_un_cliente_que_no_deduce_va_al_309():
+    isp = _f(pct_iva=0.0, cuota_iva=0.0, mencion_iva="inversion_sujeto_pasivo")
+    texto = " | ".join(t for t, _c, _g in fiscal.avisos(isp, "gasto",
+                                                         sin_deducir=True))
+    assert "309" in texto and "se lo deduce" not in texto
+    venta = _textos(_f(mencion_iva="intracomunitaria"), "venta")
+    assert "VIES" in venta and "ROI" not in venta and "art. 69" in venta
+
+
+def test_una_post_facturacion_no_pide_registrar_la_original(
+        monkeypatch, tmp_path):
+    """«Sustituye al doc.n»: la original NO se registra (si se registran las
+    dos, se deduce dos veces)."""
+    from facturas_excel import historial
+    v = _ventana(monkeypatch, tmp_path, [
+        _datos(num_factura="9001", sustituye_a="4532023141")])
+    texto = _msgs(v, 0)
+    assert "Sustituye a la factura 4532023141" in texto
+    assert "la original no se registra" in texto
+    assert "compruebe que está registrada" not in texto
+    historial.registrar(CLIENTE, {"gasto": [_f(num_factura="4532023141",
+                                                fecha="01/08/2026")]}, {})
+    v._revalidar_todo()
+    assert "anúlela en Aplifisa" in _msgs(v, 0)
+
+
+def test_huecos_con_una_venta_anterior_lejana_o_ya_exportada():
+    from facturas_excel.validacion import huecos_de_numeracion
+    lote = [_f(num_factura=f"V-{n}") for n in (50, 51, 52, 54, 55)]
+    tipos = ["venta"] * len(lote)
+    # La anterior muy lejos no tapa el hueco del lote.
+    avisos = huecos_de_numeracion(lote, tipos, "C", ventas_anteriores=["V-10"])
+    assert len(avisos) == 1 and "V-53" in avisos[0]
+    # Si la 53 ya se exportó en otro lote, no falta.
+    assert huecos_de_numeracion(lote, tipos, "C",
+                                ventas_anteriores=["V-49", "V-53"]) == []
+
+
+def test_la_revision_y_la_correccion_del_resumen_no_se_pierden(
+        monkeypatch, tmp_path):
+    v = _ventana(monkeypatch, tmp_path, [
+        # Confianza media: queda en ámbar también por el total.
+        _datos(num_factura="R-1", posible_no_deducible="restauracion",
+               confianza="media"),
+        _datos(num_factura="R-2", posible_no_deducible="restauracion")])
+    v.tabla.clearSelection()
+    v.tabla.selectRow(_fila(v, "R-1"))
+    v._alternar_por_el_total()
+    v._marcar_revisada(filas=[_fila(v, "R-1")])
+    revisada = v.filas[_fila(v, "R-1")].factura
+    assert revisada.revision_confirmada
+    # Pulsar «Por el total» en otra no le quita la revisión a la primera.
+    v.tabla.clearSelection()
+    v.tabla.selectRow(_fila(v, "R-2"))
+    v._alternar_por_el_total()
+    assert v.filas[_fila(v, "R-1")].factura is revisada
+
+    # Una corrección en la línea resumen sobrevive a quitar y volver a poner.
+    r2 = _fila(v, "R-2")
+    resumen = v.filas[r2].factura
+    resumen.base_iva, resumen.edicion_manual = 130.0, True
+    for _ in range(2):
+        v.tabla.clearSelection()
+        v.tabla.selectRow(_fila(v, "R-2"))
+        v._alternar_por_el_total()
+    assert v.filas[_fila(v, "R-2")].factura.base_iva == 130.0
+
+
+def test_la_mencion_de_la_ultima_hoja_no_se_pierde_al_unir():
+    from facturas_excel.procesar import _fusionar_datos_paginas
+    primera = _datos(tipo_documento="factura", mencion_iva="ninguna",
+                     moneda="EUR", posible_no_deducible="no")
+    ultima = {"mencion_iva": "inversion_sujeto_pasivo", "moneda": "EUR",
+              "tipo_documento": "factura", "posible_no_deducible": "no"}
+    assert _fusionar_datos_paginas(primera, ultima)["mencion_iva"] \
+        == "inversion_sujeto_pasivo"
+
+
+def test_el_tipo_temporal_se_mira_en_el_devengo():
+    # Entregas de diciembre de 2024 al 2 %, facturadas en enero de 2025.
+    assert "solo se aplicó" not in _validar(
+        fecha="03/01/2025", fecha_operacion="20/12/2024", pct_iva=2.0,
+        cuota_iva=2.0, total_impreso=102.0)
+    # El 5 % de octubre de 2024 ya no existía (pasó al 7,5 %).
+    assert "solo se aplicó" in _validar(fecha="15/10/2024", pct_iva=5.0,
+                                        cuota_iva=5.0, total_impreso=105.0)

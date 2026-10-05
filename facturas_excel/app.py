@@ -2309,6 +2309,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             return bool(fila.fuentes) and not any(
                 x is fila.factura for x in fila.fuentes)
 
+        def tocada(f):
+            # Corregida o revisada por una persona: eso no se rehace.
+            return (f.edicion_manual or f.revision_confirmada
+                    or getattr(f, "revision_corregida", False))
+
+        guardados = getattr(self, "_resumenes_guardados", None)
+        if guardados is None:
+            guardados = self._resumenes_guardados = {}
         antes = {}
         for fila in self.filas:
             if es_copia(fila):
@@ -2317,12 +2325,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         for fila in filas:
             if es_copia(fila):
                 ahora.setdefault(clave(fila), []).append(fila)
+        # Una línea resumen que deja de estar («Por el total» quitado, su
+        # deshacer…) se guarda por si vuelve: con su corrección o revisión.
+        for k, previas in antes.items():
+            if k not in ahora and any(tocada(f) for f in previas):
+                guardados[k] = previas
         for k, grupo in ahora.items():
-            previas = antes.get(k)
+            previas = antes.get(k) or guardados.get(k)
             if previas and len(previas) == len(grupo) and any(
-                    f.edicion_manual for f in previas):
+                    tocada(f) for f in previas):
                 for fila, factura in zip(grupo, previas):
                     fila.factura = factura
+                guardados.pop(k, None)
 
     def _poner_filas(self, filas) -> None:
         """Sustituye las filas del lote y las pinta de nuevo."""
@@ -2903,13 +2917,19 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f.no_deducible = valor
             self._rellenar_tabla()
             self._revalidar_todo()
+        exportadas = any(self.filas[r].get("ya_exportada")
+                         for s in seleccionadas
+                         for r in self._filas_del_documento(s))
         aplicar(poner)
         documentos = len({clave_documento(f) for f in fuentes})
-        self._avisar(
-            (f"{documentos} factura(s) por el total: su IVA no se deduce y va "
-             "dentro del gasto." if poner else
-             f"{documentos} factura(s) otra vez con su IVA desglosado."),
-            EXITO, deshacer=lambda: aplicar(not poner))
+        texto = (f"{documentos} factura(s) por el total: su IVA no se deduce y "
+                 "va dentro del gasto." if poner else
+                 f"{documentos} factura(s) otra vez con su IVA desglosado.")
+        if exportadas:
+            texto += (" OJO: ya estaba exportada a Aplifisa con el desglose "
+                      "anterior: corríjala allí también.")
+        self._avisar(texto, AVISO if exportadas else EXITO,
+                     deshacer=lambda: aplicar(not poner))
 
     def _filas_seleccionadas(self) -> list[int]:
         return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})

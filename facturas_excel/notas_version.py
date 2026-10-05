@@ -6,6 +6,39 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.24.0": """
+<h2>Novedades de la versión 1.24.0: manda la ley</h2>
+<p>El programa avisa, con su artículo, de lo que la ley dice de cada factura.
+Todos son avisos ámbar: usted decide con la factura delante.</p>
+<ul>
+  <li><b>Lo que no es una factura</b> (proforma, albarán, presupuesto…) y las
+      que pone «copia»: se avisa antes de registrarlas.</li>
+  <li><b>Inversión del sujeto pasivo, intracomunitarias, importaciones y
+      exportaciones</b>: se avisa de cómo van en el 303 y el 349. (Para
+      marcarlas solas en el Excel de Aplifisa necesito saber cómo las espera:
+      se lo pregunto en «Para mejorar el programa».)</li>
+  <li><b>Facturas en otra moneda</b>: se avisa de pasarlas a euros.</li>
+  <li><b>IVA que no se puede deducir</b>: tiques sin el NIF del cliente
+      (art. 97), restaurantes, regalos, alimentos, joyas o espectáculos
+      (art. 96). Si no se deduce, el botón <b>«Por el total»</b> registra esa
+      factura por el importe entero; pulsándolo otra vez se deshace.</li>
+  <li><b>Clientes sin derecho a deducir</b> (médicos, academias…: actividad
+      exenta). En Configuración → Régimen de IVA de este cliente se dice una
+      vez, y todas sus compras van por el total. Una sociedad puede
+      tenerlo (el recargo de equivalencia, no).</li>
+  <li><b>Por el total se conserva la retención</b>: el alquiler del local de
+      un cliente en recargo va por el total con su retención para el 115 (antes
+      se quedaba desglosado y había que hacerlo a mano).</li>
+  <li><b>Tipos según la fecha</b>: el IVA del 5, 2 y 7,5 % solo vale en su
+      época (2022-2024); se aceptan los recargos de esos tipos; se avisa de
+      una retención que no existe (un 1,5 %) o con otra base que la factura.</li>
+  <li><b>Rectificativas</b>: si la factura original no está en el lote, se
+      busca en el registro y se avisa del signo.</li>
+  <li><b>Ventas que faltan</b>: los saltos de numeración se miran también
+      contra las ventas ya exportadas (si falta la primera del trimestre, se
+      ve).</li>
+</ul>
+""",
     "1.23.0": """
 <h2>Novedades de la versión 1.23.0: no perder nada</h2>
 <ul>

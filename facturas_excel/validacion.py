@@ -35,13 +35,15 @@ RECARGO_DE_IVA = {21.0: (5.2, 1.75), 10.0: (1.4,), 7.5: (1.0,), 5.0: (0.62,),
 # lectura, aunque la cuota cuadre con él.
 TIPOS_IVA_VALIDOS = {0.0, 2.0, 4.0, 5.0, 7.5, 10.0, 21.0}
 
-# Los temporales, solo en su época (según la fecha de la factura): un 5 % en
-# una factura de 2026 es un tipo mal leído. El 5 % (luz desde julio de 2022,
-# gas, aceites y pastas) duró hasta 2024; el 2 % y el 7,5 % (alimentos), de
-# octubre a diciembre de 2024.
+# Los temporales, solo en su época (según el devengo: la fecha de operación
+# si la hay, si no la de la factura; art. 75): un 5 % en una factura de 2026
+# es un tipo mal leído. El 5 %: luz desde julio de 2022 y gas desde octubre,
+# hasta 2023; aceites de semillas y pastas, de 2023 a septiembre de 2024. El
+# 2 % y el 7,5 % (alimentos), de octubre a diciembre de 2024.
 VIGENCIA_IVA = {
-    5.0: (date(2022, 7, 1), date(2024, 12, 31),
-          "entre julio de 2022 y 2024 (luz, gas y algunos alimentos)"),
+    5.0: (date(2022, 7, 1), date(2024, 9, 30),
+          "entre julio de 2022 y septiembre de 2024 (luz y gas hasta 2023; "
+          "aceites y pastas)"),
     2.0: (date(2024, 10, 1), date(2024, 12, 31),
           "de octubre a diciembre de 2024 (algunos alimentos)"),
     7.5: (date(2024, 10, 1), date(2024, 12, 31),
@@ -308,10 +310,13 @@ def validar(f: Factura) -> Resultado:
                      "pct_iva")
     elif f.pct_iva is not None and dia is not None:
         vigencia = VIGENCIA_IVA.get(round(abs(float(f.pct_iva)), 2))
-        if vigencia and not vigencia[0] <= dia <= vigencia[1]:
+        devengo = (fecha_de(f.fecha_operacion) if f.fecha_operacion else None) \
+            or dia
+        if vigencia and not vigencia[0] <= devengo <= vigencia[1]:
             marcar_revisar(f"El IVA del {porcentaje(abs(f.pct_iva))}% solo se "
-                           f"aplicó {vigencia[2]}, y la factura es del "
-                           f"{f.fecha}: revise el tipo leído.", "pct_iva")
+                           f"aplicó {vigencia[2]}, y la operación es del "
+                           f"{devengo:%d/%m/%Y}: revise el tipo leído.",
+                           "pct_iva")
 
     # Doble lectura: cada dato en el que los dos modelos no coinciden se
     # revisa con los dos valores a la vista. No se elige ninguno en silencio.
@@ -545,9 +550,11 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
         col = cambian[0]
         vistos = {int(numeros[col]) for numeros, _ in entradas}
         if identidad == "__SERIE_INGRESOS__":
-            # La última venta ya exportada de esta misma serie, justo antes.
+            # Las ventas ya exportadas de esta misma serie: las que caen dentro
+            # del tramo del lote no faltan, y la última de antes es el punto
+            # de partida (si falta la primera del trimestre, se ve).
             modelo_serie = entradas[0][0]
-            anteriores = []
+            de_la_serie = []
             for numero in ventas_anteriores:
                 trozos = _trozos(numero)
                 if not trozos or trozos[0] != texto or len(trozos[1]) != cuantos:
@@ -555,11 +562,17 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
                 otros = [p for i, p in enumerate(trozos[1]) if i != col]
                 if otros != [p for i, p in enumerate(modelo_serie) if i != col]:
                     continue
-                valor = int(trozos[1][col])
-                if valor < min(vistos):
-                    anteriores.append(valor)
-            if anteriores:
-                vistos.add(max(anteriores))
+                de_la_serie.append(int(trozos[1][col]))
+            menor, mayor = min(vistos), max(vistos)
+            vistos |= {n for n in de_la_serie if menor <= n <= mayor}
+            antes = [n for n in de_la_serie if n < menor]
+            if antes:
+                con_anterior = vistos | {max(antes)}
+                faltan = [n for n in range(min(con_anterior), mayor)
+                          if n not in con_anterior]
+                # Muy lejos: es otra cosa (otra serie, un año entero).
+                if len(faltan) <= MAXIMO_HUECO:
+                    vistos = con_anterior
         faltan = [n for n in range(min(vistos), max(vistos)) if n not in vistos]
         if not faltan or len(faltan) > MAXIMO_HUECO:
             continue
