@@ -244,6 +244,10 @@ Devuelve SOLO un JSON con esta estructura exacta:
   "cuenta_ingreso": "cuenta del concepto de INGRESO que le corresponderia",
   "subclave_ingreso": "la subclave IXX de ese concepto de ingreso",
   "concepto_texto": "descripcion breve del gasto/venta",
+  "tipo_documento": "factura",
+  "moneda": "EUR",
+  "mencion_iva": "ninguna",
+  "posible_no_deducible": "no",
   "confianza": "alta/media/baja segun lo legible que este la factura"
 }}
 Numeros con punto decimal. Si la factura tiene varios tipos de IVA, pon una
@@ -252,7 +256,8 @@ entrada por cada tipo en lineas_iva. Si un dato no aparece, usa null.
 RECARGO DE EQUIVALENCIA: si la factura desglosa un "Recargo Equivalencia",
 "Recargo Equivalent" o "REC.EQUIV", va DENTRO de su linea de lineas_iva
 (pct_requiv y cuota_requiv), porque CADA TIPO DE IVA LLEVA SU PROPIO RECARGO:
-IVA 21% -> 5,2% ; IVA 10% -> 1,4% ; IVA 4% -> 0,5%. Su base es la misma que la
+IVA 21% -> 5,2% (tabaco: 1,75%) ; IVA 10% -> 1,4% ; IVA 4% -> 0,5%. Su base
+es la misma que la
 base de esa linea. Es un impuesto MAS que se suma al total, no un descuento.
 Si esa linea no lleva recargo, deja los dos a null.
 
@@ -282,11 +287,43 @@ menos detras), devuelve TODOS los importes en NEGATIVO con el signo delante:
 base, cuota_iva, cuota_requiv y total. NUNCA los pases a positivo: un abono
 registrado en positivo cobra al cliente lo que habia que devolverle.
 
+QUE DOCUMENTO ES: en "tipo_documento" pon "factura" si es una factura normal;
+"factura_simplificada" si es un tique o factura simplificada; "rectificativa"
+si es una factura rectificativa o abono; "proforma", "albaran", "presupuesto",
+"pedido" o "recibo" si el titulo dice que es eso y NO una factura; "copia" si
+pone "copia" o "duplicado"; "otro" si no es nada de lo anterior.
+
+MONEDA: el codigo de la moneda de los importes ("EUR", "USD", "GBP"...). Si
+los importes van en euros o no se indica, "EUR".
+
+MENCION DE IVA: si la factura lleva una mencion como "Inversion del sujeto
+pasivo", "ISP", "art. 84 LIVA", "Reverse charge" o "Autoliquidacion", pon
+"inversion_sujeto_pasivo"; si dice "entrega/adquisicion intracomunitaria" o
+"art. 25 LIVA", "intracomunitaria"; si es exportacion/importacion,
+"exportacion"; si dice "exenta" (art. 20 LIVA), "exenta"; si dice "no sujeta",
+"no_sujeta". Si no lleva ninguna, "ninguna".
+
+GASTO QUE PUEDE NO DEDUCIR EL IVA: en "posible_no_deducible" pon
+"restauracion" (una comida o consumicion en restaurante, cafeteria o bar),
+"regalo" (regalos o atenciones a clientes), "alimentos_tabaco", "joyas" o
+"espectaculos" SOLO si es para consumo propio, no si es mercancia para
+vender o material de la actividad (las bebidas que compra un bar, las joyas
+de una joyeria: eso es "no"). Si no, "no".
+
 ANOTACIONES A MANO: pon "manuscrito_en_importes" a true SOLO si lo escrito a
 mano toca a los IMPORTES (un total corregido, una cifra tachada, un articulo
 marcado con "NO"): eso si hay que revisarlo. Un CIF anotado, una numeracion o
 una firma de "RECIBI MERCANCIAS" NO cuentan: son normales y no se avisa de
 ellas."""
+
+
+TIPOS_DOCUMENTO = ["factura", "factura_simplificada", "rectificativa",
+                   "proforma", "albaran", "presupuesto", "pedido", "recibo",
+                   "copia", "otro"]
+MENCIONES_IVA = ["ninguna", "inversion_sujeto_pasivo", "intracomunitaria",
+                 "exportacion", "exenta", "no_sujeta"]
+NO_DEDUCIBLES = ["no", "restauracion", "regalo", "alimentos_tabaco", "joyas",
+                 "espectaculos"]
 
 
 def _anulable(tipo: str) -> dict:
@@ -327,6 +364,10 @@ ESQUEMA = {
         "cuenta_ingreso": _anulable("string"),
         "subclave_ingreso": _anulable("string"),
         "concepto_texto": _anulable("string"),
+        "tipo_documento": {"type": "string", "enum": TIPOS_DOCUMENTO},
+        "moneda": _anulable("string"),
+        "mencion_iva": {"type": "string", "enum": MENCIONES_IVA},
+        "posible_no_deducible": {"type": "string", "enum": NO_DEDUCIBLES},
         "confianza": {"type": "string", "enum": ["alta", "media", "baja"]},
     },
 }

@@ -275,7 +275,9 @@ def test_con_filtro_de_tipo_la_fila_vacia_no_va_delante():
         > ambitos.index("Gastos · Todo el lote")
 
 
-def test_en_recargo_los_gastos_con_retencion_dicen_por_que_llevan_desglose():
+def test_en_recargo_un_gasto_que_aun_lleva_desglose_se_senala():
+    """Desde la 1.24 también los gastos con retención van por el total (se
+    conserva la retención): si alguno lleva aún desglose, se dice."""
     from facturas_excel.resumen import resumir
     v = _ventana()
     profesional = _factura(num_factura="G-3", nif="12345678Z", base_iva=150.0,
@@ -283,7 +285,7 @@ def test_en_recargo_los_gastos_con_retencion_dicen_por_que_llevan_desglose():
                            cuota_irpf=22.5, total_impreso=159.0)
     t = resumir([profesional])
     v._pintar_tabla_totales([("TOTAL LOTE", "Gastos", t, True)], True, [21.0])
-    assert "las que llevan retención, con su desglose" \
+    assert "Alguno lleva todavía desglose de IVA" \
         in v.tabla_totales.item(0, 0).toolTip()
     assert _filas(v)["Gastos · Todo el lote"]["Base imponible"] == "150,00 €"
 

@@ -47,8 +47,11 @@ def test_tipo_de_iva_inexistente_es_error_aunque_la_cuota_cuadre():
 
 @pytest.mark.parametrize("tipo", [0, 2, 4, 5, 7.5, 10, 21])
 def test_tipos_de_iva_espanoles_admitidos(tipo):
+    # El 2, el 5 y el 7,5 eran temporales (en una factura de hoy se avisan,
+    # ver test_fiscal): cada uno con una fecha de cuando valía.
     cuota = round(100 * tipo / 100, 2)
-    assert validar(_factura(pct_iva=tipo, cuota_iva=cuota,
+    fecha = "15/03/2024" if tipo == 5 else "15/11/2024"
+    assert validar(_factura(pct_iva=tipo, cuota_iva=cuota, fecha=fecha,
                             total_impreso=100 + cuota)).estado == OK
 
 

@@ -500,8 +500,8 @@ class TablaSuSuma(QTableWidget):
             self.lbl_ambito.setText(f"No hay {nombre} en el lote.")
         elif solo_total:
             self.lbl_ambito.setText(
-                f"Su suma se compara con: {ambito}. Cliente en recargo: los "
-                "gastos van por el total factura; compare el total.")
+                f"Su suma se compara con: {ambito}. Los gastos de este cliente "
+                "van por el total factura; compare el total.")
         else:
             self.lbl_ambito.setText(f"Su suma se compara con: {ambito}.")
         tecleadas = cuadran = 0

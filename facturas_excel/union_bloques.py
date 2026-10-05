@@ -20,6 +20,7 @@ def _indices_crudos(bloque: dict, pr) -> list[int]:
 def _editada(pr) -> bool:
     return any(getattr(f, "edicion_manual", False) or f.revision_confirmada
                or getattr(f, "revision_corregida", False)
+               or getattr(f, "no_deducible", False)
                or f.tipo_revision or f.eliminada or f.tratamiento_manual
                for f in pr.facturas)
 

@@ -22,23 +22,28 @@ from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QDialogButtonBox, QLabel, QRadioButton, QVBoxLayout,
 )
 
-from .clientes import DESGLOSE, TOTAL
+from .clientes import DESGLOSE, EXENTO, TOTAL
 
 OPCIONES = [
     (TOTAL, "Minorista en recargo de equivalencia",
      "No presenta modelo 303 y no deduce el IVA. Cada gasto se registra por el "
      "TOTAL de la factura (base + IVA + recargo), sin desglose."),
-    (DESGLOSE, "Mayorista en estimación directa",
+    (DESGLOSE, "Mayorista en estimación directa (o régimen normal)",
      "Registra el IVA y el recargo por separado, con su desglose normal, como "
      "cualquier otra factura."),
+    (EXENTO, "Actividad exenta, sin derecho a deducir",
+     "Médicos, academias, seguros… (art. 20 de la Ley del IVA): no deduce el "
+     "IVA de sus compras (art. 94). Cada gasto se registra por el TOTAL de la "
+     "factura, sin desglose."),
 ]
 
 
 class DialogoRecargo(QDialog):
     def __init__(self, cliente: str, cuantas: int, parent=None,
-                 elegido: str = ""):
+                 elegido: str = "", sin_recargo: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Facturas con recargo de equivalencia")
+        self.setWindowTitle("Facturas con recargo de equivalencia" if cuantas
+                            else "Régimen de IVA del cliente")
         self.setMinimumWidth(560)
         raiz = QVBoxLayout(self)
 
@@ -50,9 +55,9 @@ class DialogoRecargo(QDialog):
         else:
             # Desde el menú: el cliente puede estar en recargo aunque ninguna
             # factura del lote lo lleve impreso (teléfono, reparaciones…).
-            texto = (f"¿Cómo se registran las compras{de_quien}?<br>Si está en "
-                     "recargo de equivalencia, van todas por el total, también "
-                     "las que no traen recargo impreso.")
+            texto = (f"¿Cómo se registran las compras{de_quien}?<br>En "
+                     "recargo de equivalencia o con actividad exenta van todas "
+                     "por el total, también las que no traen recargo impreso.")
         intro = QLabel(texto)
         intro.setWordWrap(True)
         raiz.addWidget(intro)
@@ -61,6 +66,11 @@ class DialogoRecargo(QDialog):
         for i, (valor, titulo, explicacion) in enumerate(OPCIONES):
             boton = QRadioButton(titulo)
             boton.setChecked(valor == elegido if elegido else i == 0)
+            if sin_recargo and valor == TOTAL:
+                # Una sociedad no puede estar en recargo (art. 148).
+                boton.setEnabled(False)
+                explicacion += (" No es posible para una sociedad (art. 148 "
+                                "de la Ley del IVA).")
             self.grupo.addButton(boton, i)
             raiz.addWidget(boton)
             detalle = QLabel("      " + explicacion)

@@ -105,13 +105,17 @@ def test_total_factura_no_toca_el_lote_original():
     assert pr.facturas[0].base_iva == 114.98  # se puede desmarcar la casilla
 
 
-def test_total_factura_respeta_los_gastos_con_retencion():
+def test_total_factura_conserva_la_retencion():
+    """El IVA no deducible va al gasto, pero la retención se declara aparte
+    (111/115) y no se puede perder (1.24; antes no se resumía)."""
     d = datos_coca(num="A1", base=100.0, iva=21.0, requiv=None, total=106.0)
     d.update(base_requiv=None, pct_requiv=None, base_irpf=100.0, pct_irpf=15.0,
              cuota_irpf=15.0, cuenta_gasto="623")
-    pr = a_total_factura(procesar(d))
-    assert pr.facturas[0].base_iva == 100.0   # sin colapsar: el IRPF se declara
-    assert "retención" in pr.aviso
+    [f] = a_total_factura(procesar(d)).facturas
+    assert f.base_iva == 121.0 and f.iva_incluido_en_base
+    assert (f.base_irpf, f.pct_irpf, f.cuota_irpf) == (100.0, 15.0, 15.0)
+    # 121 − 15 = 106: cuadra con el total impreso.
+    assert not any("no cuadra" in str(m) for m in validar(f).mensajes)
 
 
 def test_total_factura_no_toca_las_ventas():
@@ -434,19 +438,22 @@ def test_el_minorista_con_lote_mezclado_lo_lleva_todo_por_el_total(
     assert sorted(_bases(v)) == [("121,00", ""), ("145,11", "")]
 
 
-def test_el_minorista_con_retencion_sigue_desglosado_y_avisado(
+def test_el_minorista_lleva_el_alquiler_por_el_total_con_su_retencion(
         monkeypatch, tmp_path):
-    """El alquiler del local lleva retención: el IRPF hay que declararlo, así
-    que esa factura no se resume (y se avisa), ni siquiera en recargo."""
-    from facturas_excel.clientes import TOTAL
+    """El alquiler del local de un minorista en recargo: su IVA tampoco se
+    deduce (va al gasto), y la retención se conserva para el 115."""
+    from facturas_excel.app import C_CUOTA_IRPF, C_PCT_IRPF
 
     alquiler = datos_telefono(num="ALQ-1", base_irpf=100.0, pct_irpf=19.0,
                               cuota_irpf=19.0, total=102.0)
+    from facturas_excel.clientes import TOTAL
     v = _ventana_lote(monkeypatch, tmp_path, [alquiler], TOTAL)
 
     assert v._por_el_total()
-    assert _bases(v) == [("100,00", "21,00")]
-    assert "retención" in (v.filas[0]["aviso"] or "")
+    assert _bases(v) == [("121,00", "")]
+    assert v.tabla.item(0, C_PCT_IRPF).text() == "19,00"
+    assert v.tabla.item(0, C_CUOTA_IRPF).text() == "19,00"
+    assert v.filas[0]["estado"] != "error"
 
 
 def test_sin_estar_en_recargo_lo_que_no_trae_recargo_no_cambia(
@@ -483,20 +490,32 @@ def test_una_sociedad_registra_con_desglose_aunque_le_cobren_recargo(
     def no_se_pregunta(self):
         raise AssertionError("a una sociedad no se le pregunta el régimen")
 
+    def sin_la_opcion_de_recargo(self):
+        from PySide6.QtWidgets import QRadioButton
+        [recargo] = [b for b in self.findChildren(QRadioButton)
+                     if "recargo" in b.text().lower()]
+        assert not recargo.isEnabled()
+        return 0                                      # cancelar
+
     # Aunque se hubiera guardado «por el total» (versiones de antes).
     v = _ventana_lote(monkeypatch, tmp_path, [datos_coca(receptor_nif=SOCIEDAD)],
                       clientes.TOTAL, cliente=SOCIEDAD)
     assert not v._por_el_total()
     assert not v.fila_recargo.isHidden()
     assert "sociedad" in v.lbl_hay_recargo.text()
-    assert not v.combo_recargo.isEnabled()
+    # El recargo no se puede elegir (sí la actividad exenta).
+    opcion = v.combo_recargo.model().item(
+        v.combo_recargo.findData(clientes.TOTAL))
+    assert not opcion.isEnabled()
     assert _bases(v) == [("114,98", "21,00")]
 
     # Y si no tiene nada guardado, ni se pregunta ni se guarda nada.
     monkeypatch.setattr(DialogoRecargo, "exec", no_se_pregunta)
     otra = _ventana_lote(monkeypatch, tmp_path / "otro",
                          [datos_coca(receptor_nif=SOCIEDAD)], cliente=SOCIEDAD)
-    monkeypatch.setattr(DialogoRecargo, "exec", no_se_pregunta)
+    # Desde el menú sí se puede decir que tiene una actividad exenta, pero
+    # el recargo no se ofrece.
+    monkeypatch.setattr(DialogoRecargo, "exec", sin_la_opcion_de_recargo)
     otra._elegir_regimen_recargo()
     assert clientes.regimen_recargo(SOCIEDAD) == ""
     assert not otra._por_el_total()

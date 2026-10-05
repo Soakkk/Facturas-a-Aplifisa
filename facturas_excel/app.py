@@ -38,7 +38,7 @@ from facturas_excel.dialogo_notas_version import DialogoNotasVersion
 from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
-    DESGLOSE, TOTAL, guardar_regimen_recargo, puede_estar_en_recargo,
+    DESGLOSE, EXENTO, TOTAL, guardar_regimen_recargo, puede_estar_en_recargo,
     regimen_recargo,
 )
 from facturas_excel.conceptos import descripcion_de, es_valido
@@ -235,12 +235,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # El cliente se queda con el sitio que sobre en la cinta.
         self.layout_cinta.insertWidget(self.posicion_cliente, cliente_bar, 1)
         # Solo aparece si el lote trae facturas con recargo de equivalencia o
-        # el cliente está en recargo: para el resto no significa nada y estorba.
+        # el cliente registra sus compras por el total (en recargo, o sin
+        # derecho a deducir): para el resto no significa nada y estorba.
         self.fila_recargo = QWidget()
         lr_recargo = QHBoxLayout(self.fila_recargo)
         lr_recargo.setContentsMargins(0, 0, 0, 0)
         lr_recargo.setSpacing(6)
-        lbl_recargo = QLabel("Recargo de equivalencia:")
+        lbl_recargo = QLabel("IVA de sus compras:")
         lbl_recargo.setObjectName("textoSuave")
         lr_recargo.addWidget(lbl_recargo)
         # Por qué está a la vista: el lote trae recargo, o el cliente está en
@@ -253,12 +254,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "registrar por el TOTAL factura (minorista)", TOTAL)
         self.combo_recargo.addItem(
             "registrar con DESGLOSE de IVA y recargo (mayorista)", DESGLOSE)
+        self.combo_recargo.addItem(
+            "registrar por el TOTAL factura (actividad exenta, sin derecho a "
+            "deducir)", EXENTO)
         self.combo_recargo.setToolTip(
             "Lo decide el régimen del cliente, no la factura:\n"
             "  · Minorista en recargo (sin modelo 303): no deduce IVA, así que "
             "el gasto va por el total.\n"
             "  · Mayorista en estimación directa: registra el IVA y el recargo "
             "por separado.\n"
+            "  · Actividad exenta (médico, academia…, art. 20 de la Ley del "
+            "IVA): no deduce el IVA de sus compras (art. 94), todas por el "
+            "total.\n"
             "Se recuerda por NIF. Al minorista se le registran así TODAS las "
             "compras, también las que no traen recargo (teléfono, "
             "reparaciones, publicidad…).")
@@ -434,6 +441,15 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Seleccione las filas que pertenecen a la misma factura. La primera "
             "aporta la cabecera y la última, el resumen fiscal.")
         self.btn_unir_hojas.clicked.connect(self._unir_hojas_seleccionadas)
+        # Una factura de gasto cuyo IVA no se puede deducir (un tique sin los
+        # datos del cliente, un restaurante, un regalo…): por el total.
+        self.btn_por_el_total = QPushButton("Por el total")
+        self.btn_por_el_total.setObjectName("accionTabla")
+        self.btn_por_el_total.setToolTip(
+            "El IVA de las facturas de gasto seleccionadas no se puede deducir "
+            "(arts. 96 y 97 de la Ley del IVA): se registran por el total, con "
+            "el IVA dentro del gasto. Pulsar otra vez lo deshace.")
+        self.btn_por_el_total.clicked.connect(self._alternar_por_el_total)
         self.btn_limpiar_filtros = QPushButton("Limpiar filtros")
         self.btn_limpiar_filtros.setObjectName("accionTabla")
         self.btn_limpiar_filtros.setIcon(QIcon(ruta_recurso("filter-x.svg")))
@@ -457,8 +473,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.btn_deshacer_borrado.clicked.connect(self._deshacer_borrado)
         for boton in (
                 self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
-                self.btn_limpiar_filtros, self.btn_quitar_bloque,
-                self.btn_eliminar, self.btn_deshacer_borrado):
+                self.btn_por_el_total, self.btn_limpiar_filtros,
+                self.btn_quitar_bloque, self.btn_eliminar,
+                self.btn_deshacer_borrado):
             boton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
             boton.setAccessibleName(boton.text())
         # Nombre completo, abreviado y globo de cada acción: si no caben en
@@ -469,7 +486,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             for boton, corto in (
                 (self.btn_siguiente, "Siguiente"),
                 (self.btn_revisada, "Revisada"),
-                (self.btn_unir_hojas, ""), (self.btn_limpiar_filtros, ""),
+                (self.btn_unir_hojas, ""), (self.btn_por_el_total, "Total"),
+                (self.btn_limpiar_filtros, ""),
                 (self.btn_quitar_bloque, ""), (self.btn_eliminar, ""))}
         lt.addWidget(self.caja_herramientas)
         # Orden contable estable: clasificación y cuenta primero, identificación
@@ -924,8 +942,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         )
         acciones = (
             self.btn_siguiente, self.btn_revisada, self.btn_unir_hojas,
-            self.btn_limpiar_filtros, self.btn_quitar_bloque,
-            self.btn_eliminar, self.btn_deshacer_borrado,
+            self.btn_por_el_total, self.btn_limpiar_filtros,
+            self.btn_quitar_bloque, self.btn_eliminar, self.btn_deshacer_borrado,
         )
         for fila in self.filas_herramientas:
             for elemento in filtros + acciones:
@@ -1479,7 +1497,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                          self._examen_precision)
         config.addAction("Calidad de lectura y coste…", self._configurar_calidad)
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
-        config.addAction("Recargo de equivalencia de este cliente…",
+        config.addAction("Régimen de IVA de este cliente…",
                          self._elegir_regimen_recargo)
         config.addAction("Copias de seguridad…", self._copias_de_seguridad)
 
@@ -1799,13 +1817,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             else:
                 regimen = regimen_recargo(self._cliente_nif)
             self._hay_recargo = bool(datos.get("hay_recargo")) or (
-                regimen == TOTAL and puede_estar_en_recargo(self._cliente_nif))
+                regimen == TOTAL and puede_estar_en_recargo(self._cliente_nif)
+            ) or regimen == EXENTO
             self._mostrar_recargo(regimen)
             # Un lote guardado con otro criterio (de antes de la 1.22.1: un
             # minorista sin recargo impreso, o una sociedad «por el total»)
             # se rehace desde lo leído al abrirlo.
             antes_por_el_total = bool(datos.get("hay_recargo")) and \
-                datos.get("regimen_recargo") == TOTAL
+                datos.get("regimen_recargo") in (TOTAL, EXENTO)
             self._actualizar_combo_bloques()
             self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
             # Lotes de antes: el mismo NIF podía quedarse con dos nombres.
@@ -2244,12 +2263,22 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         sesion.borrar()
 
     def _por_el_total(self) -> bool:
-        """El cliente registra sus compras por el total factura (minorista en
-        recargo: todas, traigan o no el recargo impreso). Nunca una sociedad:
-        la ley no la deja estar en recargo."""
-        return (getattr(self, "_hay_recargo", False)
-                and self.combo_recargo.currentData() == TOTAL
-                and puede_estar_en_recargo(getattr(self, "_cliente_nif", "")))
+        """El cliente registra sus compras por el total factura: minorista en
+        recargo (nunca una sociedad: la ley no la deja estar en recargo) o
+        actividad exenta, sin derecho a deducir. Todas, traigan o no el
+        recargo impreso."""
+        if not getattr(self, "_hay_recargo", False):
+            return False
+        regimen = self.combo_recargo.currentData()
+        return regimen == EXENTO or (
+            regimen == TOTAL
+            and puede_estar_en_recargo(getattr(self, "_cliente_nif", "")))
+
+    def _motivo_por_el_total(self) -> str:
+        """Por qué el cliente registra sus compras por el total (texto)."""
+        if self.combo_recargo.currentData() == EXENTO:
+            return "cliente sin derecho a deducir el IVA"
+        return "cliente en recargo de equivalencia"
 
     def _rellenar_tabla(self):
         self._invalidar_contraste_registro()
@@ -2280,6 +2309,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             return bool(fila.fuentes) and not any(
                 x is fila.factura for x in fila.fuentes)
 
+        def tocada(f):
+            # Corregida o revisada por una persona: eso no se rehace.
+            return (f.edicion_manual or f.revision_confirmada
+                    or getattr(f, "revision_corregida", False))
+
+        guardados = getattr(self, "_resumenes_guardados", None)
+        if guardados is None:
+            guardados = self._resumenes_guardados = {}
         antes = {}
         for fila in self.filas:
             if es_copia(fila):
@@ -2288,12 +2325,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         for fila in filas:
             if es_copia(fila):
                 ahora.setdefault(clave(fila), []).append(fila)
+        # Una línea resumen que deja de estar («Por el total» quitado, su
+        # deshacer…) se guarda por si vuelve: con su corrección o revisión.
+        for k, previas in antes.items():
+            if k not in ahora and any(tocada(f) for f in previas):
+                guardados[k] = previas
         for k, grupo in ahora.items():
-            previas = antes.get(k)
+            previas = antes.get(k) or guardados.get(k)
             if previas and len(previas) == len(grupo) and any(
-                    f.edicion_manual for f in previas):
+                    tocada(f) for f in previas):
                 for fila, factura in zip(grupo, previas):
                     fila.factura = factura
+                guardados.pop(k, None)
 
     def _poner_filas(self, filas) -> None:
         """Sustituye las filas del lote y las pinta de nuevo."""
@@ -2334,19 +2377,19 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
         El minorista en recargo no presenta el 303: no paga ni deduce IVA, asi
         que TODAS sus compras van por el total, tambien las que no traen
-        recargo impreso (telefono, reparaciones, publicidad...). Por eso manda
-        el regimen guardado del cliente, no solo lo que traiga el lote.
+        recargo impreso (telefono, reparaciones, publicidad...). Lo mismo el
+        cliente con actividad exenta (sin derecho a deducir). Por eso manda el
+        regimen guardado del cliente, no solo lo que traiga el lote.
         """
         cuantas = self._facturas_con_recargo()
         nif = getattr(self, "_cliente_nif", "")
-        if not puede_estar_en_recargo(nif):
-            # Una sociedad no puede estar en recargo (art. 148 de la Ley del
-            # IVA): no hay nada que preguntar, sus compras van con desglose.
-            self._hay_recargo = bool(cuantas)
-            self._mostrar_recargo(DESGLOSE)
-            return
+        sociedad = not puede_estar_en_recargo(nif)
         guardado = regimen_recargo(nif)
-        if cuantas and not guardado and nif:
+        if sociedad and guardado == TOTAL:
+            # Una sociedad no puede estar en recargo (art. 148 de la Ley del
+            # IVA), aunque se guardara así en una versión anterior.
+            guardado = DESGLOSE
+        if cuantas and not guardado and nif and not sociedad:
             dialogo = DialogoRecargo(getattr(self, "_cliente_nombre", ""),
                                      cuantas, self)
             guardado = (dialogo.elegido() if dialogo.exec() == QDialog.Accepted
@@ -2354,18 +2397,29 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             guardar_regimen_recargo(nif, guardado,
                                     getattr(self, "_cliente_nombre", ""))
             self._perfil_columnas = (None,)
-        self._hay_recargo = bool(cuantas) or guardado == TOTAL
+        self._hay_recargo = bool(cuantas) or guardado in (TOTAL, EXENTO)
         self._mostrar_recargo(guardado)
 
     def _mostrar_recargo(self, regimen: str) -> None:
-        """La fila del recargo, con el porqué de que esté a la vista."""
+        """La fila del régimen de IVA, con el porqué de que esté a la vista."""
         self.fila_recargo.setVisible(self._hay_recargo)
         sociedad = not puede_estar_en_recargo(getattr(self, "_cliente_nif", ""))
-        self.combo_recargo.setEnabled(not sociedad)
-        if sociedad:
+        # Una sociedad no puede elegir el recargo (sí la actividad exenta).
+        modelo = self.combo_recargo.model()
+        opcion_total = modelo.item(self.combo_recargo.findData(TOTAL))
+        if opcion_total is not None:
+            opcion_total.setEnabled(not sociedad)
+        if sociedad and regimen == TOTAL:
             regimen = DESGLOSE
+        if regimen == EXENTO:
+            self.lbl_hay_recargo.setText("Cliente sin derecho a deducir")
+            self.lbl_hay_recargo.setToolTip(
+                "Actividad exenta (médico, academia…, art. 20 de la Ley del "
+                "IVA): no deduce el IVA de sus compras (art. 94), así que todas "
+                "van por el total factura.")
+        elif sociedad and self._facturas_con_recargo():
             self.lbl_hay_recargo.setText(
-                "Cobrado a una sociedad: no le corresponde")
+                "Recargo cobrado a una sociedad: no le corresponde")
             self.lbl_hay_recargo.setToolTip(
                 "La Ley del IVA (art. 148) deja el recargo de equivalencia solo "
                 "a personas físicas y comunidades de bienes. Sus compras van "
@@ -2387,22 +2441,20 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.combo_recargo.blockSignals(False)
 
     def _elegir_regimen_recargo(self) -> None:
-        """Configuración → Recargo de equivalencia del cliente: decirlo sin
-        esperar a que llegue una factura con recargo impreso."""
+        """Configuración → Régimen de IVA del cliente: decirlo sin esperar a
+        que llegue una factura con recargo impreso."""
         nif = getattr(self, "_cliente_nif", "")
         nombre = getattr(self, "_cliente_nombre", "")
         if not nif:
-            self._avisar("Primero cargue o escanee facturas del cliente: el "
-                         "régimen de recargo se recuerda por su NIF.", INFO)
+            self._avisar("Primero cargue o escanee facturas del cliente: su "
+                         "régimen de IVA se recuerda por su NIF.", INFO)
             return
-        if not puede_estar_en_recargo(nif):
-            self._avisar(f"{nombre or nif} es una sociedad: la Ley del IVA "
-                         "(art. 148) no la deja estar en recargo de "
-                         "equivalencia. Sus compras van con el desglose "
-                         "normal.", INFO)
-            return
+        sociedad = not puede_estar_en_recargo(nif)
+        actual = regimen_recargo(nif) or DESGLOSE
+        if sociedad and actual == TOTAL:
+            actual = DESGLOSE
         dialogo = DialogoRecargo(nombre, self._facturas_con_recargo(), self,
-                                 elegido=regimen_recargo(nif) or DESGLOSE)
+                                 elegido=actual, sin_recargo=sociedad)
         if dialogo.exec() != QDialog.Accepted or not dialogo.elegido():
             return
         guardar_regimen_recargo(nif, dialogo.elegido(), nombre)
@@ -2831,6 +2883,53 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                         self.combo_filtro_mes):
             control.blockSignals(False)
         self._aplicar_filtro()
+
+    def _alternar_por_el_total(self) -> None:
+        """«Por el total»: el IVA de esas facturas de gasto no se deduce. Se
+        registran por el importe entero, sin desglose (la retención, si la
+        hay, se conserva). Pulsar otra vez lo deshace."""
+        seleccionadas = self._filas_seleccionadas()
+        if not seleccionadas:
+            self._avisar("Seleccione la factura de gasto cuyo IVA no se puede "
+                         "deducir.", AVISO)
+            return
+        if self._por_el_total():
+            self._avisar(f"Este {self._motivo_por_el_total()}: ya registra "
+                         "todas sus compras por el total.", INFO)
+            return
+        fuentes = []
+        for fila in sorted({r for s in seleccionadas
+                            for r in self._filas_del_documento(s)}):
+            if self._tipo_fila(fila) != "gasto":
+                continue
+            registro = self.filas[fila]
+            for f in registro.get("fuentes") or [registro["factura"]]:
+                if not any(f is x for x in fuentes):
+                    fuentes.append(f)
+        if not fuentes:
+            self._avisar("Solo los gastos se registran por el total: una "
+                         "venta lleva siempre su IVA.", AVISO)
+            return
+        poner = not all(getattr(f, "no_deducible", False) for f in fuentes)
+
+        def aplicar(valor):
+            for f in fuentes:
+                f.no_deducible = valor
+            self._rellenar_tabla()
+            self._revalidar_todo()
+        exportadas = any(self.filas[r].get("ya_exportada")
+                         for s in seleccionadas
+                         for r in self._filas_del_documento(s))
+        aplicar(poner)
+        documentos = len({clave_documento(f) for f in fuentes})
+        texto = (f"{documentos} factura(s) por el total: su IVA no se deduce y "
+                 "va dentro del gasto." if poner else
+                 f"{documentos} factura(s) otra vez con su IVA desglosado.")
+        if exportadas:
+            texto += (" OJO: ya estaba exportada a Aplifisa con el desglose "
+                      "anterior: corríjala allí también.")
+        self._avisar(texto, AVISO if exportadas else EXITO,
+                     deshacer=lambda: aplicar(not poner))
 
     def _filas_seleccionadas(self) -> list[int]:
         return sorted({i.row() for i in self.tabla.selectionModel().selectedRows()})

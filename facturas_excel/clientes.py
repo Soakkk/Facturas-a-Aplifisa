@@ -156,6 +156,11 @@ def buscar_confirmado_por_nombre(nombre: str) -> tuple[str, str] | None:
 #     separado, con su desglose normal.
 TOTAL = "total"          # minorista: un apunte por el total factura
 DESGLOSE = "desglose"    # mayorista: base, IVA y recargo cada uno en lo suyo
+# Actividad exenta (médicos, academias, seguros…: art. 20 de la Ley del IVA):
+# no deduce el IVA de sus compras (art. 94), así que también van por el total.
+# Una sociedad sí puede estar aquí.
+EXENTO = "exento"
+REGIMENES = (TOTAL, DESGLOSE, EXENTO)
 
 # Ley del IVA, art. 148: el recargo de equivalencia es solo para comerciantes
 # minoristas personas fisicas o entidades en atribucion de rentas (comunidades
@@ -186,7 +191,7 @@ def regimen_recargo(nif) -> str:
         return ""
     ficha = _leer_todo().get(nif, {})
     guardado = ficha.get("regimen_recargo")
-    if guardado in (TOTAL, DESGLOSE):
+    if guardado in REGIMENES:
         return guardado
     # Compatibilidad con la casilla de antes (era un si/no).
     if ficha.get("recargo_equivalencia"):
@@ -196,7 +201,7 @@ def regimen_recargo(nif) -> str:
 
 def guardar_regimen_recargo(nif, regimen: str, nombre: str = "") -> None:
     nif = _normaliza(nif)
-    if not nif or regimen not in (TOTAL, DESGLOSE, ""):
+    if not nif or regimen not in REGIMENES + ("",):
         return
     todo = _leer_todo()
     ficha = todo.setdefault(nif, {})

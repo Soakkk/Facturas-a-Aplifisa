@@ -45,6 +45,10 @@ def _numero(valor) -> str:
     return "".join(c for c in str(valor or "") if c.isalnum()).upper()
 
 
+# Para comparar números de factura desde fuera («F-1/26» = «F126»).
+numero_clave = _numero
+
+
 def lado(tipo: str) -> str:
     return "venta" if tipo in ("venta", "ingreso") else "gasto"
 
