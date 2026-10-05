@@ -103,6 +103,13 @@ def fecha_de(fecha: str) -> Optional[date]:
     return None
 
 
+def normalizar_fecha(fecha):
+    """La fecha como la quiere Aplifisa (dd/mm/aaaa). Si no se entiende, tal
+    cual (la validación ya dice que está mal)."""
+    dia = fecha_de(fecha) if fecha else None
+    return dia.strftime("%d/%m/%Y") if dia else fecha
+
+
 _TABLA_DNI = "TRWAGMYFPDXBNJZSQVHLCKE"
 # Prefijos de NIF-IVA de la Unión Europea (el de Grecia es EL).
 PREFIJOS_UE = {
@@ -212,6 +219,12 @@ def marcar_revisar_concepto(f: Factura, marcar_revisar) -> None:
     else:
         # Todo correcto: se deja el nombre del concepto a la vista.
         f.descripcion_concepto = descripcion_de(cuenta, gxx)
+
+
+def _margen_redondeo(base) -> float:
+    """Hasta dónde puede apartarse la cuota de base×% por redondear línea a
+    línea: 5 céntimos, o una diezmilésima de la base si es mayor."""
+    return max(0.05, abs(base or 0) * 0.0001)
 
 
 def porcentaje(v) -> str:
@@ -340,6 +353,15 @@ def validar(f: Factura) -> Resultado:
         esperada = round(f.base_iva * f.pct_iva / 100.0, 2)
         if f.cuota_iva is None:
             marcar_revisar("Falta la cuota de IVA", "cuota_iva")
+        elif abs(f.cuota_iva - esperada) > TOLERANCIA \
+                and abs(f.cuota_iva - esperada) <= _margen_redondeo(f.base_iva):
+            # Una factura grande que redondea el IVA línea a línea se aparta
+            # unos céntimos de base×%: es la cuota impresa, no un error (antes
+            # quedaba en rojo sin salida y había que teclear otra cuota).
+            marcar_revisar(
+                f"La cuota de IVA ({f.cuota_iva}) difiere en "
+                f"{abs(f.cuota_iva - esperada):.2f} € de base×% ({esperada}): "
+                "suele ser el redondeo por líneas. Compruébela.", "cuota_iva")
         elif abs(f.cuota_iva - esperada) > TOLERANCIA:
             marcar_error(
                 f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}",
@@ -434,8 +456,10 @@ def texto_motivo_revision(motivo: str) -> str:
         return ("Factura con suplido: el suplido va como otra línea sin IVA. "
                 "Compruébelo con el documento y pulse «Marcar revisada».")
     if motivo == "Bien de inversión":
-        return ("Posible bien de inversión: compruebe la cuenta con el "
-                "documento y pulse «Marcar revisada».")
+        return ("Posible bien de inversión: va a la 200 (se amortiza, y su IVA "
+                "va en las casillas de bienes de inversión del 303). Si es un "
+                "gasto corriente, ponga su cuenta; si no, pulse «Marcar "
+                "revisada».")
     if motivo == "Marcada por el usuario":
         return ("La apartó usted para gestión manual en una versión anterior: "
                 "compruébela y pulse «Marcar revisada» para exportarla.")

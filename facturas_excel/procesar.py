@@ -26,7 +26,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
-from .validacion import validar_nif, fecha_de
+from .validacion import fecha_de, normalizar_fecha, validar_nif
 
 
 def normaliza_nif(nif) -> str:
@@ -108,12 +108,27 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     """
     cuenta: Dict[str, Candidato] = {}
     nombres: Dict[str, list] = defaultdict(list)
+    homonimo = False
     for d in lista_datos:
         for campo_nif, campo_nom, papel in (
                 ("emisor_nif", "emisor_nombre", "e"),
                 ("receptor_nif", "receptor_nombre", "r")):
+            leido = normaliza_nif(d.get(campo_nif))
             conocido = clientes.buscar_confirmado_por_nombre(d.get(campo_nom, ""))
-            nif = conocido[0] if conocido else normaliza_nif(d.get(campo_nif))
+            if conocido and validar_nif(leido) and leido != conocido[0]:
+                # El nombre de un cliente confirmado con OTRO NIF válido: o es
+                # su NIF mal leído, o es otra persona que se llama igual (un
+                # homónimo). No se decide en silencio: los dos son candidatos
+                # y se pregunta (si no, el lote entero se iba a otro cliente).
+                homonimo = True
+                otro = cuenta.setdefault(leido, Candidato(nif=leido, nombre=""))
+                otro.veces += 1
+                if papel == "e":
+                    otro.como_emisor += 1
+                else:
+                    otro.como_receptor += 1
+                nombres[leido].append(d.get(campo_nom) or "")
+            nif = conocido[0] if conocido else leido
             if not nif:
                 continue
             c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
@@ -141,7 +156,7 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     # solo la propuesta del dialogo; decide la persona, y se recuerda.
     orden = sorted(cuenta.values(),
                    key=lambda c: (-c.puntos, -c.como_receptor, c.nif))
-    dudoso = len(orden) > 1 and orden[0].puntos == orden[1].puntos
+    dudoso = homonimo or (len(orden) > 1 and orden[0].puntos == orden[1].puntos)
     return Analisis(candidatos=orden, dudoso=dudoso)
 
 
@@ -346,6 +361,10 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     # Cuenta contable: la del catalogo que elige Gemini. Si no la hay, una
     # propuesta, pero con aviso (nunca una cuenta por descarte en verde).
     cuenta, gxx, aviso_cuenta = concepto_propuesto(tipo, datos)
+    if datos.get("es_bien_inversion") and tipo == "gasto" and es_valido("200", "200"):
+        # Un inmovilizado va a la 200 (amortización, casillas propias del
+        # 303), no a la cuenta de gasto: queda en ámbar para confirmarlo.
+        cuenta, gxx, aviso_cuenta = "200", "200", ""
     if aviso_cuenta:
         aviso = f"{aviso} {aviso_cuenta}".strip()
 
@@ -354,8 +373,8 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     comun = dict(
         documento_id=uuid4().hex,
         num_factura=datos.get("num_factura") or None,
-        fecha=datos.get("fecha") or None,
-        fecha_operacion=datos.get("fecha_operacion") or None,
+        fecha=normalizar_fecha(datos.get("fecha")) or None,
+        fecha_operacion=normalizar_fecha(datos.get("fecha_operacion")) or None,
         nombre=nombre or None,
         # El NIF, siempre limpio: el mismo proveedor viene unas veces
         # "A-82018474" y otras "A82018474", y con el guion se contaba como otro
@@ -464,7 +483,16 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
 _CAMPO_FACTURA = {
     "num_factura": "num_factura", "fecha": "fecha", "total": "total_impreso",
     "cuota_irpf": "cuota_irpf", "lineas_iva": "base_iva", "suplidos": "base_iva",
+    "cuenta_gasto": "concepto", "cuenta_ingreso": "concepto",
+    "es_bien_inversion": "concepto", "subclave_gxx": "subclave",
+    "fecha_operacion": "fecha_operacion", "base_irpf": "base_irpf",
+    "pct_irpf": "pct_irpf",
 }
+# Lo contable que solo cuenta de un lado: la cuenta de gasto en una venta (o
+# la de ingreso en un gasto) no es una discrepancia que importe.
+_SOLO_GASTO = {"cuenta_gasto", "subclave_gxx", "es_bien_inversion"}
+_SOLO_VENTA = {"cuenta_ingreso"}
+_CAMPOS_CUENTA = {"cuenta_gasto", "subclave_gxx", "cuenta_ingreso"}
 
 
 def discrepancias_de(datos: dict, tipo: str) -> tuple:
@@ -478,6 +506,8 @@ def discrepancias_de(datos: dict, tipo: str) -> tuple:
             continue
         copia = dict(d)
         campo = copia.get("campo")
+        if campo in (_SOLO_VENTA if tipo == "gasto" else _SOLO_GASTO):
+            continue
         if campo in ("emisor_nif", "receptor_nif"):
             copia["campo_factura"] = "nif" if campo == contraparte else ""
         else:
@@ -588,7 +618,50 @@ def aprender_nifs_exportados(facturas) -> int:
     return n
 
 
-def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
+# Lo que el OCR confunde en las cifras de un NIF (la O por el 0…).
+_PARECIDAS = str.maketrans({"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1",
+                            "S": "5", "B": "8", "G": "6", "Z": "2"})
+
+
+def _nif_compatible(leido: str, guardado: str) -> bool:
+    """Lo leído es el guardado con algún carácter perdido o cambiado (o
+    confundido por el OCR: O por 0): el mismo NIF mal impreso o mal leído,
+    no el de otra empresa."""
+    if not leido or not guardado:
+        return False
+
+    def cifras(nif):
+        # Solo el centro: la primera y la última pueden ser letras de verdad.
+        return nif[:1] + nif[1:-1].translate(_PARECIDAS) + nif[-1:]
+    leido, guardado = cifras(leido), cifras(guardado)
+    if len(leido) >= 6 and (leido in guardado or guardado in leido):
+        return True
+    if abs(len(leido) - len(guardado)) > 1:
+        return False
+    previa = list(range(len(guardado) + 1))
+    for i, a in enumerate(leido, 1):
+        actual = [i]
+        for j, b in enumerate(guardado, 1):
+            actual.append(min(previa[j] + 1, actual[j - 1] + 1,
+                              previa[j - 1] + (a != b)))
+        previa = actual
+    return previa[-1] <= 1
+
+
+def _nifs_del_cliente(cliente_nif: str) -> set:
+    """Los NIF de los proveedores que ya le han facturado a este cliente."""
+    if not cliente_nif:
+        return set()
+    try:
+        from . import registro_facturas
+        return {normaliza_nif(ficha.get("nif"))
+                for ficha in registro_facturas.exportadas_de(cliente_nif).values()}
+    except Exception:
+        return set()
+
+
+def completar_desde_memoria(procesadas: List[FacturaProcesada],
+                            cliente_nif: str = "") -> int:
     """Rellena los NIF que faltan o no valen con los ya sabidos de otras veces.
 
     Se usa DESPUES de propagar_nifs: dentro del mismo lote la prueba es mejor.
@@ -597,6 +670,7 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
     lectura automática mantienen la cautela anterior.
     """
     completados = 0
+    conocidos = None            # los NIF del cliente, solo si hacen falta
     for pr in procesadas:
         if not pr.facturas:
             continue
@@ -624,10 +698,17 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada]) -> int:
             linea.nif = ficha["nif"]
         motivo = f"aquí se leyó «{leido}», que no es válido" if leido \
             else "aquí no se leyó ninguno"
-        # Lo confirmado por una persona ya está comprobado y no debe obligar a
-        # revisar las mismas facturas en cada lote. La memoria automática sí
-        # permanece amarilla hasta que alguien la confirme.
-        if not ficha.get("manual"):
+        # La memoria automática queda en ámbar hasta que alguien la confirme.
+        # La confirmada por una persona se pone en silencio solo si no hay
+        # duda de que es el mismo proveedor: lo leído es ese NIF mal impreso,
+        # o ese proveedor ya le factura a este cliente. Si no, puede ser otra
+        # empresa con el mismo nombre (de otro cliente) y el gasto se
+        # imputaría a quien no es.
+        if conocidos is None and ficha.get("manual"):
+            conocidos = _nifs_del_cliente(cliente_nif)
+        if not ficha.get("manual") or not (
+                _nif_compatible(normaliza_nif(leido), ficha["nif"])
+                or ficha["nif"] in conocidos):
             _anadir_aviso(pr, f"NIF puesto de memoria ({ficha['nif']}): es el que "
                               f"consta guardado para {f.nombre} y {motivo}. Compruébalo.")
         completados += 1
@@ -742,12 +823,12 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
                   for img, origen, pag, datos in consolidados]
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote
-    completar_desde_memoria(solo)    # 2º lo sabido de otras veces
+    completar_desde_memoria(solo, cliente_nif)   # 2º lo sabido de otras veces
     # Lo leido NO se memoriza aqui: todavia no se sabe si el cliente esta bien
     # elegido ni si esos NIF son buenos. Se aprende al exportar, con los datos
     # ya revisados (ver aprender_nifs_exportados).
     unificar_nombres(solo)           # 3º el mismo proveedor, escrito igual
-    aplicar_recordado(solo)          # 4º lo que ya corrigio el usuario a mano
+    aplicar_recordado(solo, cliente_nif)   # 4º lo que ya corrigio el usuario
     marcar_sustituidas(solo)         # post-facturaciones que rehacen otra
     return procesadas
 
@@ -1221,11 +1302,13 @@ def recordar_nombre_proveedor(nif, nombre) -> bool:
     return guardado
 
 
-def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None) -> bool:
+def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
+                              cliente_nif: str = "") -> bool:
     """La cuenta contable que el usuario le pone a este proveedor.
 
     Es lo mismo que hace Aplifisa: la primera vez se dice, y las siguientes
-    facturas de ese proveedor entran ya con su concepto.
+    facturas de ese proveedor entran ya con su concepto. Se recuerda POR
+    CLIENTE (1.25): Makro puede ser 600 en un bar y 629 en una oficina.
     """
     cuenta = str(cuenta or "").strip()
     if not cuenta or not es_valido(cuenta, gxx):
@@ -1234,14 +1317,27 @@ def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None) -> bool:
     ficha = proveedores.buscar_por_nif(nif) if nif else None
     clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
         else clave_proveedor(nombre)
+    por_cliente = dict((ficha or proveedores.leer_todo().get(clave) or {})
+                       .get("cuentas_cliente") or {})
+    cliente = normaliza_nif(cliente_nif)
+    if cliente:
+        por_cliente[cliente] = [cuenta, gxx or None]
     return proveedores.guardar_campos(clave, nif=nif or None,
                                       nombre=str(nombre or "").strip() or None,
                                       cuenta=cuenta, gxx=(gxx or None),
-                                      cuenta_manual=True)
+                                      cuenta_manual=True,
+                                      cuentas_cliente=por_cliente or None)
 
 
-def aplicar_recordado(procesadas: List[FacturaProcesada]) -> int:
-    """Pone en el lote lo que el usuario ya corrigio de esos proveedores."""
+def aplicar_recordado(procesadas: List[FacturaProcesada],
+                      cliente_nif: str = "") -> int:
+    """Pone en el lote lo que el usuario ya corrigio de esos proveedores.
+
+    La cuenta que puso para ESTE cliente se pone sin más. La que puso en
+    otro cliente se propone, pero en ámbar: la cuenta depende de a qué se
+    dedica cada uno. (Las guardadas antes de la 1.25 no dicen de qué cliente
+    son: se ponen como hasta ahora.)"""
+    cliente = normaliza_nif(cliente_nif)
     puestos = 0
     for pr in procesadas:
         if pr.tipo != "gasto" or not pr.facturas:
@@ -1249,14 +1345,28 @@ def aplicar_recordado(procesadas: List[FacturaProcesada]) -> int:
         ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
         if not ficha or not ficha.get("cuenta_manual"):
             continue
-        cuenta, gxx = ficha.get("cuenta"), ficha.get("gxx")
+        por_cliente = ficha.get("cuentas_cliente") or {}
+        de_otro = bool(por_cliente) and cliente not in por_cliente
+        cuenta, gxx = (por_cliente.get(cliente) or
+                       [ficha.get("cuenta"), ficha.get("gxx")])[:2]
         if not es_valido(cuenta, gxx):
             continue
         pr.cuenta, pr.gxx = cuenta, gxx
         for f in pr.facturas:
             f.concepto, f.subclave = cuenta, gxx
+            if not de_otro:
+                # La decidió una persona para este cliente: que las dos
+                # lecturas de la IA no coincidan en la cuenta ya no importa.
+                f.discrepancias = tuple(
+                    d for d in (f.discrepancias or ())
+                    if d.get("campo") not in _CAMPOS_CUENTA)
         # La cuenta ya la decidio una persona: sobra el aviso de propuesta.
         pr.aviso = quitar_aviso_cuenta(pr.aviso)
+        if de_otro:
+            nombre = pr.facturas[0].nombre or "este proveedor"
+            _anadir_aviso(pr, f"La cuenta {cuenta}{f' ({gxx})' if gxx else ''} "
+                              f"es la que usted le puso a {nombre} en otro "
+                              "cliente: compruebe que en este también va ahí.")
         puestos += 1
     return puestos
 

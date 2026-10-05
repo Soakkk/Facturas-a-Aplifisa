@@ -73,7 +73,11 @@ def test_el_nombre_confirmado_corrige_un_nif_de_cliente_mal_leido():
     analisis = procesar.analizar_cliente([factura])
 
     assert analisis.mejor.nif == CLIENTE[0]
-    assert {c.nif for c in analisis.candidatos} == {CLIENTE[0], GASOLINERA[0]}
+    # Pero no se decide en silencio (1.25): puede ser otra persona que se
+    # llama igual. Los dos son candidatos y se pregunta.
+    assert {c.nif for c in analisis.candidatos} == {CLIENTE[0], GASOLINERA[0],
+                                                    "87654321X"}
+    assert analisis.dudoso
 
 
 @pytest.mark.parametrize(

@@ -72,6 +72,11 @@ def _valor_celda(campo: str, valor, modo: str):
     if campo == "nombre":
         return _recortar_nombre(valor)
 
+    if campo in ("fecha", "fecha_operacion", "fecha_deduccion"):
+        # Siempre dd/mm/aaaa: «2026-03-05» o «05/03/26» podían llegar tal cual.
+        from .validacion import normalizar_fecha
+        return normalizar_fecha(str(valor).strip())
+
     es_numerico = campo in CAMPOS_IMPORTE or campo in CAMPOS_PORCENTAJE
     if not es_numerico:
         return str(valor)

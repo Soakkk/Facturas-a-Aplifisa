@@ -21,6 +21,16 @@ CAMPOS_COMPARADOS = (
     ("total", "Total"),
     ("cuota_irpf", "Retención IRPF"),
     ("suplidos", "Suplidos"),
+    # Lo contable (1.25): la segunda lectura ya se paga, y con una cuenta 622
+    # frente a una 200 la factura no puede salir «Verificada».
+    ("cuenta_gasto", "Cuenta de gasto"),
+    ("subclave_gxx", "Subclave de gasto"),
+    ("cuenta_ingreso", "Cuenta de ingreso"),
+    ("es_bien_inversion", "Bien de inversión"),
+    ("sustituye_a", "Factura a la que sustituye"),
+    ("fecha_operacion", "Fecha de operación"),
+    ("base_irpf", "Base de la retención"),
+    ("pct_irpf", "% de retención"),
 )
 
 TOLERANCIA = 0.011
@@ -40,13 +50,26 @@ def _fecha(valor):
     return fecha_de(valor) if valor else None
 
 
+def _codigo(valor, patron: str) -> str:
+    """El código de una cuenta o subclave, se escriba como se escriba."""
+    hallado = re.search(patron, str(valor or "").upper())
+    return hallado.group(0) if hallado else ""
+
+
 def _iguales(campo: str, a, b) -> bool:
-    if campo in ("total", "cuota_irpf", "suplidos"):
+    if campo == "es_bien_inversion":
+        return bool(a) == bool(b)
+    if campo in ("cuenta_gasto", "cuenta_ingreso"):
+        # «628» y «628 (G16) SUMINISTROS GAS» son la misma cuenta.
+        return _codigo(a, r"\d+") == _codigo(b, r"\d+")
+    if campo == "subclave_gxx":
+        return _codigo(a, r"[GI]\d+") == _codigo(b, r"[GI]\d+")
+    if campo in ("total", "cuota_irpf", "suplidos", "base_irpf", "pct_irpf"):
         na, nb = _numero(a), _numero(b)
         if na is None or nb is None:
             return na is None and nb is None
         return abs(na - nb) <= TOLERANCIA
-    if campo == "fecha":
+    if campo in ("fecha", "fecha_operacion"):
         fa, fb = _fecha(a), _fecha(b)
         if fa and fb:
             return fa == fb

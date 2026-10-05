@@ -2601,7 +2601,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if not f.nombre or not es_valido(cuenta, gxx):
             return ""
         if not recordar_cuenta_proveedor(normaliza_nif(f.nif), f.nombre,
-                                         cuenta, gxx):
+                                         cuenta, gxx,
+                                         getattr(self, "_cliente_nif", "")):
             return ""
         return (f"Guardado: las facturas de {f.nombre} irán a "
                 f"{cuenta}{f' ({gxx})' if gxx else ''} "

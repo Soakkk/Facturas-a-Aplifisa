@@ -35,9 +35,11 @@ def factura(nombre, nif):
 def test_lo_escrito_a_mano_se_recuerda_y_se_reutiliza():
     assert recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=True)
     pr = factura("ANTONIO Y CAÑIZARES SL", None)
-    assert completar_desde_memoria([pr]) == 1
+    assert completar_desde_memoria([pr], CLIENTE) == 1
     assert pr.facturas[0].nif == CANIZARES
-    assert not pr.aviso
+    # La primera vez que aparece en este cliente, a la vista (1.25): podría
+    # ser otra empresa que se llama igual, de otro cliente.
+    assert "NIF puesto de memoria" in pr.aviso
 
 
 def test_da_igual_como_venga_escrito_el_nombre():
@@ -81,10 +83,15 @@ def test_un_nif_solo_aprendido_por_ocr_no_pisa_otro_valido():
 
 
 def test_el_nif_manual_completa_sin_poner_en_amarillo_cada_lote():
+    """Si ese proveedor ya le ha facturado a este cliente, no se pregunta en
+    cada lote (criterio del usuario)."""
+    from facturas_excel import historial
     recordar_nif("ANTONIO Y CAÑIZARES SL", CANIZARES, manual=True)
+    anterior = factura("ANTONIO Y CAÑIZARES SL", CANIZARES)
+    historial.registrar(CLIENTE, {"gasto": anterior.facturas}, {})
     pr = factura("ANTONIO Y CAÑIZARES SL", None)
 
-    assert completar_desde_memoria([pr]) == 1
+    assert completar_desde_memoria([pr], CLIENTE) == 1
     assert pr.facturas[0].nif == CANIZARES
     assert not pr.aviso
 
