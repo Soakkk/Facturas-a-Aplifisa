@@ -316,6 +316,38 @@ def _opcion(valor) -> Optional[str]:
     return None if texto in ("", "ninguna", "no", "factura", "null") else texto
 
 
+# Lo justo para identificar la factura (criterio del usuario, 09/10/2026): un
+# número o un nombre larguísimo casi siempre es una lectura desbocada, y no
+# hace falta entero para el registro. Topes generosos: una factura de verdad
+# no llega (Aplifisa ya recorta el nombre a 40 al exportar).
+MAX_NUMERO = 30
+MAX_NOMBRE_LEIDO = 60
+MAX_NIF = 20
+
+
+def acotar_numero(valor) -> str:
+    """El número de factura con lo que la identifica: si es demasiado largo,
+    se queda el FINAL (ahí va el contador; el principio suele ser texto como
+    «FACTURA Nº» o la serie)."""
+    texto = " ".join(str(valor or "").split())
+    if len(texto) <= MAX_NUMERO:
+        return texto
+    return texto[-MAX_NUMERO:].lstrip(" -/.:")
+
+
+def acotar_nombre(valor) -> str:
+    """El nombre, sin pasar de MAX_NOMBRE_LEIDO; corta por palabra entera si
+    apenas se pierde nada."""
+    texto = " ".join(str(valor or "").split())
+    if len(texto) <= MAX_NOMBRE_LEIDO:
+        return texto
+    corte = texto[:MAX_NOMBRE_LEIDO]
+    hueco = corte.rfind(" ")
+    if hueco >= MAX_NOMBRE_LEIDO - 12:
+        corte = corte[:hueco]
+    return corte.rstrip(" ,.-")
+
+
 def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
               origen: str = "", pagina: int = 0) -> FacturaProcesada:
     cliente_nif = normaliza_nif(cliente_nif)
@@ -377,14 +409,14 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     lineas = datos.get("lineas_iva") or [{}]
     comun = dict(
         documento_id=uuid4().hex,
-        num_factura=datos.get("num_factura") or None,
+        num_factura=acotar_numero(datos.get("num_factura")) or None,
         fecha=normalizar_fecha(datos.get("fecha")) or None,
         fecha_operacion=normalizar_fecha(datos.get("fecha_operacion")) or None,
-        nombre=nombre or None,
+        nombre=acotar_nombre(nombre) or None,
         # El NIF, siempre limpio: el mismo proveedor viene unas veces
         # "A-82018474" y otras "A82018474", y con el guion se contaba como otro
         # distinto (ni se detectaba el duplicado ni valia la memoria de NIF).
-        nif=normaliza_nif(nif) or None,
+        nif=normaliza_nif(nif)[:MAX_NIF] or None,
         concepto=cuenta or None,
         total_impreso=_num(datos.get("total")),
         origen_imagen=origen,
@@ -396,14 +428,14 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         tratamiento_manual=("Bien de inversión"
                             if datos.get("es_bien_inversion") else None),
         tipo_documento=_opcion(datos.get("tipo_documento")),
-        moneda=(str(datos.get("moneda") or "").strip().upper() or None),
+        moneda=(str(datos.get("moneda") or "").strip().upper()[:10] or None),
         mencion_iva=_opcion(datos.get("mencion_iva")),
         posible_no_deducible=_opcion(datos.get("posible_no_deducible")),
         # Un gasto sin el NIF del cliente impreso (un tique): sin él, el IVA
         # no se puede deducir (art. 97 de la Ley del IVA).
         sin_nif_destinatario=(tipo == "gasto" and not r_nif
                               and not datos.get("_error")),
-        rectifica_a=str(datos.get("sustituye_a") or "").strip(),
+        rectifica_a=acotar_numero(datos.get("sustituye_a")),
     )
     facturas = []
     for i, linea in enumerate(lineas):
@@ -481,7 +513,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         _f.subclave = gxx
     return FacturaProcesada(tipo=tipo, facturas=facturas, cuenta=cuenta,
                             gxx=gxx, origen=origen, pagina=pagina, aviso=aviso,
-                            sustituye_a=str(datos.get("sustituye_a") or "").strip())
+                            sustituye_a=acotar_numero(datos.get("sustituye_a")))
 
 
 # A que dato de la fila afecta cada diferencia de la doble lectura.

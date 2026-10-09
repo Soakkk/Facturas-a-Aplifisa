@@ -520,6 +520,10 @@ def encontrar_duplicados(facturas: List[Factura]) -> Dict[int, int]:
 # cambia entre ellas: ese es el contador.
 MINIMO_SERIE = 3        # con menos de 3 no hay serie que valga
 MAXIMO_HUECO = 12       # un salto enorme suele ser otra serie, no una perdida
+# Un contador de verdad no pasa de 9 cifras: más es una referencia larga o una
+# lectura mala, y no cuenta para la serie (int() de miles de cifras incluso
+# falla en Python 3.11+).
+MAX_CIFRAS_CONTADOR = 9
 
 
 def _faltan(vistos: set, menor: int, mayor: int):
@@ -595,7 +599,10 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
         if len(cambian) != 1:
             continue
         col = cambian[0]
-        vistos = {int(numeros[col]) for numeros, _ in entradas}
+        vistos = {int(numeros[col]) for numeros, _ in entradas
+                  if len(numeros[col]) <= MAX_CIFRAS_CONTADOR}
+        if len(vistos) < MINIMO_SERIE:
+            continue
         if identidad == "__SERIE_INGRESOS__":
             # Las ventas ya exportadas de esta misma serie: las que caen dentro
             # del tramo del lote no faltan, y la última de antes es el punto
@@ -609,6 +616,8 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
                 otros = [p for i, p in enumerate(trozos[1]) if i != col]
                 if otros != [p for i, p in enumerate(modelo_serie) if i != col]:
                     continue
+                if len(trozos[1][col]) > MAX_CIFRAS_CONTADOR:
+                    continue
                 de_la_serie.append(int(trozos[1][col]))
             menor, mayor = min(vistos), max(vistos)
             vistos |= {n for n in de_la_serie if menor <= n <= mayor}
@@ -621,7 +630,8 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
         faltan = _faltan(vistos, min(vistos), max(vistos))
         if not faltan:
             continue
-        modelo, quien = entradas[0]
+        modelo, quien = next(e for e in entradas
+                             if len(e[0][col]) <= MAX_CIFRAS_CONTADOR)
         ancho = len(modelo[col])
 
         def escribir(n):

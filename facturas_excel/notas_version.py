@@ -8,6 +8,20 @@ from . import ajustes
 NOTAS = {
     "1.25.0": """
 <h2>Novedades de la versión 1.25.0: memoria y lectura</h2>
+<p><b>Arreglos importantes</b></p>
+<ul>
+  <li><b>Exportar ya no falla por un nombre con un carácter raro.</b> Algunos
+      nombres traían un carácter invisible en lugar de una letra con tilde
+      («JOS?» por «JOSÉ») y Excel no lo admitía: la exportación entera se
+      paraba. Ahora se quita al escribir el Excel y la línea sale en ámbar
+      para que escriba bien el nombre (se recuerda para las próximas).</li>
+  <li><b>El programa ya no se queda sin memoria al leer un paquete.</b> Si una
+      factura traía un número muy largo o mal leído, el control de «falta la
+      factura nº…» intentaba repasar miles de millones de números: se comía
+      la memoria y salía «Algo ha fallado». Ahora no pasa de lo necesario.</li>
+  <li>La ventana «Algo ha fallado» ya no sale en blanco: dice qué ha pasado.</li>
+</ul>
+<p><b>Novedades</b></p>
 <ul>
   <li><b>La cuenta de un proveedor, por cliente.</b> La que usted pone se
       recuerda para ESE cliente: Makro puede ir a la 600 en un bar y a la 629
@@ -31,6 +45,8 @@ NOTAS = {
       céntimos de diferencia ya no la dejan en rojo sin salida.</li>
   <li>Cuentas por palabras clave: notarías, registros, abogados y Telefónica
       ya se reconocen.</li>
+  <li>En la ficha, «Usar este» con la cuenta pone cuenta y subclave en toda
+      la factura y la recuerda; la fecha elegida queda en dd/mm/aaaa.</li>
 </ul>
 """,
     "1.24.0": """

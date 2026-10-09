@@ -7,6 +7,11 @@ veas y lo leo en la siguiente sesión de trabajo.
 
 ### Lo nuevo de la 1.25: memoria y lectura
 
+**Arreglos de lo que salió en tu errores.log:** exportar ya no se para por un
+nombre con un carácter invisible en lugar de una tilde (sale en ámbar para
+escribirlo bien), y leer un paquete ya no se come la memoria cuando una
+factura trae un número muy largo («Algo ha fallado» con MemoryError).
+
 La cuenta que pones a un proveedor se recuerda **por cliente** (en otro
 cliente se propone en ámbar). El NIF puesto de memoria solo va en silencio si
 ese proveedor ya le factura a ese cliente o lo leído es su NIF mal impreso.

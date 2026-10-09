@@ -71,7 +71,9 @@ def test_un_numero_enorme_en_la_serie_no_agota_la_memoria():
     avisos = huecos_de_numeracion(facturas, ["venta"] * len(facturas),
                                   "CLIENTE PRUEBA")
     assert time.monotonic() - inicio < 2
-    assert avisos == []          # un salto así es otra cosa, no una pérdida
+    # El número desbocado no cuenta para la serie; el hueco real sí se ve.
+    assert len(avisos) == 1 and "factura 3 " in avisos[0]
+    assert "900000000" not in avisos[0]
 
 
 def test_un_numero_enorme_entre_las_ya_exportadas_tampoco():
@@ -97,3 +99,42 @@ def test_la_ventana_de_error_nunca_sale_en_blanco():
     assert "sin memoria" in _texto_del_error(MemoryError, MemoryError())
     assert "TimeoutError" in _texto_del_error(TimeoutError, TimeoutError())
     assert _texto_del_error(ValueError, ValueError("dato raro")) == "dato raro"
+
+
+# ---------------------------------------- campos acotados (criterio del usuario)
+def test_un_numero_o_un_nombre_larguisimo_se_acota_al_leer():
+    from facturas_excel.procesar import MAX_NOMBRE_LEIDO, MAX_NUMERO, construir
+    datos = dict(emisor_nombre="PROVEEDOR DE PRUEBA " * 10,
+                 emisor_nif="B12345674" + "9" * 40,
+                 receptor_nombre="CLIENTE", receptor_nif="12345678Z",
+                 num_factura="FACTURA SIMPLIFICADA NUMERO " + "0" * 40 + "1234",
+                 sustituye_a="X" * 80 + "-77",
+                 fecha="03/09/2026", total=121.0,
+                 lineas_iva=[{"base": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0}])
+    pr = construir(datos, "12345678Z", "CLIENTE")
+    f = pr.facturas[0]
+    assert len(f.num_factura) <= MAX_NUMERO and f.num_factura.endswith("1234")
+    assert len(f.nombre) <= MAX_NOMBRE_LEIDO
+    assert f.nombre.startswith("PROVEEDOR DE PRUEBA")
+    assert len(f.nif) <= 20
+    assert f.rectifica_a.endswith("-77") and len(pr.sustituye_a) <= MAX_NUMERO
+    # Lo normal queda tal cual.
+    normal = construir(dict(datos, emisor_nombre="PROVEEDOR SL",
+                            emisor_nif="B12345674", num_factura="FV24-000123",
+                            sustituye_a=None), "12345678Z", "CLIENTE")
+    g = normal.facturas[0]
+    assert (g.num_factura, g.nombre, g.nif) == ("FV24-000123", "PROVEEDOR SL",
+                                                "B12345674")
+
+
+def test_un_contador_de_mas_de_9_cifras_no_cuenta_para_la_serie():
+    facturas = _ventas("T-10", "T-11", "T-13", "T-9000000000123")
+    [aviso] = huecos_de_numeracion(facturas, ["venta"] * 4, "CLIENTE PRUEBA")
+    assert "T-12" in aviso and "9000000000" not in aviso
+    # Aunque el raro sea el primero, el aviso se escribe con los normales.
+    facturas = _ventas("T-9000000000123", "T-10", "T-11", "T-13")
+    [aviso] = huecos_de_numeracion(facturas, ["venta"] * 4, "CLIENTE PRUEBA")
+    assert "T-12" in aviso
+    # Ni un número de miles de cifras entre las ya exportadas lo rompe.
+    assert huecos_de_numeracion(_ventas("1", "2", "4"), ["venta"] * 3, "X",
+                                ventas_anteriores=["9" * 5000]) is not None
