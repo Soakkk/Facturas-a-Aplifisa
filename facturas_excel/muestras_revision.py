@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,9 @@ import facturas_excel
 _CERROJO = RLock()
 _SCHEMA_VERSION = 1
 _EXT_ORIGINALES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".bin"}
+# Los originales se leen y se copian a trozos: un PDF de 200 MB no se carga
+# entero en memoria (eran +200 MB de golpe al soltarlo).
+_TROZO = 1 << 20
 
 
 def carpeta() -> Path:
@@ -30,6 +34,17 @@ def carpeta() -> Path:
 
 def _hash(contenido: bytes) -> str:
     return hashlib.sha256(contenido).hexdigest()
+
+
+def _hash_fichero(ruta: Path) -> str:
+    """La misma huella que `_hash`, leyendo el fichero a trozos."""
+    with open(ruta, "rb") as fichero:
+        if hasattr(hashlib, "file_digest"):        # Python 3.11 o más
+            return hashlib.file_digest(fichero, "sha256").hexdigest()
+        resumen = hashlib.sha256()
+        for trozo in iter(lambda: fichero.read(_TROZO), b""):
+            resumen.update(trozo)
+        return resumen.hexdigest()
 
 
 def _json(valor) -> bytes:
@@ -52,37 +67,61 @@ def _atomico(destino: Path, contenido: bytes) -> None:
             temporal.unlink(missing_ok=True)
 
 
-def _snapshot(tipo: str, contenido: dict) -> None:
+def _copiar_atomico(origen: Path, destino: Path) -> None:
+    """Como `_atomico`, pero copiando un fichero sin leerlo entero."""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    temporal = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destino.parent, prefix=".tmp-", delete=False) as fichero:
+            temporal = Path(fichero.name)
+        shutil.copyfile(origen, temporal)
+        with open(temporal, "rb+") as fichero:
+            os.fsync(fichero.fileno())
+        os.replace(temporal, destino)
+    finally:
+        if temporal is not None:
+            temporal.unlink(missing_ok=True)
+
+
+def _snapshot(tipo: str, contenido: dict, raiz: Path | None = None) -> None:
     contenido = {**contenido, "schema_version": _SCHEMA_VERSION,
                  "version_app": facturas_excel.__version__}
     identificador = _hash(_json(contenido))
-    destino = carpeta() / tipo / (identificador + ".json")
+    destino = (raiz or carpeta()) / tipo / (identificador + ".json")
     if not destino.exists():
         _atomico(destino, _json({**contenido, "guardado_utc": datetime.now(timezone.utc).isoformat()}))
 
 
-def _alias(ruta: str) -> Path:
+def _alias(ruta: str, raiz: Path | None = None) -> Path:
     normalizada = os.path.normcase(os.path.abspath(ruta))
-    return carpeta() / "rutas_locales" / (_hash(normalizada.encode("utf-8")) + ".json")
+    return (raiz or carpeta()) / "rutas_locales" / (_hash(normalizada.encode("utf-8")) + ".json")
 
 
-def guardar_original(ruta: str) -> str:
-    """Copia inmutable deduplicada y devuelve su SHA256; recuerda la ruta."""
+def guardar_original(ruta: str, raiz: Path | None = None) -> str:
+    """Copia inmutable deduplicada y devuelve su SHA256; recuerda la ruta.
+
+    Se lee a trozos: vale para un PDF de 200 MB sin cargarlo en memoria, y
+    también desde un hilo aparte. `raiz` fija la carpeta de muestras cuando
+    se llama desde otro hilo (la que había al pedirlo, no la de después).
+    """
+    raiz = raiz or carpeta()
+    origen = Path(ruta)
+    # Lo que tarda (leer y copiar el PDF) va sin el cerrojo: mientras, la
+    # ventana puede seguir guardando lecturas y revisiones. La copia es
+    # atómica y su nombre es su huella: dos copias a la vez dejan lo mismo.
+    identificador = _hash_fichero(origen)
+    sufijo = origen.suffix.lower()
+    if sufijo not in _EXT_ORIGINALES:
+        sufijo = ".bin"
+    existentes = list((raiz / "originales").glob(identificador + ".*"))
+    destino = existentes[0] if existentes else raiz / "originales" / (identificador + sufijo)
+    if not destino.exists():
+        _copiar_atomico(origen, destino)
     with _CERROJO:
-        origen = Path(ruta)
-        contenido = origen.read_bytes()
-        identificador = _hash(contenido)
-        sufijo = origen.suffix.lower()
-        if sufijo not in _EXT_ORIGINALES:
-            sufijo = ".bin"
-        existentes = list((carpeta() / "originales").glob(identificador + ".*"))
-        destino = existentes[0] if existentes else carpeta() / "originales" / (identificador + sufijo)
-        if not destino.exists():
-            _atomico(destino, contenido)
         _snapshot("documentos", {"original_id": identificador, "nombre": origen.name,
-                                  "archivo": destino.relative_to(carpeta()).as_posix()})
-        _atomico(_alias(ruta), _json({"original_id": identificador}))
-        return identificador
+                                  "archivo": destino.relative_to(raiz).as_posix()}, raiz)
+        _atomico(_alias(ruta, raiz), _json({"original_id": identificador}))
+    return identificador
 
 
 def _original(ruta: str) -> str | None:

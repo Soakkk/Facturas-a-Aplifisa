@@ -7,6 +7,7 @@ viva en su sitio. Los métodos usan el estado de la ventana (self).
 from __future__ import annotations
 
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
@@ -56,9 +57,14 @@ class LecturaMixin:
             rutas = [r for r in rutas if r not in listados]
             if not rutas:
                 return
-        muestras = {ruta: self._capturar_original(ruta) for ruta in rutas}
+        # La copia del original (un PDF de 200 MB) se hace aparte, sin parar
+        # la ventana: su huella no hace falta hasta acabar el primer bloque.
+        muestras = {ruta: self._capturar_original_aparte(ruta) for ruta in rutas}
         api_key = leer_api_key()
         if not api_key:
+            # Sin lectura se guarda igual el original (y se avisa si falla).
+            for futuro in muestras.values():
+                self._muestra_capturada({"muestra_id": futuro})
             QMessageBox.warning(self, "Falta la API key",
                                 "Configura primero tu API key de Gemini.")
             return
@@ -159,7 +165,33 @@ class LecturaMixin:
         self.lbl_estado.setText(
             f"Cola {bloque}/{self._cola_total} · páginas {actual}/{total}")
 
+    def _capturar_original_aparte(self, ruta) -> Future:
+        """Guarda el original en las muestras en un hilo aparte (en orden).
+
+        Devuelve el «pendiente» de su huella, que se recoge con
+        `_muestra_capturada` antes de mover el original o de usarla."""
+        hilo = getattr(self, "_hilo_originales", None)
+        if hilo is None:
+            hilo = self._hilo_originales = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="guardar-original")
+        return hilo.submit(muestras_revision.guardar_original, ruta,
+                           muestras_revision.carpeta())
+
+    def _muestra_capturada(self, elemento: dict):
+        """La huella del original del elemento de la cola (espera a que se
+        acabe de copiar, si aún no). Un fallo se avisa y no para la cola."""
+        valor = elemento.get("muestra_id")
+        if isinstance(valor, Future):
+            try:
+                valor = valor.result()
+            except Exception as error:
+                self._avisar_error_muestras(error)
+                valor = None
+            elemento["muestra_id"] = valor
+        return valor
+
     def _on_fallo(self, msg):
+        self._muestra_capturada(self._elemento_cola_actual or {})
         self._limpiar_parte_interna(self._elemento_cola_actual or {})
         self._cola_completados += 1
         self._escaneo_reciente = False
@@ -170,6 +202,9 @@ class LecturaMixin:
 
     def _on_terminado(self, procesadas, nombre, nif, crudos=None):
         elemento = self._elemento_cola_actual or {}
+        # Antes de nada: el original puede moverse ahora mismo al archivo del
+        # cliente, y su copia en las muestras tiene que estar ya terminada.
+        self._muestra_capturada(elemento)
         rutas_parte = list(self._rutas_actuales)
         if (elemento.get("parte", 1) > 1 and self._bloques
                 and self._bloques[-1].get("original") == elemento.get("original")
