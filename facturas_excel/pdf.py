@@ -29,6 +29,33 @@ PAGINAS_POR_BLOQUE = 25
 CERROJO = threading.Lock()
 
 
+def soltar_cache() -> None:
+    """Vacía la caché de imágenes de MuPDF. Solo con el CERROJO cogido.
+
+    Cada hoja dibujada deja su imagen descomprimida en una caché global de
+    MuPDF que llega a unos 256 MB y no se vacía nunca: con un PDF de más de
+    30 hojas eran 250 MB de memoria fijos (26 MB por hoja escaneada a 300
+    ppp). Aquí no sirve: cada hoja se dibuja una vez y se convierte en JPEG.
+    Vaciarla tras cada hoja hasta dibuja algo más deprisa.
+    """
+    fitz.TOOLS.store_shrink(100)
+
+
+def vaciar_cache() -> bool:
+    """Vacía la caché de MuPDF desde fuera (al vaciar el lote).
+
+    No espera: si la lectura está dibujando una hoja, ella misma la vacía al
+    acabarla. Devuelve si se ha podido vaciar ahora.
+    """
+    if not CERROJO.acquire(blocking=False):
+        return False
+    try:
+        soltar_cache()
+    finally:
+        CERROJO.release()
+    return True
+
+
 def _comprimir_pil(img: Image.Image) -> bytes:
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
@@ -50,6 +77,8 @@ def paginas_pdf_a_jpg(ruta_pdf: str, dpi: int = 150) -> List[bytes]:
             with CERROJO:
                 pix = doc[numero].get_pixmap(dpi=dpi)
                 imagenes.append(pix.pil_tobytes(format="JPEG", quality=CALIDAD))
+                del pix
+                soltar_cache()
     finally:
         with CERROJO:
             doc.close()
@@ -61,9 +90,13 @@ def pagina_a_jpg(ruta: str, pagina: int = 1, dpi: int = 150) -> bytes:
     if os.path.splitext(ruta)[1].lower() != ".pdf":
         with Image.open(ruta) as im:
             return _comprimir_pil(im)
-    with CERROJO, fitz.open(ruta) as doc:
-        pix = doc[max(1, int(pagina)) - 1].get_pixmap(dpi=dpi)
-        return pix.pil_tobytes(format="JPEG", quality=CALIDAD)
+    with CERROJO:
+        with fitz.open(ruta) as doc:
+            pix = doc[max(1, int(pagina)) - 1].get_pixmap(dpi=dpi)
+            jpg = pix.pil_tobytes(format="JPEG", quality=CALIDAD)
+            del pix
+        soltar_cache()
+        return jpg
 
 
 def numero_paginas(ruta_pdf: str) -> int:

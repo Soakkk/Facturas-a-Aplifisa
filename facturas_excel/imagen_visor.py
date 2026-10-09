@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from .pdf import CERROJO, EXT_IMAGEN
+from .pdf import CERROJO, EXT_IMAGEN, soltar_cache
 
 # Lo más grande que se saca de una vez (unos 48 MB en memoria). Más allá,
 # el visor amplía esta imagen, que ya es mucho más fina que la de lectura.
@@ -97,7 +97,12 @@ def _de_pdf(ruta, pagina, ancho, alto, proporcion) -> Optional[Hoja]:
             matriz = fitz.Matrix(ancho / marco.width, alto / marco.height)
             pix = hoja_pdf.get_pixmap(matrix=matriz, alpha=False,
                                       colorspace=fitz.csRGB)
-            return Hoja(pix.width, pix.height, bytes(pix.samples), pix.stride)
+            sacada = Hoja(pix.width, pix.height, bytes(pix.samples), pix.stride)
+            del pix
+        # Lo que el visor dibuja tampoco se queda en la caché de MuPDF (cada
+        # zoom de una hoja a 300 ppp dejaba allí sus 26 MB).
+        soltar_cache()
+        return sacada
     finally:
         CERROJO.release()
 
