@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from facturas_excel import ajustes, archivo, escaner, historial
 from facturas_excel import errores as registro_errores
-from facturas_excel.banda_avisos import AVISO, EXITO, INFO
+from facturas_excel.banda_avisos import AVISO, EXITO, INFO, fuera_del_lote
 from facturas_excel.dialogo_orden import (
     PDF as ORDEN_PDF, DialogoOrden,
 )
@@ -185,6 +185,7 @@ class AplifisaMixin:
         cuantas = historial.olvidar(cliente, por_tipo, nombre)
         self._revalidar_todo()
 
+        @fuera_del_lote         # vuelve a apuntarlas en el registro
         def deshacer():
             self._esperar_archivo()
             try:

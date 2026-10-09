@@ -78,3 +78,48 @@ def test_el_desplegable_con_el_foco_no_cambia_otra_factura_al_llegar_un_bloque(t
     _app.processEvents()
 
     assert _gastos_pasados_a_ingreso(v) == []
+
+
+# ---------------- «Vaciar todo» quita los «Deshacer» del lote, no los demás
+def _ventana_con_lote(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    v = _ventana(tmp_path)
+    for procesadas, crudos in _bloques(tmp_path, 6, 6):
+        v._on_terminado(procesadas, *CLIENTE, crudos)
+    return v
+
+
+def test_vaciar_todo_no_quita_el_aviso_de_la_recogida(tmp_path, monkeypatch):
+    """«Recoger sueltos» deja un aviso fijo con lo que no se pudo mover y su
+    «Deshacer» (devuelve los PDF a su sitio: nada del lote). Vaciar el lote
+    lo quitaba, con su texto."""
+    from facturas_excel.banda_avisos import AVISO
+    v = _ventana_con_lote(tmp_path, monkeypatch)
+    texto = "Recogidos 12 archivo(s). No se pudieron mover 2: a.pdf; b.pdf."
+    # Lo que deja ArchivoMixin._recoger_sueltos al terminar.
+    v._avisar(texto, AVISO, deshacer=v._deshacer_recogida, segundos=0)
+
+    v._vaciar_todo()
+
+    assert not v.filas
+    assert v.banda.isVisibleTo(v) and v.banda.lbl.text() == texto
+    assert v.banda.btn_deshacer.isVisibleTo(v)
+
+
+def test_vaciar_todo_no_quita_el_deshacer_de_olvidar_una_exportacion(tmp_path, monkeypatch):
+    """Deshacer «Olvidar exportación» vuelve a apuntarlas en el registro: no
+    depende del lote, y vaciarlo no lo quita."""
+    from facturas_excel import historial
+    v = _ventana_con_lote(tmp_path, monkeypatch)
+    monkeypatch.setattr(historial, "olvidar", lambda *a, **k: 1)
+    v.filas[0]["ya_exportada"] = {"exportada": "01/03/2026 10:00"}
+    v.tabla.selectRow(0)
+    v._olvidar_exportacion()
+    assert v.banda.btn_deshacer.isVisibleTo(v)
+
+    v._vaciar_todo()
+
+    assert v.banda.isVisibleTo(v) and v.banda.btn_deshacer.isVisibleTo(v)
+    assert "quitadas del historial" in v.banda.lbl.text()

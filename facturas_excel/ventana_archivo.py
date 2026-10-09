@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 
 from facturas_excel import archivo, escaner, registro_facturas
 from facturas_excel import errores as registro_errores
-from facturas_excel.banda_avisos import AVISO, EXITO, INFO
+from facturas_excel.banda_avisos import AVISO, EXITO, INFO, fuera_del_lote
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
 from facturas_excel.dialogo_escaneos import DialogoEscaneos
@@ -116,6 +116,7 @@ class ArchivoMixin:
         self._avisar(texto, AVISO if r["errores"] or sin_expediente else EXITO,
                      deshacer=self._deshacer_recogida, segundos=0)
 
+    @fuera_del_lote             # mueve PDF del archivo, nada del lote
     def _deshacer_recogida(self) -> None:
         from facturas_excel import recoger
         self._esperar_archivo()      # antes, lo que se esté archivando

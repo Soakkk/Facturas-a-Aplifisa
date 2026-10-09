@@ -24,6 +24,15 @@ _ESTILOS = {
 }
 
 
+def fuera_del_lote(accion: Callable) -> Callable:
+    """Marca un «Deshacer» que no toca el lote: devolver a su sitio los PDF
+    de una recogida, volver a apuntar una exportación olvidada. «Vaciar
+    todo» no lo quita (el aviso de una recogida se queda fijo, con lo que no
+    se pudo mover)."""
+    accion.fuera_del_lote = True
+    return accion
+
+
 class BandaAvisos(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,8 +92,11 @@ class BandaAvisos(QFrame):
 
     def olvidar_deshacer(self) -> None:
         """El «Deshacer» del aviso ya no vale (se ha vaciado el lote): se
-        quita ese aviso, que además retenía todo lo que deshacía."""
-        if self._accion_deshacer is not None:
+        quita ese aviso, que además retenía todo lo que deshacía. Los que no
+        deshacen nada del lote (ver `fuera_del_lote`) siguen valiendo y se
+        quedan, como antes de vaciar."""
+        accion = self._accion_deshacer
+        if accion is not None and not getattr(accion, "fuera_del_lote", False):
             self.ocultar()
 
     def _deshacer(self) -> None:
