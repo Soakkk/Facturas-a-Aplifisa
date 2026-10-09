@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import copy
 import json
 import math
+import time
 
 import pytest
 from PySide6.QtCore import QObject, Signal
@@ -654,3 +655,123 @@ def test_la_ficha_de_una_factura_de_300_lineas_no_se_congela(ventana):
     etiquetas = ventana.ficha.findChildren(QLabel)
     assert len(etiquetas) < 120          # antes, unas 3 por línea: más de 900
     assert any("288 líneas más" in e.text() for e in etiquetas)
+
+
+# =====================================================================
+# n.º 32 — Tope de tokens de salida y la segunda lectura una sola vez
+# =====================================================================
+from facturas_excel.localizar import pedir as PEDIR_LOCALIZAR   # noqa: E402  (antes del parche de conftest)
+
+
+def test_gemini_tiene_un_tope_de_salida(monkeypatch):
+    from facturas_excel.extraccion import MAX_TOKENS_SALIDA
+    ex = extractor(monkeypatch, {"modelo-a": json.dumps(lectura(0))}, modo="no")
+    assert 2000 <= MAX_TOKENS_SALIDA <= 16384
+    assert ex._config().max_output_tokens == MAX_TOKENS_SALIDA
+    ex._con_esquema = False                       # el respaldo sin esquema
+    assert MAX_TOKENS_SALIDA <= ex._config().max_output_tokens <= 4 * MAX_TOKENS_SALIDA
+
+
+def test_senalar_en_el_documento_tambien_tiene_tope(monkeypatch):
+    from types import SimpleNamespace
+
+    from google import genai
+
+    from facturas_excel.extraccion import MAX_TOKENS_SALIDA
+    pedidas = []
+
+    class Cliente:
+        def __init__(self, **_k):
+            self.models = SimpleNamespace(generate_content=self._generar)
+
+        def _generar(self, model, contents, config):
+            pedidas.append(config)
+            return SimpleNamespace(text='{"datos": []}', model_version=model,
+                                   usage_metadata=None)
+    monkeypatch.setattr(genai, "Client", Cliente)
+    PEDIR_LOCALIZAR("clave", "modelo-a", b"img", [("Total", "121,00")])
+    assert pedidas[0].max_output_tokens == MAX_TOKENS_SALIDA
+
+
+def test_la_segunda_lectura_no_se_guarda_dos_veces():
+    d = lectura(0)
+    assert combinada(d, copy.deepcopy(d))["_lectura_2"] == {}
+    otra = lectura(0, total=99.0, fecha_operacion="01/03/2026")
+    otra.pop("concepto_texto")
+    assert combinada(d, otra)["_lectura_2"] == {
+        "total": 99.0, "fecha_operacion": "01/03/2026", "concepto_texto": None}
+
+
+# =====================================================================
+# n.º 33 — NIF con cifras de ancho completo; tipo de documento desconocido
+# =====================================================================
+def test_un_nif_de_ancho_completo_se_normaliza_al_leer():
+    assert procesar.normaliza_nif("１２３４５６７８Ｚ") == "12345678Z"
+    pr = lote(lectura(0, emisor_nif="Ｂ１２３４５６７４"))[0][1]
+    assert pr.facturas[0].nif == "B12345674"
+    assert validar(pr.facturas[0]).estado == OK
+
+
+@pytest.mark.parametrize("nif", ["１２３４５６７８Z", "١٢٣٤٥٦٧٨Z", "X１２３４５６７L"],
+                         ids=["ancho_completo", "arabes", "nie_ancho_completo"])
+def test_un_dni_con_cifras_raras_no_sale_en_verde(nif):
+    from facturas_excel.validacion import REVISAR, validar_nif
+    assert not validar_nif(nif)
+    resultado = validar(factura_correcta(nif=nif))
+    assert resultado.estado == REVISAR
+    assert any("NIF" in m for m in resultado.mensajes)
+
+
+def test_un_tipo_de_documento_desconocido_sale_en_ambar():
+    from facturas_excel import fiscal
+    from facturas_excel.extraccion import TIPOS_DOCUMENTO
+    from facturas_excel.validacion import REVISAR
+    assert fiscal._TIPOS_DOCUMENTO == set(TIPOS_DOCUMENTO)
+    avisos = fiscal.avisos(factura_correcta(tipo_documento="abono_raro"), "gasto")
+    assert [g for _t, _c, g in avisos] == [REVISAR]
+    assert "abono_raro" in avisos[0][0]
+    for conocido in TIPOS_DOCUMENTO:
+        textos = [t for t, _c, _g in fiscal.avisos(
+            factura_correcta(tipo_documento=conocido), "venta")]
+        assert not any("ningún tipo conocido" in t for t in textos)
+
+
+# =====================================================================
+# n.º 34 — texto.reparar sin coste exponencial
+# =====================================================================
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+@pytest.mark.parametrize("roto,candidato", [
+    ("A\x01" * 28, "A" * 55 + "XB"),                        # alternados
+    ("A\x01" * 200, "A" * 399 + "XB"),
+    (("A" + "\x01" * 5) * 28, "A" * 167 + "XB"),             # tandas seguidas
+    ("\x02\x03" * 10 + "\x01A" * 28, "A" * 70 + "XB"),
+], ids=["28_alternados", "200_alternados", "28_tandas_de_5", "mezcla"])
+def test_reparar_no_tarda_con_muchas_tandas_de_invisibles(roto, candidato):
+    # En otro proceso: con la expresión regular de antes no acababa nunca (y
+    # sin soltar el intérprete), así la prueba falla a los 20 s, no se cuelga.
+    import subprocess
+    import sys
+    codigo = ("import time\nfrom facturas_excel.texto import reparar\n"
+              f"i = time.perf_counter()\nr = reparar({roto!r}, [{candidato!r}])\n"
+              "print(r is None, time.perf_counter() - i)")
+    salida = subprocess.run([sys.executable, "-c", codigo], cwd=RAIZ, timeout=20,
+                            capture_output=True, text=True, check=True).stdout.split()
+    assert salida[0] == "True" and float(salida[1]) < 0.5
+
+
+def test_reparar_sigue_recuperando_la_letra():
+    from facturas_excel.texto import reparar
+    assert reparar("JOS\x01 GARC\x01A SL", ["JOSÉ GARCÍA SL"]) == "JOSÉ GARCÍA SL"
+    assert reparar("JOS\x01", ["JOSE", "JOSÉ"]) == "JOSÉ"
+    assert reparar("JOS\x01", ["JOSE", "JOSU"]) is None      # dos posibles: ninguno
+    assert reparar("JOS\x01\x01", ["JOSXYZ"]) is None        # no caben tres letras
+
+
+def test_construir_con_el_nombre_del_cliente_roto_no_tarda():
+    cliente = ("A" * 55 + "XB", "12345678Z")
+    inicio = time.perf_counter()
+    procesar.construir(lectura(0, receptor_nombre="A\x01" * 28, receptor_nif=None,
+                               emisor_nif=None), cliente[1], cliente[0])
+    assert time.perf_counter() - inicio < 0.5

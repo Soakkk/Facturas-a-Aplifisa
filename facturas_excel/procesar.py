@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
@@ -34,11 +35,14 @@ from .texto import limpiar, reparar, tiene_invisibles, visible
 def normaliza_nif(nif) -> str:
     if not nif:
         return ""
-    return str(nif).strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+    # NFKC: las cifras y letras «de ancho completo» (１２３４５６７８Ｚ, de un PDF
+    # asiático o una lectura rara) pasan a las normales. Si no, el DNI pasaba
+    # el control de la letra y llegaba así al Excel, en verde.
+    nif = unicodedata.normalize("NFKC", str(nif))
+    return nif.strip().upper().replace(".", "").replace(" ", "").replace("-", "")
 
 
 def _tokens_nombre(nombre) -> set:
-    import unicodedata
     if not nombre:
         return set()
     t = "".join(c for c in unicodedata.normalize("NFD", str(nombre))

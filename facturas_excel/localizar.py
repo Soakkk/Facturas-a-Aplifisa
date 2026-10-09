@@ -141,7 +141,8 @@ def pedir(api_key: str, modelo: str, img: bytes,
     """Pregunta a Gemini y devuelve (cajas, consumos)."""
     from google import genai
     from google.genai import types
-    from .extraccion import TIEMPO_LIMITE, _consumo, _parse_json_tolerante
+    from .extraccion import (MAX_TOKENS_SALIDA, TIEMPO_LIMITE, _consumo,
+                             _parse_json_tolerante)
 
     if not lista:
         return [], []
@@ -149,6 +150,7 @@ def pedir(api_key: str, modelo: str, img: bytes,
         timeout=TIEMPO_LIMITE * 1000))
     config = types.GenerateContentConfig(
         response_mime_type="application/json", response_json_schema=_ESQUEMA,
+        max_output_tokens=MAX_TOKENS_SALIDA,
         thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW))
     mime = "image/png" if (img or b"").startswith(b"\x89PNG") else "image/jpeg"
     resp = cliente.models.generate_content(

@@ -68,6 +68,14 @@ def modo_doble_lectura() -> str:
 # quedaba en "69/70" y no terminaba nunca (04/09/2026).
 TIEMPO_LIMITE = 90       # segundos
 
+# Tope de lo que puede contestar Gemini por hoja (tokens de salida, que
+# incluyen lo que «piensa»). El JSON del esquema ocupa unos 500 tokens y con
+# 12 líneas de IVA no llega a 1.500; con el pensamiento en LOW sobra. Sin
+# tope, una respuesta desbocada (cifras o artículos repetidos) podía llegar a
+# 65.000 tokens pagados y a cientos de KB por hoja en la sesión y las
+# muestras. Sin esquema el modelo piensa lo que quiere: el doble de margen.
+MAX_TOKENS_SALIDA = 8192
+
 
 class SinCredito(Exception):
     """La API key no tiene credito / facturacion activa (no reintentar)."""
@@ -461,10 +469,12 @@ class Extractor:
     def _config(self):
         if not self._con_esquema:
             return types.GenerateContentConfig(
-                response_mime_type="application/json")
+                response_mime_type="application/json",
+                max_output_tokens=2 * MAX_TOKENS_SALIDA)
         return types.GenerateContentConfig(
             response_mime_type="application/json",
             response_json_schema=ESQUEMA,
+            max_output_tokens=MAX_TOKENS_SALIDA,
             # LOW: estos modelos no admiten MINIMAL y la temperatura se
             # ignora. Pensar poco basta para copiar datos y va mas rapido.
             thinking_config=types.ThinkingConfig(

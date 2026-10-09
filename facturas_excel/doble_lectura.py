@@ -213,6 +213,18 @@ def es_dudosa(datos: dict) -> bool:
     return abs(round(suma, 2) - total) > 0.02
 
 
+def lo_distinto(principal: dict, segunda: dict) -> dict:
+    """De la segunda lectura, solo lo que no dice igual que la principal.
+
+    Entera, cada lectura se guardaba dos veces (en la sesión y en las
+    muestras): con una respuesta desbocada, cientos de KB por hoja. Lo que
+    no está aquí, la segunda lo leyó igual."""
+    claves = [k for k in dict.fromkeys([*principal, *segunda])
+              if not str(k).startswith("_")]
+    return {k: segunda.get(k) for k in claves
+            if principal.get(k) != segunda.get(k)}
+
+
 def combinar(principal: dict, segunda: Optional[dict], modelo_1: str,
              modelo_2: str, error_2: str = "") -> dict:
     """La lectura que va a la tabla, con el resultado de la comparacion.
@@ -236,7 +248,7 @@ def combinar(principal: dict, segunda: Optional[dict], modelo_1: str,
             datos["_error_2"] = error_2
         return datos
     datos["_modelo_2"] = modelo_2
-    datos["_lectura_2"] = segunda
+    datos["_lectura_2"] = lo_distinto(principal, segunda)
     datos["_discrepancias"] = comparar(principal, segunda)
     datos["_verificacion"] = "doble"
     return datos

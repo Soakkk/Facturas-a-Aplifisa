@@ -156,7 +156,10 @@ def validar_nif(nif: str) -> bool:
     cualquiera de las dos formas daba por buenos CIF mal leídos.
     """
     nif = _limpiar_nif(nif)
-    if len(nif) != 9:
+    # Solo cifras y letras normales: «１２３４５６７８Z» (ancho completo) o
+    # «١٢٣٤٥٦٧٨Z» (árabes) pasaban isdigit() e int() y salían en verde, con
+    # esas cifras en el Excel. Las de la lectura ya llegan normalizadas (NFKC).
+    if len(nif) != 9 or not nif.isascii():
         return False
 
     # NIE: X/Y/Z -> 0/1/2
