@@ -392,28 +392,36 @@ class TablaFacturas(QTableWidget):
         self.blockSignals(bloqueadas)
 
     def poner_filas(self, filas, al_cambiar_tipo) -> None:
-        """Sustituye todas las filas de la tabla por estas, de una vez.
+        """Pone estas filas en la tabla en lugar de las que había.
 
-        Antes se insertaban de una en una: cada inserción recorre lo que ya
-        hay (con un desplegable por fila), y con 800 líneas rehacer la tabla
-        tardaba más de 4 segundos."""
-        self._con_filas_nuevas(0, filas, al_cambiar_tipo)
+        Las filas que ya hay se aprovechan: se vuelven a pintar con su línea
+        nueva (los datos y el desplegable; el estado y los avisos los pinta
+        la revisión del lote que viene después, solo donde cambian), y solo
+        se crean las que faltan, todas a la vez, o se quitan las que sobran.
+        Antes se creaban todas otra vez, de una en una, con sus 19 celdas y
+        su desplegable: con 800 líneas, rehacer la tabla (otro bloque leído,
+        ordenar, «por el total», cambiar de cliente…) tardaba de 4 a 6
+        segundos.
 
-    def anadir_filas(self, filas, al_cambiar_tipo) -> None:
-        """Añade estas filas al final, de una vez (las de antes no se tocan)."""
-        self._con_filas_nuevas(self.rowCount(), filas, al_cambiar_tipo)
-
-    def _con_filas_nuevas(self, desde: int, filas, al_cambiar_tipo) -> None:
+        Queda como una tabla recién hecha: sin selección ni fila actual y
+        arriba del todo. Si se estaba escribiendo en una celda, se rehace de
+        verdad: lo escrito se descarta como siempre, sin apuntarse a medias."""
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         # Sin repintar mientras se llenan: se pinta una vez, al final.
         repintar = self.updatesEnabled()
         self.setUpdatesEnabled(False)
         try:
-            self.setRowCount(desde)
-            self.setRowCount(desde + len(filas))
-            for r, fila in enumerate(filas, desde):
-                self._llenar_fila(r, fila, al_cambiar_tipo)
+            if self.editando():
+                self.setRowCount(0)
+            self.selectionModel().clear()
+            hechas = min(self.rowCount(), len(filas))
+            self.setRowCount(len(filas))
+            for r in range(hechas):
+                self.pintar(r, filas[r])
+            for r in range(hechas, len(filas)):
+                self._llenar_fila(r, filas[r], al_cambiar_tipo)
+            self.verticalScrollBar().setValue(0)
         finally:
             self.setUpdatesEnabled(repintar)
             self.blockSignals(bloqueadas)

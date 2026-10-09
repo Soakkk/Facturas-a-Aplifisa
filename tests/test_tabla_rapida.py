@@ -253,7 +253,7 @@ def _huella(v):
     return celdas, lineas, columnas, seleccion, textos
 
 
-# ---------------------------- cada bloque añade sus filas, sin rehacerlas
+# ------------------- la tabla aprovecha sus filas: solo crea las que faltan
 class _Gemelas:
     """Dos ventanas con el mismo lote, cada una con su carpeta de datos (lo
     que aprende una, un NIF o una cuenta, no lo encuentra hecho la otra)."""
@@ -273,19 +273,25 @@ class _Gemelas:
             self._en(i, lambda: hacer(v))
 
 
-def test_cada_bloque_anade_sus_filas_y_queda_igual_que_rehaciendo(tmp_path, monkeypatch):
+def test_la_tabla_aprovecha_sus_filas_y_queda_igual_que_rehaciendola(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from facturas_excel.tabla_facturas import C_BASE, C_NIF, C_NOMBRE, C_TIPO
     from facturas_excel.validacion import REVISAR
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.Yes))
+    from PySide6.QtWidgets import QTableWidget
     gemelas = _Gemelas(tmp_path, monkeypatch)
     a, b = gemelas.ventanas
-    # «a» como ahora: añade las filas nuevas; «b» como antes: rehace la
-    # tabla entera en cada bloque.
-    monkeypatch.setattr(b, "_solo_se_anaden", lambda filas: False, raising=False)
+    # «a» como ahora: aprovecha las filas que ya tiene la tabla; «b» como
+    # antes: la vacía y crea todas las filas otra vez cada vez.
+    poner_en_b = b.tabla.poner_filas
+
+    def rehacer_de_verdad(filas, al_cambiar_tipo):
+        QTableWidget.setRowCount(b.tabla, 0)
+        poner_en_b(filas, al_cambiar_tipo)
+    monkeypatch.setattr(b.tabla, "poner_filas", rehacer_de_verdad)
     gemelas.ambas(lambda v: v.resize(1400, 800))
-    rehechas = _contar(monkeypatch, a.tabla, "poner_filas")
+    creadas = _contar(monkeypatch, a.tabla, "_llenar_fila")
 
     def ambar(v):
         return next(r for r, f in enumerate(v.filas)
@@ -327,16 +333,14 @@ def test_cada_bloque_anade_sus_filas_y_queda_igual_que_rehaciendo(tmp_path, monk
         assert _huella(a) == _huella(b), f"distinto tras el bloque {paso + 1}"
         if paso == 0:
             combo = a.tabla.cellWidget(0, C_TIPO)
-        if paso == 8:
-            # Hasta aquí, las celdas de la primera fila son las de siempre.
-            assert a.tabla.cellWidget(0, C_TIPO) is combo
         gemelas.ambas(entre[paso])
         assert _huella(a) == _huella(b), f"distinto tras lo hecho en el paso {paso + 1}"
-    # Solo se ha rehecho entera con el primer bloque y cuando hacía falta
-    # (por el total, quitar un bloque, cambiar de cliente, ordenar y el
-    # bloque siguiente a cada una de esas cosas, salvo tras quitar uno).
-    assert 6 <= len(rehechas) <= 9
+    # Cada fila se ha creado una vez (más alguna que hubo que volver a
+    # crear al quitar un bloque o eliminar una línea), no una vez por cada
+    # bloque: las celdas de la primera son las del principio.
     assert a.tabla.rowCount() > 100
+    assert len(creadas) < a.tabla.rowCount() + 20
+    assert a.tabla.cellWidget(0, C_TIPO) is combo
 
 
 # ------------------------------ pintar solo lo que cambia al revisar el lote
@@ -375,7 +379,9 @@ def test_lo_que_cambia_se_pinta_igual_que_en_una_tabla_recien_hecha(tmp_path, mo
     v.tabla.cellWidget(ambar[3], C_TIPO).setCurrentIndex(1)
     v.tabla.item(rojas[-1], C_NUM).setText("")
     pintado = _huella(v)[:3]
-    # La misma tabla rehecha entera y pintada desde cero.
+    # La misma tabla rehecha entera (filas nuevas) y pintada desde cero.
+    from PySide6.QtWidgets import QTableWidget
+    QTableWidget.setRowCount(v.tabla, 0)
     v._poner_filas(list(v.filas))
     v._revalidar_todo()
     assert _huella(v)[:3] == pintado
@@ -631,7 +637,7 @@ def test_la_muestra_automatica_va_como_mucho_una_por_minuto(tmp_path, monkeypatc
     # Queda pendiente para cuando se cumpla el minuto (desde el primer
     # cambio: no se aplaza con los siguientes), con lo último.
     assert v._timer_muestra_minuto.isActive()
-    assert 50_000 <= v._timer_muestra_minuto.remainingTime() <= 55_001
+    assert 54_000 <= v._timer_muestra_minuto.interval() <= 55_001
     reloj[0] = 1061.0
     v._timer_muestra_minuto.stop()
     v._guardar_muestra_revision_automatica()

@@ -79,7 +79,7 @@ from facturas_excel.tabla_facturas import (  # noqa: F401
     ComboSinRueda, TablaFacturas, fmt, parse_numero, valor_de_celda,
 )
 from facturas_excel.validacion import REVISAR, validar_nif
-from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO, aviso_sin_calculados
+from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
 
 # Datos de la cabecera de una factura (iguales en todas sus líneas).
 CAMPOS_CABECERA = ("num_factura", "fecha", "nombre", "nif", "concepto", "subclave")
@@ -2372,63 +2372,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         unificar_nombres_por_nif(
             [x for fila in filas for x in (fila.factura, *(fila.fuentes or ()))],
             nombres_guardados(solo_a_mano=True))
-        if self._solo_se_anaden(filas):
-            self._anadir_filas(filas)
-        else:
-            self._poner_filas(filas)
-
-    def _solo_se_anaden(self, filas) -> bool:
-        """Si las líneas de ahora son el principio de `filas` tal cual: entonces
-        basta con añadir las que faltan (un bloque más de la cola) en vez de
-        rehacer la tabla entera, que con 800 líneas tardaba segundos en cada
-        bloque.
-
-        Tal cual quiere decir que rehaciéndola saldría lo mismo: cada línea
-        con la misma factura (el mismo objeto, no una copia), la misma hoja,
-        el mismo tipo, aviso (sin lo que ya calcula cada revisión) y bloque y
-        las mismas líneas originales. Si no, se rehace entera como siempre:
-        un cambio de cliente vuelve a montar las facturas, «por el total»
-        las vuelve a resumir, una unión de hojas entre bloques cambia la
-        última del bloque anterior, una decisión sobre un NIF cambia los
-        avisos, la tabla está ordenada por una columna, se quitó un bloque…"""
-        viejas = self.filas
-        if not viejas or len(filas) < len(viejas) \
-                or self.tabla.rowCount() != len(viejas):
-            return False
-        if self.tabla.editando():
-            # Rehacerla cierra la celda que se está escribiendo sin apuntar
-            # lo escrito; añadiendo, se apuntaría a medias.
-            return False
-        for vieja, nueva in zip(viejas, filas):
-            if (vieja.factura is not nueva.factura or vieja.png != nueva.png
-                    or vieja.tipo != nueva.tipo or vieja.bloque != nueva.bloque
-                    or vieja.aviso not in (nueva.aviso, aviso_sin_calculados(nueva.aviso))
-                    or len(vieja.fuentes) != len(nueva.fuentes)
-                    or any(x is not y for x, y in zip(vieja.fuentes, nueva.fuentes))):
-                return False
-        return True
-
-    def _anadir_filas(self, filas) -> None:
-        """Pone `filas` sin rehacer la tabla: las celdas de las líneas que ya
-        estaban se quedan y solo se crean las de las nuevas, al final.
-
-        Queda lo mismo que rehaciéndola: el lote pasa a ser `filas` (líneas
-        recién hechas, que la revisión que sigue vuelve a comprobar), las
-        de antes se repintan con ellas (un nombre unificado por NIF en el
-        bloque nuevo también cambia facturas de antes) y la selección y el
-        desplazamiento vuelven al principio, como al rehacerla (la primera
-        fila que se ve la elige el filtro)."""
-        tabla = self.tabla
-        antes = len(self.filas)
-        tabla.blockSignals(True)
-        self.filas = list(filas)
-        for r in range(antes):
-            tabla.pintar(r, self.filas[r])
-        tabla.selectionModel().clear()
-        tabla.verticalScrollBar().setValue(0)
-        tabla.anadir_filas(self.filas[antes:], self._on_tipo_cambiado)
-        self._actualizar_columnas()
-        tabla.blockSignals(False)
+        self._poner_filas(filas)
 
     def _conservar_resumenes_corregidos(self, filas) -> None:
         """Recargo «por el total»: la línea a la vista es una copia que se
@@ -2475,10 +2419,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _poner_filas(self, filas) -> None:
         """Sustituye las filas del lote y las pinta de nuevo.
 
-        Todas de una vez y las columnas de recargo y retenciones una sola
-        vez al final: antes, por cada fila, se insertaba una fila más en la
-        tabla y se volvía a recorrer el lote entero para decidir las
-        columnas (con 800 líneas, más de 4 segundos)."""
+        Todas de una vez, aprovechando las filas que ya tiene la tabla (ver
+        TablaFacturas.poner_filas), y las columnas de recargo y retenciones
+        una sola vez al final: antes, por cada fila, se creaba una fila más
+        en la tabla y se volvía a recorrer el lote entero para decidir las
+        columnas. Con 800 líneas, cada bloque leído, ordenar o abrir la
+        sesión paraban la ventana de 4 a 6 segundos."""
         self.tabla.blockSignals(True)
         self.filas = list(filas)
         self.tabla.poner_filas(self.filas, self._on_tipo_cambiado)
