@@ -138,6 +138,11 @@ def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
     limite = time.time() - horas * 3600
     borrados = 0
     for carpeta, _subcarpetas, ficheros in os.walk(raiz, topdown=False):
+        try:
+            # Antes de borrar nada dentro (borrar cambia su fecha).
+            antigua = os.path.getmtime(carpeta) < limite
+        except OSError:
+            antigua = False
         for nombre in ficheros:
             ruta = os.path.join(carpeta, nombre)
             try:
@@ -146,9 +151,11 @@ def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
                     borrados += 1
             except OSError:
                 pass            # en uso o sin permiso: otra vez será
-        if carpeta != raiz:
+        if carpeta != raiz and antigua:
+            # Solo si se ha quedado vacía y no es de ahora mismo (otra copia
+            # del programa puede estar a punto de dejar ahí sus partes).
             try:
-                os.rmdir(carpeta)   # solo si se ha quedado vacía
+                os.rmdir(carpeta)
             except OSError:
                 pass
     return borrados

@@ -587,6 +587,7 @@ def _parte(carpeta, nombre, horas=0):
     if horas:
         hace = time.time() - horas * 3600
         os.utime(ruta, (hace, hace))
+        os.utime(carpeta, (hace, hace))
     return ruta
 
 
@@ -599,9 +600,11 @@ def test_al_arrancar_se_borran_las_partes_que_quedaron_de_otra_vez(tmp_path):
     # Una recién hecha puede ser de otra copia del programa que la está
     # leyendo ahora: esa no se toca.
     nueva = _parte(cola / "otro_def456", "otro_parte_01_de_04.pdf")
+    recien_creada = cola / "otro_ghi789"
+    recien_creada.mkdir()
     VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     assert not vieja.exists() and not vieja.parent.exists()
-    assert nueva.exists()
+    assert nueva.exists() and recien_creada.is_dir()
 
 
 def test_al_cerrar_se_borran_las_partes_de_lo_que_quedaba_en_la_cola(tmp_path):
