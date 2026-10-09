@@ -400,10 +400,13 @@ class LecturaMixin:
         quedó de la última vez y lo que se está leyendo, que se cancela (lo que
         entregue se descarta: antes volvía a aparecer en el lote vacío). Sus
         partes temporales se borran."""
-        for elemento in [*self._cola, *self._cola_guardada]:
-            self._limpiar_parte_interna(elemento)
+        # Fuera de la cola antes de borrar sus partes: si no, las de un PDF
+        # cargado dos veces se guardaban unas a otras y se quedaban.
+        soltados = [*self._cola, *self._cola_guardada]
         self._cola = []
         self._cola_guardada = []
+        for elemento in soltados:
+            self._limpiar_parte_interna(elemento)
         self._generacion_cola += 1
         self._cola_total = self._cola_completados = 0
         actual = self._elemento_cola_actual
@@ -825,15 +828,26 @@ class LecturaMixin:
             AVISO, segundos=0)
 
     def _limpiar_parte_interna(self, elemento: dict) -> None:
-        """Borra una parte ya procesada, nunca el PDF original del usuario."""
+        """Borra una parte ya procesada, nunca el PDF original del usuario.
+
+        Tampoco la que aún tiene que leer otro bloque de la cola: el mismo
+        PDF vuelto a cargar (tras «Vaciar todo», o dos veces) tiene las mismas
+        partes, y al descartar la lectura vieja se borraba la del bloque
+        nuevo, que luego no se podía leer («no such file»)."""
         if int(elemento.get("partes", 1) or 1) <= 1:
             return
+        en_uso = {os.path.normcase(os.path.abspath(ruta))
+                  for otro in [self._elemento_cola_actual, *self._cola]
+                  if otro and otro is not elemento
+                  for ruta in otro.get("rutas", [])}
         raiz = os.path.abspath(os.path.join(dir_datos(), "cola_pdf"))
         for ruta in elemento.get("rutas", []):
             ruta_abs = os.path.abspath(ruta)
             if not os.path.normcase(ruta_abs).startswith(
                     os.path.normcase(raiz) + os.sep):
                 continue
+            if os.path.normcase(ruta_abs) in en_uso:
+                continue        # la borrará ese bloque cuando se lea
             try:
                 os.remove(ruta_abs)
                 carpeta = os.path.dirname(ruta_abs)

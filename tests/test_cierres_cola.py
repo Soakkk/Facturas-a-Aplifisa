@@ -386,6 +386,57 @@ def test_al_abrir_un_lote_guardado_a_medias_se_recuperan_sus_facturas():
     assert any("no estaban en la tabla" in t for t in abierta.banda.historial)
 
 
+# n.º 9 ----------------------------------------------------------------
+def _partes_en_disco():
+    raiz = os.path.join(dir_datos(), "cola_pdf")
+    return sorted(os.path.join(r, f) for r, _d, fs in os.walk(raiz) for f in fs)
+
+
+def test_vaciar_y_volver_a_cargar_el_mismo_pdf_no_borra_sus_partes(
+        ventana, tmp_path, monkeypatch):
+    # El mismo PDF tiene siempre las mismas partes (misma carpeta y nombre).
+    # Al descartar la lectura cancelada se borraba su parte, que ya era la
+    # del bloque 2 del PDF vuelto a cargar: «no such file» y 25 facturas
+    # sin leer.
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    taco = _pdf(tmp_path / "taco.pdf", 60)
+    ventana.procesar_rutas([taco])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    cancelada = WorkerFalso.creados[-1]           # el 2.º bloque, leyéndose
+    ventana._vaciar_todo()
+    ventana.procesar_rutas([taco])                # enseguida, el mismo PDF
+    partes = [e["rutas"][0] for e in ventana._cola]
+    assert len(partes) == 3 and cancelada.rutas[0] in partes
+
+    cancelada.entregar(_bloque_de(cancelada))     # se descarta
+
+    assert all(os.path.exists(p) for p in partes)
+    for _ in partes:
+        lectura = WorkerFalso.creados[-1]
+        assert os.path.exists(lectura.rutas[0])
+        lectura.entregar(_bloque_de(lectura))
+    assert len(ventana._bloques) == 3
+    assert not _partes_en_disco()                 # y no quedan huérfanas
+
+
+def test_vaciar_con_el_mismo_pdf_cargado_dos_veces_no_deja_partes(
+        ventana, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    taco = _pdf(tmp_path / "taco.pdf", 60)
+    ventana.procesar_rutas([taco])
+    ventana.procesar_rutas([taco])                # dos veces, por despiste
+    leyendo = WorkerFalso.creados[-1]
+
+    ventana._vaciar_todo()
+    leyendo.entregar(_bloque_de(leyendo))         # se descarta
+
+    assert not ventana._bloques and not ventana._cola
+    assert not _partes_en_disco()
+
+
 # n.º 10 ---------------------------------------------------------------
 def _ventana_con_un_bloque():
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
