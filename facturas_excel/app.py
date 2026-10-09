@@ -169,6 +169,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._pintar_gasto()
         if restaurar_sesion:
             self._restaurar_sesion()
+        # Las partes de la cola de otra vez (se cerró a mitad) ya no sirven.
+        try:
+            pdf.limpiar_partes_huerfanas()
+        except OSError:
+            pass
         QTimer.singleShot(500, self._mostrar_notas_version_al_arrancar)
         # La copia de seguridad del día, con el programa ya en pantalla.
         QTimer.singleShot(4000, self._copia_diaria)
@@ -1956,6 +1961,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # No destruir QThreads vivos (abortaria el proceso)
         self.esperar_hilos()
         try:
+            # Lo que quedaba en la cola no se va a leer (la cola no se
+            # guarda): sus partes temporales no se quedan ocupando disco.
+            for elemento in [self._elemento_cola_actual, *self._cola]:
+                if elemento:
+                    self._limpiar_parte_interna(elemento)
             self._guardar_divisores()
             self._guardar_sesion()
         except Exception:

@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import threading
+import time
 from typing import List, Tuple
 
 import fitz  # PyMuPDF
@@ -21,6 +22,9 @@ MIME = "image/jpeg"
 CALIDAD = 80
 MAX_LADO = 2000  # px; redimensiona si la imagen es mayor (suficiente para OCR)
 PAGINAS_POR_BLOQUE = 25
+# Las partes de la cola más nuevas que esto no se tocan al arrancar: pueden
+# ser de otra copia del programa abierta que aún las está leyendo.
+HORAS_PARTES_RECIENTES = 6
 
 # PyMuPDF no admite dos llamadas a la vez desde hilos distintos. La lectura
 # rasteriza en segundo plano mientras el visor dibuja la hoja en pantalla:
@@ -116,6 +120,38 @@ def _carpeta_interna_cola(ruta_pdf: str) -> str:
     base = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.splitext(
         os.path.basename(ruta_pdf))[0]).strip("._") or "documento"
     return os.path.join(dir_datos(), "cola_pdf", f"{base}_{huella}")
+
+
+def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
+    """Borra las partes de la cola que se quedaron de otra vez.
+
+    Las partes de un PDF largo se borran al leer cada bloque; si el programa
+    se cerraba o se caía a mitad de la cola, se quedaban para siempre (200 MB
+    por cada PDF de 200 MB). La cola no pasa de una apertura a otra, así que
+    al arrancar ya no sirven. Devuelve cuántos ficheros se han borrado.
+    """
+    from .rutas import dir_datos
+
+    raiz = os.path.join(dir_datos(), "cola_pdf")
+    if not os.path.isdir(raiz):
+        return 0
+    limite = time.time() - horas * 3600
+    borrados = 0
+    for carpeta, _subcarpetas, ficheros in os.walk(raiz, topdown=False):
+        for nombre in ficheros:
+            ruta = os.path.join(carpeta, nombre)
+            try:
+                if os.path.getmtime(ruta) < limite:
+                    os.remove(ruta)
+                    borrados += 1
+            except OSError:
+                pass            # en uso o sin permiso: otra vez será
+        if carpeta != raiz:
+            try:
+                os.rmdir(carpeta)   # solo si se ha quedado vacía
+            except OSError:
+                pass
+    return borrados
 
 
 def dividir_pdf(ruta_pdf: str, paginas_por_parte: int = PAGINAS_POR_BLOQUE,

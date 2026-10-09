@@ -8,6 +8,7 @@ fijan cada arreglo; ninguno cambia lo que se ve ni lo que se decide.
 """
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -576,3 +577,45 @@ def test_un_guardado_que_falla_se_vuelve_a_intentar_y_vaciar_lo_olvida(
     sesion.esperar()
     assert sesion.cargar() == {"bloques": ["lote"]}
 
+
+# ------------------------------------------ partes temporales de la cola
+def _parte(carpeta, nombre, horas=0):
+    import time
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta = carpeta / nombre
+    ruta.write_bytes(b"%PDF-1.4 parte")
+    if horas:
+        hace = time.time() - horas * 3600
+        os.utime(ruta, (hace, hace))
+    return ruta
+
+
+def test_al_arrancar_se_borran_las_partes_que_quedaron_de_otra_vez(tmp_path):
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.rutas import dir_datos
+
+    cola = Path(dir_datos()) / "cola_pdf"
+    vieja = _parte(cola / "taco_abc123", "taco_parte_02_de_08.pdf", horas=30)
+    # Una recién hecha puede ser de otra copia del programa que la está
+    # leyendo ahora: esa no se toca.
+    nueva = _parte(cola / "otro_def456", "otro_parte_01_de_04.pdf")
+    VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    assert not vieja.exists() and not vieja.parent.exists()
+    assert nueva.exists()
+
+
+def test_al_cerrar_se_borran_las_partes_de_lo_que_quedaba_en_la_cola(tmp_path):
+    from PySide6.QtGui import QCloseEvent
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.rutas import dir_datos
+
+    cola = Path(dir_datos()) / "cola_pdf" / "taco_abc123"
+    partes = [_parte(cola, f"taco_parte_0{n}_de_03.pdf") for n in (1, 2, 3)]
+    original = _parte(tmp_path / "Escritorio", "taco.pdf")
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._elemento_cola_actual = {"rutas": [str(partes[1])], "partes": 3}
+    v._cola = [{"rutas": [str(partes[2])], "partes": 3},
+               {"rutas": [str(original)], "partes": 1}]
+    v.closeEvent(QCloseEvent())
+    assert not partes[1].exists() and not partes[2].exists()
+    assert original.exists()               # el PDF del usuario, nunca
