@@ -165,17 +165,22 @@ class LecturaMixin:
         self.lbl_estado.setText(
             f"Cola {bloque}/{self._cola_total} · páginas {actual}/{total}")
 
-    def _capturar_original_aparte(self, ruta) -> Future:
+    def _capturar_original_aparte(self, ruta) -> Future | None:
         """Guarda el original en las muestras en un hilo aparte (en orden).
 
         Devuelve el «pendiente» de su huella, que se recoge con
         `_muestra_capturada` antes de mover el original o de usarla."""
+        try:
+            # La carpeta se fija ahora: la copia la usa aunque acabe tarde.
+            raiz = muestras_revision.carpeta()
+        except OSError as error:
+            self._avisar_error_muestras(error)
+            return None
         hilo = getattr(self, "_hilo_originales", None)
         if hilo is None:
             hilo = self._hilo_originales = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="guardar-original")
-        return hilo.submit(muestras_revision.guardar_original, ruta,
-                           muestras_revision.carpeta())
+        return hilo.submit(muestras_revision.guardar_original, ruta, raiz)
 
     def _muestra_capturada(self, elemento: dict):
         """La huella del original del elemento de la cola (espera a que se

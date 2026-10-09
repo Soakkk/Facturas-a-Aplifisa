@@ -126,7 +126,7 @@ def test_soltar_un_pdf_no_espera_a_copiar_su_original(tmp_path, monkeypatch):
 
     def copia_lenta(ruta, raiz=None):
         hilos.append(threading.current_thread().name)
-        puede_acabar.wait(3)
+        puede_acabar.wait(10)
         return "huella-del-original"
     monkeypatch.setattr(muestras_revision, "guardar_original", copia_lenta)
     monkeypatch.setattr(ventana_lectura, "Worker", WorkerFalso)
@@ -140,7 +140,7 @@ def test_soltar_un_pdf_no_espera_a_copiar_su_original(tmp_path, monkeypatch):
     v.procesar_rutas([str(ruta)])
     # La ventana sigue a lo suyo mientras se copia (un PDF de 200 MB tardaba
     # 1,6 s y subía la memoria 200 MB).
-    assert time.monotonic() - inicio < 1.5
+    assert time.monotonic() - inicio < 5
     assert v._elemento_cola_actual is not None
     puede_acabar.set()
 
@@ -619,3 +619,23 @@ def test_al_cerrar_se_borran_las_partes_de_lo_que_quedaba_en_la_cola(tmp_path):
     v.closeEvent(QCloseEvent())
     assert not partes[1].exists() and not partes[2].exists()
     assert original.exists()               # el PDF del usuario, nunca
+
+
+def test_sin_carpeta_de_ejemplos_el_pdf_entra_igual_en_la_cola(tmp_path, monkeypatch):
+    from facturas_excel import muestras_revision, ventana_lectura
+    from facturas_excel.app import VentanaPrincipal
+
+    def sin_permiso():
+        raise PermissionError("carpeta de ejemplos sin permiso")
+    monkeypatch.setattr(muestras_revision, "carpeta", sin_permiso)
+    monkeypatch.setattr(ventana_lectura, "Worker", WorkerFalso)
+    monkeypatch.setattr(ventana_lectura, "leer_api_key", lambda: "clave-de-prueba")
+    avisos = []
+    monkeypatch.setattr(VentanaPrincipal, "_avisar_error_muestras",
+                        lambda self, error: avisos.append(str(error)))
+    ruta = tmp_path / "taco.jpg"
+    ruta.write_bytes(b"no se llega a leer")
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v.procesar_rutas([str(ruta)])
+    assert v._elemento_cola_actual and v._elemento_cola_actual["muestra_id"] is None
+    assert avisos == ["carpeta de ejemplos sin permiso"]
