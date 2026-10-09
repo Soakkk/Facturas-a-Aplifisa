@@ -171,3 +171,107 @@ def test_otra_hoja_escaneada_con_el_mismo_nombre_tiene_su_pdf(tmp_path):
         assert a[0].get_images()[0][0] and \
             a.xref_stream_raw(a[0].get_images()[0][0]) != \
             b.xref_stream_raw(b[0].get_images()[0][0])
+
+
+# ------------------------------------- 3. el expediente, solo si ha cambiado
+def _contar(monkeypatch, modulo, nombre):
+    llamadas = []
+    original = getattr(modulo, nombre)
+
+    def contar(*a, **k):
+        llamadas.append(a)
+        return original(*a, **k)
+    monkeypatch.setattr(modulo, nombre, contar)
+    return llamadas
+
+
+def _contenido(carpeta):
+    salida = {}
+    for raiz, _c, archivos in os.walk(carpeta):
+        for nombre in archivos:
+            ruta = os.path.join(raiz, nombre)
+            with open(ruta, "rb") as fh:
+                salida[os.path.relpath(ruta, carpeta)] = (fh.read(),
+                                                          os.stat(ruta).st_mtime_ns)
+    return salida
+
+
+def test_el_expediente_que_no_ha_cambiado_no_se_rehace(tmp_path, monkeypatch):
+    base = str(tmp_path / "archivo")
+    e = _archivo_con_facturas(base)
+    primero = expediente.crear(base, e)
+    antes = _contenido(os.path.dirname(primero["carpeta"]))
+    unidos = _contar(monkeypatch, expediente, "_unir")
+    resumenes = _contar(monkeypatch, expediente, "_pdf_desde_html")
+
+    segundo = expediente.crear(base, e)
+
+    assert unidos == [] and resumenes == []
+    assert segundo == primero
+    # Ni la carpeta ni el ZIP se han tocado.
+    assert _contenido(os.path.dirname(primero["carpeta"])) == antes
+
+
+def test_si_solo_cambian_los_ingresos_los_gastos_se_aprovechan(tmp_path, monkeypatch):
+    base = str(tmp_path / "archivo")
+    e = _archivo_con_facturas(base)
+    primero = expediente.crear(base, e)
+    gastos = os.path.join(primero["carpeta"], "Gastos 2026.pdf")
+    with open(gastos, "rb") as fh:
+        gastos_antes = fh.read()
+    ingresos = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "ingresos", base, nif=CLIENTE[1])
+    _pdf_escaneado(os.path.join(ingresos, "2026-03-20 CLIENTE V-9.pdf"), [77, 78])
+    unidos = _contar(monkeypatch, expediente, "_unir")
+
+    segundo = expediente.crear(base, e)
+
+    assert [os.path.basename(a[1]) for a in unidos] == ["Ingresos 2026.pdf"]
+    assert segundo["documentos"]["Gastos"] == primero["documentos"]["Gastos"] == (
+        3, 1 + 3, "Gastos 2026.pdf")                      # índice + 3 hojas
+    assert segundo["documentos"]["Ingresos"] == (3, 1 + 1 + 1 + 2, "Ingresos 2026.pdf")
+    with open(gastos, "rb") as fh:
+        assert fh.read() == gastos_antes
+    with zipfile.ZipFile(segundo["zip"]) as z, \
+            fitz.open("pdf", z.read("Expediente 2026/Ingresos 2026.pdf")) as doc:
+        assert doc.page_count == 5
+        assert z.read("Expediente 2026/Gastos 2026.pdf") == gastos_antes
+
+
+def test_si_se_toca_el_expediente_a_mano_se_rehace_entero(tmp_path, monkeypatch):
+    base = str(tmp_path / "archivo")
+    e = _archivo_con_facturas(base)
+    primero = expediente.crear(base, e)
+    os.remove(os.path.join(primero["carpeta"], "Resumen 2026.pdf"))
+    unidos = _contar(monkeypatch, expediente, "_unir")
+    expediente.crear(base, e)
+    assert len(unidos) == 2
+    assert "Resumen 2026.pdf" in os.listdir(primero["carpeta"])
+
+    os.remove(primero["zip"])             # sin el ZIP, también
+    expediente.crear(base, e)
+    assert len(unidos) == 4 and os.path.exists(primero["zip"])
+
+
+def test_si_falla_al_rehacerlo_el_expediente_de_antes_queda_entero(tmp_path, monkeypatch):
+    import pytest
+    base = str(tmp_path / "archivo")
+    e = _archivo_con_facturas(base)
+    primero = expediente.crear(base, e)
+    antes = _contenido(primero["carpeta"])
+    ingresos = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "ingresos", base, nif=CLIENTE[1])
+    _pdf_escaneado(os.path.join(ingresos, "2026-03-20 CLIENTE V-9.pdf"), [77])
+
+    def roto(*_a):
+        raise OSError("disco lleno")
+    resumen = expediente._pdf_desde_html
+    monkeypatch.setattr(expediente, "_pdf_desde_html", roto)
+    with pytest.raises(OSError):
+        expediente.crear(base, e)
+
+    assert _contenido(primero["carpeta"]) == antes      # los gastos, en su sitio
+    assert not [n for n in os.listdir(os.path.dirname(primero["carpeta"]))
+                if n.startswith(".expediente-")]
+    # (Sin monkeypatch.undo(): desharía también el perfil aislado de conftest.)
+    monkeypatch.setattr(expediente, "_pdf_desde_html", resumen)
+    segundo = expediente.crear(base, e)
+    assert segundo["documentos"]["Ingresos"] == (3, 1 + 3, "Ingresos 2026.pdf")
