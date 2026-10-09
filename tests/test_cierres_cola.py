@@ -532,6 +532,42 @@ def test_vaciar_todo_tira_tambien_la_cola_guardada(ventana, tmp_path, monkeypatc
     assert sesion.cargar() is None
 
 
+def _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch):
+    """Cierra con el 2.º bloque leyéndose y abre otra vez: 1 bloque en el
+    lote y 2 por leer de la última vez."""
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 60)])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    ventana.closeEvent(QCloseEvent())
+    return VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+
+def test_exportar_con_lo_que_quedo_por_leer_la_ultima_vez_pregunta(
+        ventana, tmp_path, monkeypatch):
+    # Lo que quedó por leer es del mismo lote: exportar sin preguntar sacaba
+    # el Excel sin esos bloques (como con la cola a medias). Y si el aviso de
+    # «Seguir leyendo» ya lo había tapado otro, no había forma de seguir.
+    from facturas_excel.ventana_aplifisa import DialogoOrden
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    assert len(abierta._cola_guardada) == 2
+    abierta._marcar_revisada(list(range(len(abierta.filas))))   # otro aviso
+    assert abierta.banda.btn_deshacer.text() != "Seguir leyendo" \
+        or abierta.banda.btn_deshacer.isHidden()
+    preguntas, ordenes = [], []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda *a, **k: preguntas.append(a[1]) or QMessageBox.No))
+    monkeypatch.setattr(DialogoOrden, "exec", lambda self: ordenes.append(1) or 0)
+
+    abierta._exportar_todo()
+
+    assert preguntas == ["Faltan bloques por leer"]
+    assert not ordenes                        # no se ha llegado a exportar
+    # Al decir que no, vuelve a ofrecerse seguir leyendo.
+    assert not abierta.banda.btn_deshacer.isHidden()
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace
