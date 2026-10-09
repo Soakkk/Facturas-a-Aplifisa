@@ -136,6 +136,8 @@ def test_vaciar_todo_mientras_se_lee_no_deja_un_bloque_fantasma(tmp_path):
     assert codigo == 0, detalle
     assert resultado["filas"] == 0 and resultado["bloques"] == 0
     assert resultado["max_vivos"] == 1
+    # Ni la barra sigue con lo que contaba la lectura cancelada («Cola 1/0…»).
+    assert "Cola" not in resultado["estado"], resultado["estado"]
     # Ni las partes de lo que se estaba leyendo ni las de lo que esperaba.
     partes = carpeta / "appdata" / "FacturasAplifisa" / "cola_pdf"
     assert not [f for _r, _d, fs in os.walk(partes) for f in fs]

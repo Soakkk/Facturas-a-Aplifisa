@@ -181,8 +181,8 @@ def foto(v):
     return {"filas": len(v.filas), "bloques": len(v._bloques),
             "facturas": numeros, "max_vivos": ESTADO["max_vivos"],
             "lecturas": ESTADO["lecturas"], "dialogos": ESTADO["dialogos"],
-            "cola": len(v._cola), "tipos_declarados": [b.get("tipo_declarado")
-                                                       for b in v._bloques]}
+            "cola": len(v._cola), "estado": v.lbl_estado.text(),
+            "tipos_declarados": [b.get("tipo_declarado") for b in v._bloques]}
 
 
 def guardar(datos):

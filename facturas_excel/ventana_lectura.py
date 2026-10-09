@@ -294,6 +294,8 @@ class LecturaMixin:
         if self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None
         self._iniciar_siguiente_cola()
+        if not self._lectura_en_curso():
+            self._resumen()      # la barra, con el lote de ahora
 
     def _devolver_a_la_cola(self, elemento) -> None:
         """Al cerrar, un bloque a medias vuelve a la cola (que se guarda)."""
@@ -508,6 +510,8 @@ class LecturaMixin:
             self._iniciar_siguiente_cola()
 
     def _on_progreso(self, actual, total):
+        if self._cerrando or self._lectura_descartada(self._elemento_cola_actual):
+            return      # una lectura que ya no cuenta (cerrando, o tras vaciar)
         self.progreso.setMaximum(total)
         self.progreso.setValue(actual)
         bloque = self._cola_completados + 1
