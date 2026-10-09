@@ -589,3 +589,68 @@ def test_localizar_compara_cualquier_valor(valor):
     assert isinstance(localizar._comparable(valor), str)
     caja = localizar.Caja("total", "121,00", 0.1, 0.1, 0.2, 0.2)
     assert localizar.cajas_de([caja], "total", valor) == []
+
+
+# =====================================================================
+# n.º 25 — Muchísimas líneas de IVA: se juntan por tipo y la ficha no se
+#           congela
+# =====================================================================
+def lineas(n, base=1.0, tipo=21.0, recargo=None):
+    return [{"base": base, "tipo_iva": tipo, "cuota_iva": round(base * tipo / 100, 2),
+             "pct_requiv": recargo,
+             "cuota_requiv": None if recargo is None else round(base * recargo / 100, 2)}
+            for _ in range(n)]
+
+
+@pytest.mark.parametrize("n", [13, 60, 300, 3000])
+def test_muchas_lineas_del_mismo_tipo_quedan_en_una(n):
+    c = combinada(lectura(0, lineas_iva=lineas(n), total=round(n * 1.21, 2)))
+    assert c["lineas_iva"] == [{"base": float(n), "tipo_iva": 21.0,
+                                "cuota_iva": round(n * 0.21, 2), "pct_requiv": None,
+                                "cuota_requiv": None}]
+    pr = lote(c)[0][1]
+    assert len(pr.facturas) == 1
+    assert f"{n} líneas de IVA" in pr.aviso        # en ámbar, diciendo qué
+    assert validar(pr.facturas[0]).estado == OK     # y cuadra
+
+
+def test_se_juntan_por_tipo_de_iva_y_de_recargo():
+    juntas = (lineas(10, 10.0, 21.0, 5.2) + lineas(10, 1.0, 21.0)
+              + lineas(10, 2.0, 10.0, 1.4))
+    c = combinada(lectura(0, lineas_iva=juntas))
+    claves = [(x["tipo_iva"], x["pct_requiv"], x["base"]) for x in c["lineas_iva"]]
+    assert claves == [(21.0, 5.2, 100.0), (21.0, None, 10.0), (10.0, 1.4, 20.0)]
+    assert c["lineas_iva"][0]["cuota_requiv"] == 5.2
+
+
+def test_con_tipos_inventados_se_quedan_doce_como_mucho():
+    inventadas = [dict(linea, tipo_iva=float(i)) for i, linea in enumerate(lineas(300))]
+    c = combinada(lectura(0, lineas_iva=inventadas))
+    assert len(c["lineas_iva"]) == 12
+    assert len(lote(c)[0][1].facturas) == 12
+    assert any("quitadas" in nota for nota in c["_saneado"])
+
+
+def test_hasta_doce_lineas_todo_sigue_como_antes():
+    c = combinada(lectura(0, lineas_iva=lineas(12)))
+    assert len(c["lineas_iva"]) == 12 and "_saneado" not in c
+
+
+def test_la_segunda_lectura_con_300_lineas_tambien_se_junta():
+    c = combinada(lectura(0, lineas_iva=lineas(300), total=363.0),
+                  lectura(0, lineas_iva=lineas(300), total=363.0))
+    assert c["_discrepancias"] == []
+
+
+def test_la_ficha_de_una_factura_de_300_lineas_no_se_congela(ventana):
+    from PySide6.QtWidgets import QLabel
+    # Una sesión de antes de la 1.26: las 300 líneas, cada una su fila.
+    procesadas = lote(lectura(0, lineas_iva=lineas(300), total=363.0))
+    assert len(procesadas[0][1].facturas) == 300
+    ventana._rutas_actuales = ["taco.pdf"]
+    ventana._on_terminado(procesadas, *CLIENTE)
+    ventana.tabla.selectRow(0)
+    ventana._refrescar_ficha()
+    etiquetas = ventana.ficha.findChildren(QLabel)
+    assert len(etiquetas) < 120          # antes, unas 3 por línea: más de 900
+    assert any("288 líneas más" in e.text() for e in etiquetas)

@@ -53,6 +53,10 @@ LARGO = {"num_factura": 200, "sustituye_a": 200, "emisor_nif": 40,
          "subclave_ingreso": 40}
 LARGO_POR_DEFECTO = 300
 NUMEROS_LINEA = ("base", "tipo_iva", "cuota_iva", "pct_requiv", "cuota_requiv")
+# Una factura no trae más líneas de IVA que tipos de IVA y recargo hay. Con
+# más, Gemini ha copiado los artículos: cada una era una fila, y con 300 la
+# ficha tardaba 15 s en cada clic. Se juntan por tipo (ver juntar_por_tipo).
+LINEAS_MAXIMAS = 12
 # Las páginas de un PDF de verdad: una «última página» de mil millones creaba
 # al exportar una lista así de larga (más de 2 GB).
 PAGINA_MAXIMA = 10_000
@@ -129,6 +133,32 @@ def _lineas(valor):
             corregido = corregido or mal
         lineas.append(limpia)
     return lineas, corregido
+
+
+def _sumar(a, b):
+    if a is None:
+        return b
+    return a if b is None else round(a + b, 2)
+
+
+def juntar_por_tipo(lineas: list) -> tuple:
+    """(líneas, nota): como mucho una por tipo de IVA y recargo, con la base y
+    las cuotas sumadas. Si ni así caben (tipos inventados), las primeras."""
+    por_tipo = {}
+    for linea in lineas:
+        clave = (linea.get("tipo_iva"), linea.get("pct_requiv"))
+        suma = por_tipo.get(clave)
+        if suma is None:
+            por_tipo[clave] = dict(linea)
+            continue
+        for campo in ("base", "cuota_iva", "cuota_requiv"):
+            suma[campo] = _sumar(suma.get(campo), linea.get(campo))
+    juntas = list(por_tipo.values())
+    nota = (f"{len(lineas)} líneas de IVA, seguramente los artículos: "
+            f"juntadas en {min(len(juntas), LINEAS_MAXIMAS)}, una por tipo")
+    if len(juntas) > LINEAS_MAXIMAS:
+        nota += f", y quitadas {len(juntas) - LINEAS_MAXIMAS} de tipos de más"
+    return juntas[:LINEAS_MAXIMAS], nota
 
 
 def _del_esquema(clave: str, valor):
@@ -213,7 +243,9 @@ def _discrepancia(valor):
             return None, False
     for clave in ("lineas_1", "lineas_2"):
         if clave in valor:
-            salida[clave] = _lineas(valor[clave])[0]
+            lineas = _lineas(valor[clave])[0]
+            salida[clave] = (juntar_por_tipo(lineas)[0]
+                             if len(lineas) > LINEAS_MAXIMAS else lineas)
     return salida, True
 
 
@@ -265,6 +297,9 @@ def sanear(datos, internas: bool = True) -> dict:
                 notas.append(f"dato interno {clave} con otra forma")
         else:
             ajenas.append(str(clave)[:30])
+    if len(salida.get("lineas_iva") or ()) > LINEAS_MAXIMAS:
+        salida["lineas_iva"], nota = juntar_por_tipo(salida["lineas_iva"])
+        notas.append(nota)
     if ajenas:
         notas.append("datos de más: " + ", ".join(sorted(ajenas)[:5])
                      + ("…" if len(ajenas) > 5 else ""))
@@ -291,5 +326,5 @@ def aviso_saneado(datos) -> str:
     return ("La lectura de Gemini traía datos sin la forma esperada ("
             + "; ".join(str(n) for n in notas[:6])
             + ("…" if len(notas) > 6 else "")
-            + "): se ha dejado en blanco, recortado o quitado lo que no "
-            "encajaba. Compruébela con el documento.")
+            + "): se ha dejado en blanco, recortado, juntado o quitado lo que "
+            "no encajaba. Compruébela con el documento.")
