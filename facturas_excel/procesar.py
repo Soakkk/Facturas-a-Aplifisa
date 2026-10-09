@@ -1340,18 +1340,34 @@ def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
         else clave_proveedor(nombre)
     anterior = ficha or proveedores.leer_todo().get(clave) or {}
     por_cliente = _cuentas_por_cliente(anterior)
-    if (not por_cliente and anterior.get("cuenta_manual")
-            and anterior.get("cuenta")):
-        # La primera por cliente: la de antes no se pierde.
-        por_cliente[CUENTA_DE_ANTES] = [anterior.get("cuenta"), anterior.get("gxx")]
     cliente = normaliza_nif(cliente_nif)
     if cliente:
+        if (not por_cliente and anterior.get("cuenta_manual")
+                and anterior.get("cuenta")):
+            # La primera por cliente: la de antes no se pierde.
+            por_cliente[CUENTA_DE_ANTES] = [anterior.get("cuenta"),
+                                            anterior.get("gxx")]
         por_cliente[cliente] = [cuenta, gxx or None]
+    else:
+        # Un cliente sin NIF no se puede distinguir: lo que pone vale como
+        # la cuenta de siempre (si no, la de antes ganaba para siempre).
+        por_cliente[CUENTA_DE_ANTES] = [cuenta, gxx or None]
     return proveedores.guardar_campos(clave, nif=nif or None,
                                       nombre=str(nombre or "").strip() or None,
                                       cuenta=cuenta, gxx=(gxx or None),
                                       cuenta_manual=True,
                                       cuentas_cliente=por_cliente or None)
+
+
+def ficha_de_cuenta(nif, nombre) -> tuple:
+    """(clave, ficha tal cual) del proveedor cuya cuenta se va a recordar,
+    para poder dejarla como estaba si se deshace."""
+    nif = normaliza_nif(nif)
+    ficha = proveedores.buscar_por_nif(nif) if nif else None
+    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
+        else clave_proveedor(nombre)
+    antes = proveedores.leer_todo().get(clave)
+    return clave, (dict(antes) if isinstance(antes, dict) else None)
 
 
 def aplicar_recordado(procesadas: List[FacturaProcesada],
@@ -1370,8 +1386,12 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
         ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
         if not ficha or not ficha.get("cuenta_manual"):
             continue
-        if any(f.tratamiento_manual == "Bien de inversión" for f in pr.facturas):
-            continue        # va a la 200: no la pisa la cuenta de sus gastos
+        if pr.cuenta == "200" or any(
+                f.tratamiento_manual == "Bien de inversión"
+                or str(f.concepto or "") == "200" for f in pr.facturas):
+            # Va a la 200: no la pisa la cuenta de sus gastos (con suplido,
+            # el tratamiento pasa a «Factura con suplido», pero sigue en 200).
+            continue
         por_cliente = _cuentas_por_cliente(ficha)
         propia = por_cliente.get(cliente) if cliente else None
         de_antes = por_cliente.get(CUENTA_DE_ANTES)

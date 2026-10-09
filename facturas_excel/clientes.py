@@ -116,6 +116,13 @@ def nombre_confirmado(nif) -> str:
     return suite.nombre_de(nif)
 
 
+def mismo_nombre(uno, otro) -> bool:
+    """Si dos nombres son el mismo con el criterio de los clientes (sin
+    tildes, puntuación, guiones ni forma societaria)."""
+    clave = _clave_nombre(uno)
+    return bool(clave) and clave == _clave_nombre(otro)
+
+
 def _clave_nombre(nombre) -> str:
     """Nombre comparable sin acentos, puntuación ni forma societaria."""
     texto = "".join(

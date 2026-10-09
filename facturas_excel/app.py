@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
     __version__, ajustes, archivo, copias, costes, errores, escaner, notas_version,
-    pendientes, revision_gemini, sesion, updater, muestras_revision,
+    pendientes, proveedores, revision_gemini, sesion, updater,
+    muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
 from facturas_excel.claves import guardar_api_key, leer_api_key
@@ -57,7 +58,8 @@ from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, nombre_preferido,
     nombres_guardados, normaliza_nif,
-    quitar_aviso_cuenta, recordar_cuenta_proveedor, recordar_nif,
+    ficha_de_cuenta, quitar_aviso_cuenta, recordar_cuenta_proveedor,
+    recordar_nif,
     recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
 from facturas_excel.lote import (
@@ -2963,8 +2965,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                             for fila in filas)
         # Revisar una cuenta que venía de otro cliente es decir que en este
         # también va ahí: se recuerda para este cliente y no vuelve a salir.
+        # Lo de antes se guarda por si se deshace (el aviso y la ficha).
+        avisos_antes = [(registro, registro["aviso"]) for registro in self.filas]
+        fichas_antes = {}
         for fila in filas:
             if "en otro cliente" in (self.filas[fila]["aviso"] or ""):
+                f = self._leer_fila(fila)
+                clave, ficha = ficha_de_cuenta(f.nif, f.nombre)
+                fichas_antes.setdefault(clave, ficha)
                 self._cuenta_escrita_a_mano(fila)
         self._revalidar_todo()
         if confirmadas:
@@ -2975,6 +2983,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             def deshacer():
                 for factura in confirmadas:
                     factura.revision_confirmada = False
+                for registro, aviso in avisos_antes:
+                    registro["aviso"] = aviso
+                for clave, ficha in fichas_antes.items():
+                    proveedores.reponer(clave, ficha)
                 self._revalidar_todo()
                 self._avisar("Revisión deshecha: vuelven a estar pendientes.",
                              INFO)

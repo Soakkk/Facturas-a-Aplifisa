@@ -14,7 +14,7 @@ from facturas_excel import almacen, archivo, costes, muestras_revision
 from facturas_excel.banda_avisos import AVISO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_cliente import DialogoCliente
-from facturas_excel.clientes import marcar_cliente, recordar_nombre
+from facturas_excel.clientes import marcar_cliente, mismo_nombre, recordar_nombre
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.pdf import PAGINAS_POR_BLOQUE, dividir_pdf
 from facturas_excel.procesar import (
@@ -446,6 +446,7 @@ class LecturaMixin:
             # Un homónimo del cliente (su nombre con otro NIF) no se apunta
             # como proveedor: estropearía la memoria de quien sí le compra.
             if (otro.nif != elegido.nif and otro.nombre and otro.nif
+                    and not mismo_nombre(otro.nombre, elegido.nombre)
                     and clave_proveedor(otro.nombre)
                     != clave_proveedor(elegido.nombre)):
                 recordar_nif(otro.nombre, otro.nif, manual=True)

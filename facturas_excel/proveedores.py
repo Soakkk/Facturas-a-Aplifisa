@@ -82,6 +82,16 @@ def guardar_campos(clave: str, **campos) -> bool:
     return _col().guardar(clave, todo[clave])
 
 
+def reponer(clave: str, ficha: Optional[dict]) -> bool:
+    """Deja la ficha exactamente como estaba (para deshacer): sin ficha
+    antes, se borra. `guardar_campos` no sirve: no quita campos."""
+    if not clave:
+        return False
+    if ficha is None:
+        return _col().borrar(clave)
+    return _col().guardar(clave, dict(ficha))
+
+
 def buscar_por_nif(nif: str) -> Optional[dict]:
     """La ficha de un proveedor a partir de su NIF (la clave es el nombre, y el
     nombre es justo lo que cambia de una factura a otra)."""
