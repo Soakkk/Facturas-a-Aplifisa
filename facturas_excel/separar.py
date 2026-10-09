@@ -28,6 +28,7 @@ from typing import Dict, Iterable, List, Tuple
 from . import archivo
 from .control_facturas import clave_documento
 from .escaner import sanear
+from .pdf import CERROJO
 from .validacion import fecha_de
 
 TACOS = "Tacos escaneados"
@@ -73,16 +74,84 @@ def _huella(doc) -> tuple:
                  for pagina in doc)
 
 
-def _misma_que(ruta: str, huella: tuple) -> bool:
+# Fotos que el PDF guarda tal cual (JPEG, fax, JBIG2): sus bytes son la foto.
+# Las demás (sin comprimir o con Flate) se miran descomprimidas, porque al
+# guardar el PDF con deflate=True una imagen sin comprimir pasa a Flate.
+_FOTOS_TAL_CUAL = ("DCTDecode", "JPXDecode", "CCITTFaxDecode", "JBIG2Decode")
+
+
+def _sha(datos: bytes) -> str:
+    return hashlib.sha1(datos or b"").hexdigest()
+
+
+def _huella_rapida(doc):
+    """Lo que hay en cada hoja, sin dibujarla: su tamaño y giro, lo que se
+    pinta en ella (el contenido, descomprimido) y los bytes de sus fotos y
+    letras. Dibujar cada hoja en pequeño (`_huella`) obligaba a descomprimir
+    la foto entera del escáner: 4,4 s con 400 facturas, con la ventana
+    parada. Si dos huellas rápidas coinciden, las hojas son las mismas; si
+    no, puede ser el mismo PDF guardado de otra manera, y se mira dibujado.
+    None si la hoja tiene anotaciones o campos: entonces solo vale dibujarla."""
+    hojas = []
+    for pagina in doc:
+        if pagina.first_annot is not None or pagina.first_widget is not None:
+            return None
+        fotos = []
+        for xref, mascara, *_medio, nombre, filtro, _quien in pagina.get_images(full=True):
+            flujo = (doc.xref_stream_raw(xref) if filtro in _FOTOS_TAL_CUAL
+                     else doc.xref_stream(xref))
+            fotos.append((nombre, filtro if filtro in _FOTOS_TAL_CUAL else "",
+                          _sha(flujo),
+                          _sha(doc.xref_stream(mascara)) if mascara else ""))
+        formularios = [(nombre, _sha(doc.xref_stream(xref)))
+                       for xref, nombre, *_resto in pagina.get_xobjects()]
+        letras = []
+        for xref, _ext, _tipo, nombre_base, nombre, codificacion, *_r in \
+                pagina.get_fonts(full=True):
+            letras.append((nombre, nombre_base, codificacion,
+                           _sha(doc.extract_font(xref)[-1])))
+        hojas.append((pagina.rotation, tuple(pagina.mediabox), tuple(pagina.cropbox),
+                      _sha(pagina.read_contents()), tuple(sorted(fotos)),
+                      tuple(sorted(formularios)), tuple(sorted(letras))))
+    return tuple(hojas)
+
+
+class _Hojas:
+    """Las hojas de la factura nueva, para compararlas con el PDF que ya hay
+    con su nombre. Solo se miran si hace falta (la primera vez que se separa
+    un taco no hay ninguno) y primero sin dibujarlas: el resultado es el
+    mismo que comparándolas dibujadas, que es lo que se hacía antes."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self._rapida = self._dibujada = False      # False: sin calcular aún
+
+    def rapida(self):
+        if self._rapida is False:
+            self._rapida = _huella_rapida(self.doc)
+        return self._rapida
+
+    def dibujada(self) -> tuple:
+        if self._dibujada is False:
+            self._dibujada = _huella(self.doc)
+        return self._dibujada
+
+
+def _misma_que(ruta: str, hojas: "_Hojas") -> bool:
     import fitz
     try:
         with fitz.open(ruta) as existente:
-            return _huella(existente) == huella
+            if existente.page_count != hojas.doc.page_count:
+                return False
+            rapida = hojas.rapida()
+            if rapida is not None and _huella_rapida(existente) == rapida:
+                return True
+            return _huella(existente) == hojas.dibujada()
     except Exception:          # dañado o ilegible: no es «la misma»
         return False
 
 
-def _destino(carpeta: str, nombre: str, huella: tuple, reservados: set,
+def _destino(carpeta: str, nombre: str, hojas: "_Hojas", reservados: set,
              suyo: str = ""):
     """(ruta, ya estaba). Un nombre que ya existe solo es «el mismo PDF» si
     tiene las mismas hojas. Si es el PDF que esta misma factura ya tenía
@@ -97,7 +166,7 @@ def _destino(carpeta: str, nombre: str, huella: tuple, reservados: set,
         if clave not in reservados:
             if not os.path.exists(candidato):
                 return candidato, False
-            if _misma_que(candidato, huella):
+            if _misma_que(candidato, hojas):
                 return candidato, True
             if clave == suyo:
                 return candidato, False
@@ -127,11 +196,13 @@ def _dentro(ruta: str, base: str) -> bool:
 
 
 def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
-            cliente: str, nif: str, pdf_previo=None) -> dict:
+            cliente: str, nif: str, pdf_previo=None, progreso=None) -> dict:
     """Crea un PDF por factura y aparta los tacos originales.
 
     `pdf_previo(tipo, factura)` dice qué PDF tenía ya esa factura (del
     registro), para rehacerlo en su sitio en vez de dejar dos.
+    `progreso(hechas, total)`, si se da, se llama con cada factura: se puede
+    llamar desde un hilo aparte (ver ventana_archivo.archivar_exportacion).
 
     Devuelve {"creados": [...], "ya_estaban": n, "sin_paginas": [...],
     "tacos": {ruta vieja: ruta nueva}, "afectados": {(ejercicio)},
@@ -144,8 +215,11 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
     reservados: set = set()     # los PDF que ya tienen dueño en esta pasada
     afectados = set()
     abiertos: Dict[str, "fitz.Document"] = {}
+    documentos = _documentos(facturas_por_tipo)
     try:
-        for _clave, (tipo, f) in _documentos(facturas_por_tipo).items():
+        for hechas, (tipo, f) in enumerate(documentos.values()):
+            if progreso:
+                progreso(hechas, len(documentos))
             paginas = paginas_de(f)
             if not paginas or not all(os.path.isfile(o) for o, _ in paginas):
                 sin_paginas.append(f.num_factura or f.nombre or "?")
@@ -156,47 +230,55 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
                 sin_paginas.append(f.num_factura or f.nombre or "?")
                 continue
             carpeta = archivo.carpeta_tipo_cliente(cliente, ejercicio, tipo, base, nif=nif)
-            nuevo = fitz.open()
-            for origen, pagina in paginas:
-                if origen.lower().endswith(".pdf"):
-                    if origen not in abiertos:
-                        abiertos[origen] = fitz.open(origen)
-                    fuente = abiertos[origen]
-                    if 1 <= pagina <= fuente.page_count:
-                        nuevo.insert_pdf(fuente, from_page=pagina - 1, to_page=pagina - 1)
-                else:
-                    with fitz.open(origen) as imagen:
-                        nuevo.insert_pdf(fitz.open("pdf", imagen.convert_to_pdf()))
-            if not nuevo.page_count:
+            # PyMuPDF no admite dos hilos a la vez (ver pdf.CERROJO): el
+            # cerrojo se coge factura a factura, así el visor y la lectura
+            # no se quedan esperando a que se separe el taco entero.
+            with CERROJO:
+                nuevo = fitz.open()
+                for origen, pagina in paginas:
+                    if origen.lower().endswith(".pdf"):
+                        if origen not in abiertos:
+                            abiertos[origen] = fitz.open(origen)
+                        fuente = abiertos[origen]
+                        if 1 <= pagina <= fuente.page_count:
+                            nuevo.insert_pdf(fuente, from_page=pagina - 1,
+                                             to_page=pagina - 1)
+                    else:
+                        with fitz.open(origen) as imagen:
+                            nuevo.insert_pdf(fitz.open("pdf", imagen.convert_to_pdf()))
+                if not nuevo.page_count:
+                    nuevo.close()
+                    sin_paginas.append(f.num_factura or f.nombre or "?")
+                    continue
+                hojas = _Hojas(nuevo)
+                suyo = (pdf_previo(tipo, f) if pdf_previo else "") or ""
+                destino, ya_estaba = _destino(carpeta, nombre_factura(f), hojas,
+                                              reservados, suyo)
+                if not ya_estaba and os.path.exists(destino) \
+                        and not _a_la_papelera(destino, base):
+                    # El viejo está abierto en otro programa: no se pisa.
+                    destino, ya_estaba = _destino(carpeta, nombre_factura(f),
+                                                  hojas, reservados)
+                reservados.add(os.path.normcase(os.path.abspath(destino)))
+                if ya_estaba:
+                    nuevo.close()
+                    ya_estaban += 1
+                    pdfs.append((tipo, f, destino))
+                    continue
+                temporal = destino + ".tmp"
+                nuevo.save(temporal, garbage=3, deflate=True)
                 nuevo.close()
-                sin_paginas.append(f.num_factura or f.nombre or "?")
-                continue
-            huella = _huella(nuevo)
-            suyo = (pdf_previo(tipo, f) if pdf_previo else "") or ""
-            destino, ya_estaba = _destino(carpeta, nombre_factura(f), huella,
-                                          reservados, suyo)
-            if not ya_estaba and os.path.exists(destino) \
-                    and not _a_la_papelera(destino, base):
-                # El viejo está abierto en otro programa: no se pisa.
-                destino, ya_estaba = _destino(carpeta, nombre_factura(f),
-                                              huella, reservados)
-            reservados.add(os.path.normcase(os.path.abspath(destino)))
-            if ya_estaba:
-                nuevo.close()
-                ya_estaban += 1
-                pdfs.append((tipo, f, destino))
-                continue
-            temporal = destino + ".tmp"
-            nuevo.save(temporal, garbage=3, deflate=True)
-            nuevo.close()
             os.replace(temporal, destino)
             creados.append(destino)
             pdfs.append((tipo, f, destino))
             afectados.add(ejercicio)
             usados.update(o for o, _ in paginas)
+        if progreso:
+            progreso(len(documentos), len(documentos))
     finally:
-        for doc in abiertos.values():
-            doc.close()
+        with CERROJO:
+            for doc in abiertos.values():
+                doc.close()
 
     # Los tacos de los que han salido facturas se apartan, intactos. Solo los
     # que ya viven en el archivo documental: un PDF externo no se mueve.
