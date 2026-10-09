@@ -43,7 +43,15 @@ ETIQUETAS = {
     "tipo_documento": "tipo de documento", "moneda": "moneda",
     "mencion_iva": "mención de IVA", "posible_no_deducible": "IVA no deducible",
     "confianza": "confianza",
+    "base_requiv": "base del recargo", "pct_requiv": "% del recargo",
+    "cuota_requiv": "recargo",
 }
+
+# El recargo «al viejo estilo», suelto a nivel de factura: no está en el
+# ESQUEMA (va por línea), pero el formato libre lo puede traer y construir lo
+# sigue usando de respaldo. Quitado como «datos de más», la fila perdía el
+# recargo (también en el Excel) y el total dejaba de cuadrar.
+RECARGO_SUELTO = ("base_requiv", "pct_requiv", "cuota_requiv")
 
 # Tamaño máximo de cada texto. Por encima de los topes con los que se
 # construye la fila (nombre 120, nº de factura 60): esos ya recortan y
@@ -289,6 +297,10 @@ def sanear(datos, internas: bool = True) -> dict:
             salida[clave], corregido = _del_esquema(clave, valor)
             if corregido:
                 notas.append(_nota(clave, valor))
+        elif clave in RECARGO_SUELTO:
+            salida[clave], corregido = _numero(valor)
+            if corregido:
+                notas.append(ETIQUETAS[clave])
         elif internas and clave in INTERNAS:
             limpio, bueno = INTERNAS[clave](valor)
             if bueno:

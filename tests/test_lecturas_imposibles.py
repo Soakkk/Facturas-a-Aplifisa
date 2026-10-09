@@ -587,6 +587,25 @@ def test_las_claves_internas_conocidas_se_quedan_con_su_forma():
     assert "_saneado" not in c
 
 
+def test_el_recargo_suelto_de_la_factura_no_se_pierde():
+    # Sin esquema, Gemini puede traer el recargo «al viejo estilo», a nivel
+    # de factura y no por línea: construir lo sigue usando de respaldo. Se
+    # quitaba como «datos de más», la fila perdía el recargo (también en el
+    # Excel) y el total dejaba de cuadrar.
+    c = combinada(lectura(0, pct_requiv=5.2, cuota_requiv=2.6, base_requiv=50.0,
+                          total=63.1))
+    assert "_saneado" not in c
+    pr = lote(c)[0][1]
+    f = pr.facturas[0]
+    assert (f.base_requiv, f.pct_requiv, f.cuota_requiv) == (50.0, 5.2, 2.6)
+    assert validar(f).estado == OK
+    assert "Gemini traía datos" not in pr.aviso
+    # Y con otra forma, como cualquier importe: en blanco y en ámbar.
+    rara = combinada(lectura(0, cuota_requiv=NAN, pct_requiv=[5.2]))
+    assert rara["cuota_requiv"] is None and rara["pct_requiv"] is None
+    assert rara.get("_saneado")
+
+
 def test_una_ultima_pagina_de_mil_millones_no_llena_la_memoria():
     import tracemalloc
 
@@ -685,6 +704,7 @@ def test_se_juntan_por_tipo_de_iva_y_de_recargo():
     claves = [(x["tipo_iva"], x["pct_requiv"], x["base"]) for x in c["lineas_iva"]]
     assert claves == [(21.0, 5.2, 100.0), (21.0, None, 10.0), (10.0, 1.4, 20.0)]
     assert c["lineas_iva"][0]["cuota_requiv"] == 5.2
+
 
 
 def test_con_tipos_inventados_se_quedan_doce_como_mucho():
