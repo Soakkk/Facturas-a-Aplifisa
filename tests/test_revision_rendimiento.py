@@ -123,3 +123,71 @@ def test_vaciar_todo_no_quita_el_deshacer_de_olvidar_una_exportacion(tmp_path, m
 
     assert v.banda.isVisibleTo(v) and v.banda.btn_deshacer.isVisibleTo(v)
     assert "quitadas del historial" in v.banda.lbl.text()
+
+
+# ------- borrar o quitar un bloque mientras se archiva, y luego deshacerlo
+def _ventana_con_dos_bloques(monkeypatch):
+    """Un taco de tres hojas en el archivo del cliente, leído en dos bloques
+    (dos hojas y una), listo para exportar."""
+    import facturas_excel.app as modulo_app
+    from facturas_excel import archivo, ventana_aplifisa
+    from facturas_excel.procesar import FacturaProcesada
+    from test_exportar_sin_parar import CLIENTE as CLIENTE_ARCHIVO
+    from test_exportar_sin_parar import _f, _Orden, _taco_escaneado
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", _Orden)
+    taco = _taco_escaneado(archivo.carpeta_escaneos(), 3)
+    v = modulo_app.VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nombre, v._cliente_nif = CLIENTE_ARCHIVO
+    v._bloques = []
+    for nombre, paginas in (("b1", (1, 2)), ("b2", (3,))):
+        procesadas = []
+        for pag in paginas:
+            f = _f(f"F-{pag}", "PROVEEDOR PRUEBA", "10/02/2026", taco, pag)
+            f.concepto, f.subclave, f.verificacion = "622", "G13", "doble"
+            procesadas.append((b"", FacturaProcesada("gasto", [f], "622", "G13", taco, pag)))
+        v._bloques.append({"nombre": nombre, "cliente": CLIENTE_ARCHIVO[0],
+                           "nif": CLIENTE_ARCHIVO[1], "original": taco,
+                           "procesadas": procesadas, "crudos": []})
+    v._actualizar_combo_bloques()
+    v._rellenar_tabla()
+    v._revalidar_todo()
+    return v
+
+
+def _exportar_y_mientras_se_archiva(monkeypatch, v, accion):
+    """Exporta y, con el archivo aún guardándose en el otro hilo, hace
+    `accion`; luego deja acabar el archivo."""
+    import threading
+    from test_exportar_sin_parar import _separar_que_espera, _ventana_de_la_prueba
+    _ventana_de_la_prueba[0] = v
+    seguir, _visto = _separar_que_espera(monkeypatch)
+    v._exportar_todo()
+    assert v.archivando()
+    threading.Timer(0.3, seguir.set).start()
+    accion(v)
+    seguir.set()
+    v._esperar_archivo()
+
+
+def _origenes_que_ya_no_estan(v):
+    return sorted({r.factura.origen_imagen for r in v.filas
+                   if not os.path.isfile(r.factura.origen_imagen)})
+
+
+def test_quitar_un_bloque_mientras_se_archiva_y_deshacerlo_deja_su_taco(monkeypatch):
+    """El archivo aparta el taco a «Tacos escaneados» y pone al día el lote;
+    un bloque que se acababa de quitar no estaba en el lote y, al deshacer,
+    volvía con el sitio viejo del taco: el visor ya no enseñaba su hoja
+    nítida y otra exportación dejaba sus facturas «sin PDF propio». Antes
+    no podía pasar: la ventana estaba parada hasta acabar el archivo."""
+    v = _ventana_con_dos_bloques(monkeypatch)
+
+    def quitar_b2(v):
+        v.combo_filtro_bloque.setCurrentText("b2")
+        v._quitar_bloque()
+    _exportar_y_mientras_se_archiva(monkeypatch, v, quitar_b2)
+    v.banda._deshacer()                      # «Deshacer» del bloque quitado
+
+    assert len(v.filas) == 3
+    assert _origenes_que_ya_no_estan(v) == []
+    assert all(os.path.isfile(b["original"]) for b in v._bloques)

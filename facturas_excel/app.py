@@ -2248,6 +2248,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._avisar("Para quitar un bloque, elíjalo primero en el "
                          "desplegable «Todos los bloques».", AVISO)
             return
+        # Lo que se está archivando puede apartar el taco de este bloque: el
+        # lote se pone al día al acabar, y un bloque quitado ya no está en
+        # él (al deshacer volvería con el sitio viejo del taco). El bloque
+        # elegido se lee antes: mientras se espera puede llegar otro.
+        self._esperar_archivo()
         # Sin «¿Seguro?»: se quita y se ofrece deshacerlo en la banda.
         quitados = [(i, b) for i, b in enumerate(self._bloques)
                     if b["nombre"] == nombre]
