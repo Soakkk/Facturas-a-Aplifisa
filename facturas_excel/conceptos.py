@@ -30,9 +30,11 @@ DEFAULT_VENTA = "700"        # y 700 en ventas (subclave I01)
 # los tributos y suministros van antes que reparacion/combustible para evitar
 # falsos positivos (p.ej. "traccion mecanica" no debe ir a reparacion).
 REGLAS_GASTOS = [
-    ("631", ["impuesto", "tributo", "tasa", "ivtm", "vehiculos de traccion",
+    # «impuesto» sin raíz: «impuestos incluidos» sale en muchos tiques.
+    ("631", ["impuesto", "tributo", "tributos", "tasa", "tasas", "ivtm",
+             "vehiculos de traccion",
              "agencia tributaria", "ayuntamiento", "suma gestion"]),
-    ("628", ["telefon", "telecomunicacion", "internet", "movil", "orange",
+    ("628", ["telefon*", "telecomunicacion", "internet", "movil", "orange",
              "movistar", "vodafone", "masmovil", "yoigo", "fibra", "jazztel",
              "pepephone", "lowi", "digi ", "finetwork", "adamo", "euskaltel",
              "simyo", "o2 ", "linea movil", "cuota fija", "banda ancha"]),
@@ -44,14 +46,18 @@ REGLAS_GASTOS = [
              "acuambiente", "canal de isabel", "agua potable", "alcantarillado",
              "saneamiento y depuracion"]),
     ("628", ["gas natural", "butano", "propano", "redexis", "nedgia"]),
-    ("623", ["notari", "registr", "abogad", "procurador", "gestoria",
+    # El registro, con nombre y apellidos: «registr*» cazaba la caja
+    # registradora o el registro sanitario de un proveedor de comida.
+    ("623", ["notari*", "registro mercantil", "registro de la propiedad",
+             "registro de bienes muebles", "registrador", "registradores",
+             "registral", "registrales", "abogad*", "procurador", "gestoria",
              "asesoria", "auditor"]),
-    ("625", ["seguro", "poliza", "mutua", "mapfre"]),
+    ("625", ["seguro*", "poliza", "mutua", "mapfre"]),
     ("626", ["comision bancaria", "banco", "interes"]),
     ("627", ["publicidad", "marketing"]),
     ("621", ["alquiler", "arrendamiento", "renting"]),
-    ("622", ["taller", "reparacion", "averia", "neumatico", "recambio",
-             "repuesto", "kit distribucion", "revision vehiculo"]),
+    ("622", ["taller", "reparacion", "averia", "neumatico*", "recambio*",
+             "repuesto*", "kit distribucion", "revision vehiculo"]),
     (CUENTA_COMBUSTIBLE, ["combustible", "gasoleo", "gasoil", "gasolina",
                           "diesel", "carburante", "adblue", "estacion de servicio",
                           "area de servicio", "gasolinera", "cepsa", "repsol",
@@ -82,12 +88,17 @@ def _contiene(texto: str, clave: str) -> bool:
     """Busca la palabra ENTERA, no un trozo.
 
     Si no, "gas" cazaba dentro de "gasoleo" y el combustible se iba a la
-    subclave del gas (G16) en vez de a otros suministros (G18).
+    subclave del gas (G16) en vez de a otros suministros (G18). Una clave
+    que acaba en «*» es una raíz: «notari*» encuentra notaría, notario…
+    (antes «notari» no encontraba nada).
     """
     clave = _sin_acentos(clave.strip().lower())
+    raiz = clave.endswith("*")
+    clave = clave.rstrip("*")
     if not clave:
         return False
-    return re.search(r"\b" + re.escape(clave) + r"\b", texto) is not None
+    final = r"\w*\b" if raiz else r"\b"
+    return re.search(r"\b" + re.escape(clave) + final, texto) is not None
 
 
 def asignar_concepto(tipo: str, texto_busqueda: str) -> str:
@@ -134,7 +145,7 @@ GXX_628 = [
              "carburante", "combustible", "adblue", "estacion de servicio",
              "area de servicio", "gasolinera", "cepsa", "repsol", "galp",
              "petroprix", "ballenoil", "plenoil", "shell", "avia"]),
-    ("G17", ["telefon", "internet", "movil", "fibra", "orange", "movistar",
+    ("G17", ["telefon*", "internet", "movil", "fibra", "orange", "movistar",
              "vodafone", "masmovil", "yoigo", "jazztel", "pepephone", "lowi",
              "digi ", "finetwork", "adamo", "banda ancha", "telecomunicacion"]),
     ("G18", ["otros suministros"]),

@@ -86,7 +86,11 @@ def nombre_de(nif) -> str:
     if (ficha.get("conflictos") or {}).get("nombre"):
         return ""
     nombre = ficha.get("nombre")
-    return nombre.strip() if isinstance(nombre, str) else ""
+    if not isinstance(nombre, str):
+        return ""
+    from .texto import tiene_invisibles
+    # Uno roto (una tilde mal copiada) no se propone: como un conflicto.
+    return "" if tiene_invisibles(nombre) else nombre.strip()
 
 
 def nombres() -> list:
@@ -102,6 +106,9 @@ def registrar_cliente(nif, nombre: str) -> bool:
     """
     nif = _normaliza(nif)
     nombre = str(nombre or "").strip()
+    from .texto import tiene_invisibles
+    if tiene_invisibles(nombre):
+        return False        # no se lleva a los otros programas un nombre roto
     if not nif or not nombre:
         return False
     ruta = ruta_directorio()

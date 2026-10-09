@@ -19,7 +19,8 @@ def apuntar(detalle: str) -> None:
         from .rutas import dir_datos
         with open(os.path.join(dir_datos(), FICHERO), "a", encoding="utf-8",
                   errors="replace") as fh:
+            from .texto import escapar_invisibles
             fh.write(f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}] v{__version__}\n"
-                     f"{detalle}")
+                     f"{escapar_invisibles(detalle)}")
     except Exception:
         pass

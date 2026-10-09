@@ -21,7 +21,22 @@ CAMPOS_COMPARADOS = (
     ("total", "Total"),
     ("cuota_irpf", "Retención IRPF"),
     ("suplidos", "Suplidos"),
+    # Lo contable (1.25): la segunda lectura ya se paga, y con una cuenta 622
+    # frente a una 200 la factura no puede salir «Verificada». La cuenta se
+    # compara con su subclave («629 (G22)»): son un solo dato en la tabla.
+    # No se comparan la fecha de operación ni la factura sustituida: no hay
+    # columna donde elegir una de las dos, y la fecha que manda es «Fecha».
+    ("cuenta_gasto", "Cuenta de gasto"),
+    ("cuenta_ingreso", "Cuenta de ingreso"),
+    ("es_bien_inversion", "Bien de inversión"),
+    ("base_irpf", "Base de la retención"),
+    ("pct_irpf", "% de retención"),
 )
+
+# La subclave que acompaña a cada cuenta en la lectura.
+_SUBCLAVE = {"cuenta_gasto": "subclave_gxx", "cuenta_ingreso": "subclave_ingreso"}
+# Sin retención, la IA a veces pone 0 y a veces nada: es lo mismo.
+_CERO_SI_VACIO = ("cuota_irpf", "suplidos", "base_irpf", "pct_irpf")
 
 TOLERANCIA = 0.011
 
@@ -40,8 +55,47 @@ def _fecha(valor):
     return fecha_de(valor) if valor else None
 
 
+def _codigo(valor, patron: str) -> str:
+    """El código de una cuenta o subclave, se escriba como se escriba."""
+    hallado = re.search(patron, str(valor or "").upper())
+    return hallado.group(0) if hallado else ""
+
+
+def cuenta_de(datos: dict, campo: str) -> str:
+    """La cuenta de una lectura como se ve en la tabla: «629 (G22)».
+
+    «628», «628 (G16) SUMINISTROS GAS» y «628» con subclave «G16» son la misma
+    cuenta; si la cuenta solo admite una subclave, se da por puesta.
+    """
+    valor = datos.get(campo)
+    cuenta = _codigo(valor, r"\d+")
+    if not cuenta:
+        return ""
+    subclave = (_codigo(datos.get(_SUBCLAVE[campo]), r"[GI]\d+")
+                or _codigo(str(valor or "")[len(cuenta):], r"[GI]\d+"))
+    if not subclave:
+        from .conceptos import subclaves_de
+        posibles = subclaves_de(cuenta)
+        if len(posibles) == 1:
+            subclave = str(posibles[0][0]).upper()
+    return f"{cuenta} ({subclave})" if subclave else cuenta
+
+
+def partes_cuenta(texto) -> tuple:
+    """«629 (G22)» → ("629", "G22"); sin subclave, ("629", "")."""
+    cuenta = _codigo(texto, r"\d+")
+    resto = str(texto or "")
+    resto = resto[resto.find(cuenta) + len(cuenta):] if cuenta else ""
+    return cuenta, _codigo(resto, r"[GI]\d+")
+
+
 def _iguales(campo: str, a, b) -> bool:
-    if campo in ("total", "cuota_irpf", "suplidos"):
+    if campo == "es_bien_inversion":
+        return bool(a) == bool(b)
+    if campo in ("total",) + _CERO_SI_VACIO:
+        if campo in _CERO_SI_VACIO:
+            a = 0 if a in (None, "") else a
+            b = 0 if b in (None, "") else b
         na, nb = _numero(a), _numero(b)
         if na is None or nb is None:
             return na is None and nb is None
@@ -94,7 +148,18 @@ def comparar(uno: dict, dos: dict) -> List[dict]:
     los devolvio cada modelo (para poder aplicarlos sin reinterpretarlos).
     """
     diferencias = []
+    # Si las dos dicen bien de inversión, va a la 200 lea la cuenta que lea.
+    inversion = bool(uno.get("es_bien_inversion")) and \
+        bool(dos.get("es_bien_inversion"))
     for campo, etiqueta in CAMPOS_COMPARADOS:
+        if campo in _SUBCLAVE:
+            if inversion and campo == "cuenta_gasto":
+                continue
+            a, b = cuenta_de(uno, campo), cuenta_de(dos, campo)
+            if a != b:
+                diferencias.append({"campo": campo, "etiqueta": etiqueta,
+                                    "valor_1": a or None, "valor_2": b or None})
+            continue
         a, b = uno.get(campo), dos.get(campo)
         if not _iguales(campo, a, b):
             diferencias.append({"campo": campo, "etiqueta": etiqueta,

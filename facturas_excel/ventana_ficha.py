@@ -19,10 +19,13 @@ from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
+from facturas_excel.texto import limpiar
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
 from facturas_excel.estilo import ACCENT, DANGER, MUTED, WARNING
-from facturas_excel.tabla_facturas import CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_ESTADO
-from facturas_excel.validacion import ERROR, OK, REVISAR
+from facturas_excel.tabla_facturas import (
+    CAMPO_DE_COLUMNA, COLUMNA_DE_CAMPO, C_CUENTA, C_ESTADO, C_GXX,
+)
+from facturas_excel.validacion import ERROR, OK, REVISAR, normalizar_fecha
 from facturas_excel.ventana_validacion import MENSAJE_CORREGIDA, MENSAJE_REVISADA
 from facturas_excel.visor import Recuadro
 
@@ -42,7 +45,11 @@ ESPERA_NITIDA_MS = 90
 CABECERA_DISCREPANCIA = ("num_factura", "fecha", "total_impreso", "nif")
 # Importes que en un abono van en negativo (la lectura los da en positivo).
 IMPORTES_DISCREPANCIA = {"total_impreso", "base_iva", "cuota_iva",
-                         "cuota_requiv", "cuota_irpf"}
+                         "cuota_requiv", "cuota_irpf", "base_irpf"}
+# La cuenta de la doble lectura llega con su subclave: «629 (G22)».
+CUENTA_DISCREPANCIA = ("cuenta_gasto", "cuenta_ingreso")
+# La retención: va en la única línea que no es suplido.
+RETENCION_DISCREPANCIA = ("cuota_irpf", "base_irpf", "pct_irpf")
 ETIQUETA_DATO = {
     "nif": "NIF", "nombre": "Nombre", "num_factura": "Nº", "fecha": "Fecha",
     "base_iva": "Base", "cuota_iva": "IVA", "pct_iva": "% IVA",
@@ -535,11 +542,13 @@ class FichaMixin:
         if d.get("campo_factura") in CABECERA_DISCREPANCIA:
             return list(filas_doc)
         campo = d.get("campo")
+        if campo in CUENTA_DISCREPANCIA:
+            return list(filas_doc)
         if campo == "lineas_iva":
             l2 = [x for x in (d.get("lineas_2") or []) if isinstance(x, dict)]
             return list(filas_doc) if len(l2) == 1 and len(filas_doc) == 1 \
                 else None
-        if campo in ("suplidos", "cuota_irpf"):
+        if campo == "suplidos" or campo in RETENCION_DISCREPANCIA:
             suplido = campo == "suplidos"
             lineas = [r for r in filas_doc
                       if bool(self.filas[r].factura.es_suplido) == suplido]
@@ -564,7 +573,10 @@ class FichaMixin:
         d = discrepancias[indice]
         filas_doc = self._filas_del_documento(fila)
         from facturas_excel.extraccion import _num
-        if lectura == 1 and d.get("campo_factura") in CABECERA_DISCREPANCIA:
+        aviso_cuenta = ""
+        if d.get("campo") in CUENTA_DISCREPANCIA:
+            aviso_cuenta = self._poner_cuenta_leida(fila, d, lectura, filas_doc)
+        elif lectura == 1 and d.get("campo_factura") in CABECERA_DISCREPANCIA:
             # La lectura 1 es lo que ya había… salvo que la persona lo haya
             # cambiado a mano después: entonces se vuelve a poner. Solo los
             # datos de cabecera: los importes por línea no se tocan.
@@ -574,8 +586,11 @@ class FichaMixin:
                 valor = _num(valor)
             elif campo == "nif":
                 valor = normaliza_nif(valor) or None
+            elif campo == "fecha":
+                valor = (None if valor in (None, "")
+                         else normalizar_fecha(str(valor)))
             else:
-                valor = None if valor in (None, "") else str(valor)
+                valor = None if valor in (None, "") else limpiar(str(valor))[0]
             valor = round(valor, 2) if isinstance(valor, float) else valor
             valor = self._con_signo_del_documento(campo, valor, filas_doc)
             distintas = [r for r in filas_doc
@@ -588,7 +603,7 @@ class FichaMixin:
                 if campo == "nif":
                     self._nif_escrito_a_mano(fila)
                 self._marcar_corregida_documento(fila)
-        if lectura == 2:
+        elif lectura == 2:
             destino = self._destino_discrepancia(d, filas_doc)
             if destino is None:
                 self._avisar("Este dato no se puede copiar solo: corríjalo "
@@ -610,8 +625,12 @@ class FichaMixin:
                     valor = _num(valor)
                 elif campo == "nif":
                     valor = normaliza_nif(valor) or None
+                elif campo == "fecha":
+                    valor = (None if valor in (None, "")
+                             else normalizar_fecha(str(valor)))
                 else:
-                    valor = None if valor in (None, "") else str(valor)
+                    valor = (None if valor in (None, "")
+                             else limpiar(str(valor))[0])
                 cambios = [(r, campo, valor) for r in destino]
             for r, campo, valor in cambios:
                 valor = round(valor, 2) if isinstance(valor, float) else valor
@@ -633,8 +652,37 @@ class FichaMixin:
                     if x.get("campo") != campo)
         self._revalidar_todo()
         elegido = (d.get(f"modelo_{lectura}") or f"lectura {lectura}")
-        self._avisar(f"{d.get('etiqueta')}: se queda el valor de {elegido}.",
-                     EXITO)
+        texto = f"{d.get('etiqueta')}: se queda el valor de {elegido}."
+        self._avisar(f"{texto} {aviso_cuenta}".strip() if aviso_cuenta
+                     else texto, EXITO)
+
+    def _poner_cuenta_leida(self, fila: int, d: dict, lectura: int,
+                            filas_doc) -> str:
+        """La cuenta de una de las dos lecturas: cuenta y subclave juntas, en
+        todas las líneas de la factura, y se recuerda para el proveedor como
+        si se hubiera escrito a mano (es una persona la que ha elegido)."""
+        from facturas_excel.doble_lectura import partes_cuenta
+        cuenta, subclave = partes_cuenta(d.get(f"valor_{lectura}"))
+        cuenta, subclave = cuenta or None, subclave or None
+        cambiadas = []
+        for r in filas_doc:
+            registro = self.filas[r]
+            factura = registro.factura
+            if (factura.concepto, factura.subclave) == (cuenta, subclave):
+                continue
+            # Una línea «por el total» se rehace desde sus líneas: van todas.
+            for x in (factura, *(registro.get("fuentes") or ())):
+                x.concepto, x.subclave = cuenta, subclave
+            self.tabla.pintar(r, registro, (C_CUENTA, C_GXX))
+            cambiadas.append(r)
+        if cambiadas:
+            self._invalidar_contraste_registro()
+        aviso = self._cuenta_escrita_a_mano(fila)
+        # Como en los demás datos: elegir la lectura 2 es corregir; la 1
+        # solo si la persona la había cambiado después.
+        if cambiadas or lectura == 2:
+            self._marcar_corregida_documento(fila)
+        return aviso
 
     # ---------- dónde está cada dato en la hoja ----------
     def _recuadros_de_fila(self, r: int, columna=None) -> list:

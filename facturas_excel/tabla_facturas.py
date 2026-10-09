@@ -120,7 +120,9 @@ def valor_de_celda(columna: int, texto: str):
         return campo, parse_numero(texto)
     if columna == C_GXX:
         return campo, (texto or "").strip().upper() or None
-    return campo, texto or None
+    # Un pegado puede traer un carácter invisible (copiado de un PDF).
+    from .texto import limpiar
+    return campo, limpiar(texto)[0] or None
 
 
 class _SinRueda:

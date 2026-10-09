@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
     __version__, ajustes, archivo, copias, costes, errores, escaner, notas_version,
-    pendientes, revision_gemini, sesion, updater, muestras_revision,
+    pendientes, proveedores, revision_gemini, sesion, updater,
+    muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
 from facturas_excel.claves import guardar_api_key, leer_api_key
@@ -54,10 +55,12 @@ from facturas_excel.panel_ficha import PanelFicha
 from facturas_excel import distribucion
 from facturas_excel.su_suma import ALTO_FILA_COLUMNA, TablaSuSuma, TablaTotales
 from facturas_excel.modelo import Factura
+from facturas_excel.texto import tiene_invisibles
 from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, nombre_preferido,
     nombres_guardados, normaliza_nif,
-    quitar_aviso_cuenta, recordar_cuenta_proveedor, recordar_nif,
+    ficha_de_cuenta, nombre_sin_letra, quitar_aviso_cuenta,
+    recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
 from facturas_excel.lote import (
@@ -1834,6 +1837,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 + [f for bloque in self._bloques
                    for _, pr in bloque.get("procesadas", []) for f in pr.facturas],
                 nombres_guardados(solo_a_mano=True))
+            # Lotes de la 1.24.0: una línea «revisada» con un nombre que trae
+            # un carácter invisible se revisó sin el aviso del nombre (no
+            # existía) y saldría a Aplifisa sin esa letra: vuelve a pendiente.
+            for fila in datos.get("filas", []):
+                for x in (fila["factura"], *(fila.get("fuentes") or ())):
+                    if tiene_invisibles(x.nombre):
+                        x.revision_confirmada = False
             self.tabla.setRowCount(0)
             self.filas = []
             for fila in datos.get("filas", []):
@@ -2238,6 +2248,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._escaneo_reciente = False
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
+        self._cliente_elegido_lote = ""
         self._periodo_manual_valor = "auto"
         self._periodo_lote = PeriodoLote()
         self.txt_buscar.clear()
@@ -2601,7 +2612,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if not f.nombre or not es_valido(cuenta, gxx):
             return ""
         if not recordar_cuenta_proveedor(normaliza_nif(f.nif), f.nombre,
-                                         cuenta, gxx):
+                                         cuenta, gxx,
+                                         getattr(self, "_cliente_nif", ""),
+                                         guardar_nombre=not nombre_sin_letra(f)):
             return ""
         return (f"Guardado: las facturas de {f.nombre} irán a "
                 f"{cuenta}{f' ({gxx})' if gxx else ''} "
@@ -2675,7 +2688,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         nif = normaliza_nif(f.nif)
         if not f.nombre or not validar_nif(nif):
             return ""                  # a medio escribir o ilegible: no guardar
-        if not recordar_nif(f.nombre, nif, manual=True):
+        if not recordar_nif(f.nombre, nif, manual=True,
+                            guardar_nombre=not nombre_sin_letra(f)):
             return ""
         clave = clave_proveedor(f.nombre)
         aplicadas = []
@@ -2959,6 +2973,17 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 confirmadas.append(f)
         ya_corregidas = any(self.filas[fila].presentacion == CORREGIDA
                             for fila in filas)
+        # Revisar una cuenta que venía de otro cliente es decir que en este
+        # también va ahí: se recuerda para este cliente y no vuelve a salir.
+        # Lo de antes se guarda por si se deshace (el aviso y la ficha).
+        avisos_antes = [(registro, registro["aviso"]) for registro in self.filas]
+        fichas_antes = {}
+        for fila in filas:
+            if "en otro cliente" in (self.filas[fila]["aviso"] or ""):
+                f = self._leer_fila(fila)
+                clave, ficha = ficha_de_cuenta(f.nif, f.nombre)
+                fichas_antes.setdefault(clave, ficha)
+                self._cuenta_escrita_a_mano(fila)
         self._revalidar_todo()
         if confirmadas:
             texto = (f"{len(confirmadas)} línea(s) revisada(s): ya pueden "
@@ -2968,6 +2993,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             def deshacer():
                 for factura in confirmadas:
                     factura.revision_confirmada = False
+                for registro, aviso in avisos_antes:
+                    registro["aviso"] = aviso
+                for clave, ficha in fichas_antes.items():
+                    proveedores.reponer(clave, ficha)
                 self._revalidar_todo()
                 self._avisar("Revisión deshecha: vuelven a estar pendientes.",
                              INFO)
@@ -3096,6 +3125,16 @@ def _argumentos(argv):
 FICHERO_ERRORES = errores.FICHERO
 
 
+def _texto_del_error(tipo, valor) -> str:
+    """Lo que se le dice a la persona. Un error sin mensaje (el de memoria
+    lo es) dejaba la ventana con un hueco en blanco."""
+    if issubclass(tipo, MemoryError):
+        return ("El programa se ha quedado sin memoria. Guarde lo que esté "
+                "haciendo, cierre otros programas y vuelva a intentarlo.")
+    texto = str(valor).strip()
+    return texto or f"Error interno del programa ({tipo.__name__})."
+
+
 def _aviso_de_error(tipo, valor, rastro) -> None:
     """Ningún fallo pasa en silencio.
 
@@ -3118,7 +3157,8 @@ def _aviso_de_error(tipo, valor, rastro) -> None:
         try:
             QMessageBox.critical(
                 None, "Algo ha fallado",
-                f"No se ha podido terminar lo que estaba haciendo:\n\n{valor}"
+                "No se ha podido terminar lo que estaba haciendo:\n\n"
+                f"{_texto_del_error(tipo, valor)}"
                 f"\n\nEl detalle queda apuntado en {FICHERO_ERRORES}, en la "
                 "carpeta de datos del programa (%APPDATA%\\FacturasAplifisa). "
                 "Lo que ya estaba hecho no se ha perdido.")

@@ -113,7 +113,8 @@ def clave(f, tipo: str) -> Optional[str]:
 
 
 def cliente_de(cliente_nif: str, cliente_nombre: str = "") -> str:
-    return _nif(cliente_nif) or f"NOMBRE:{str(cliente_nombre).strip().upper()}"
+    return _nif(cliente_nif) or \
+        f"NOMBRE:{_sin_rotos(str(cliente_nombre)).strip().upper()}"
 
 
 def _id(cliente: str, k: str) -> str:
@@ -332,12 +333,19 @@ def _apuntar(cliente_nif: str, cliente_nombre: str,
                 for f in datos["_facturas"]:
                     lectura = (leidas_en or {}).get(id(f)) or lectura
                 ficha["leida_en"] = lectura or momento
-            filas.append(tuple(ficha.get(c) for c in _COLUMNAS))
+            filas.append(tuple(_sin_rotos(ficha.get(c)) for c in _COLUMNAS))
         con.executemany(_INSERTAR, filas)
     return anteriores, agrupadas
 
 
 # ---------------------------------------------------------------- pasos
+def _sin_rotos(valor):
+    """Un nombre con un carácter invisible no se apunta así (se buscaría mal
+    y lo copiarían las copias de seguridad)."""
+    from .texto import limpiar
+    return limpiar(valor)[0] if isinstance(valor, str) else valor
+
+
 class NoApuntado(Exception):
     """No se pudo apuntar lo exportado (base bloqueada, disco lleno…)."""
 

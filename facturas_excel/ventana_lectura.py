@@ -14,7 +14,7 @@ from facturas_excel import almacen, archivo, costes, muestras_revision
 from facturas_excel.banda_avisos import AVISO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_cliente import DialogoCliente
-from facturas_excel.clientes import marcar_cliente, recordar_nombre
+from facturas_excel.clientes import marcar_cliente, mismo_nombre, recordar_nombre
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.pdf import PAGINAS_POR_BLOQUE, dividir_pdf
 from facturas_excel.procesar import (
@@ -256,14 +256,20 @@ class LecturaMixin:
         unir_ultimo_bloque(self._bloques)
         self._escaneo_reciente = False
         self._avisar_si_otro_cliente(nombre, nif)
+        analisis = self._analisis_del_lote()
         # El nombre del cliente se guarda para proponerlo al escanear el
-        # proximo taco suyo, sin tener que escribirlo otra vez.
-        recordar_nombre(nif, nombre)
+        # proximo taco suyo, sin tener que escribirlo otra vez (no si le falta
+        # una letra: se quedaría así).
+        if not any(c.nif == nif and c.nombre_roto for c in analisis.candidatos):
+            recordar_nombre(nif, nombre)
         self._cliente_nif, self._cliente_nombre = nif, nombre
         self._pintar_cliente()
         # Primero se confirma quién es el cliente; solo después tiene sentido
         # decidir si la otra parte contradice un NIF guardado de proveedor.
-        if self._analisis_del_lote().dudoso:
+        # Un homónimo del cliente se pregunta una vez por lote: si ya se eligió
+        # este cliente, no se repregunta después de cada bloque de la cola.
+        ya_elegido = getattr(self, "_cliente_elegido_lote", "") == nif
+        if analisis.empate or (analisis.homonimo and not ya_elegido):
             self._cambiar_cliente(automatico=True)
         self._resolver_conflictos_nif()
         self._preparar_recargo()
@@ -436,9 +442,19 @@ class LecturaMixin:
             return
         # Lo que dice una persona manda y se recuerda; y a los demas del lote
         # se les apunta como proveedores, que es lo que son.
-        marcar_cliente(elegido.nif, elegido.nombre)
+        # Un nombre al que le falta una letra no se confirma ni se lleva a
+        # la suite: se queda la confirmación del NIF.
+        marcar_cliente(elegido.nif,
+                       "" if elegido.nombre_roto else elegido.nombre)
+        self._cliente_elegido_lote = elegido.nif
         for otro in analisis.candidatos:
-            if otro.nif != elegido.nif and otro.nombre and otro.nif:
+            # Un homónimo del cliente (su nombre con otro NIF) no se apunta
+            # como proveedor: estropearía la memoria de quien sí le compra.
+            if (otro.nif != elegido.nif and otro.nombre and otro.nif
+                    and not otro.nombre_roto
+                    and not mismo_nombre(otro.nombre, elegido.nombre)
+                    and clave_proveedor(otro.nombre)
+                    != clave_proveedor(elegido.nombre)):
                 recordar_nif(otro.nombre, otro.nif, manual=True)
         self._rehacer_con_cliente(elegido.nombre, elegido.nif)
 

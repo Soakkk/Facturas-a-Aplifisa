@@ -66,14 +66,21 @@ def nombres_conocidos() -> list:
     nombres = {ficha.get("nombre", "").strip()
                for ficha in _leer_todo().values() if isinstance(ficha, dict)}
     nombres.update(suite.nombres())
+    # Un nombre roto que guardó la 1.24 (una tilde mal copiada) no se propone.
+    nombres = {n for n in nombres if n and not _roto(n)}
     return sorted(n for n in nombres if n)
+
+
+def _roto(nombre) -> bool:
+    from .texto import tiene_invisibles
+    return tiene_invisibles(nombre)
 
 
 def recordar_nombre(nif, nombre: str) -> None:
     """Guarda el nombre del cliente aunque no este en recargo: sirve para
     proponerlo al escanear."""
     nif = _normaliza(nif)
-    if not nif or not nombre:
+    if not nif or not nombre or _roto(nombre):
         return
     todo = _leer_todo()
     todo.setdefault(nif, {})["nombre"] = nombre
@@ -90,7 +97,7 @@ def marcar_cliente(nif, nombre: str = "") -> None:
     todo = _leer_todo()
     ficha = todo.setdefault(nif, {})
     ficha["confirmado"] = True
-    if nombre:
+    if nombre and not _roto(nombre):
         ficha["nombre"] = nombre
     _guardar_ficha(nif, todo[nif])
     # Lo confirmado por una persona se comparte con el resto de la suite.
@@ -111,9 +118,25 @@ def nombre_confirmado(nif) -> str:
     from . import suite
     nif = _normaliza(nif)
     ficha = _leer_todo().get(nif, {}) if nif else {}
-    if isinstance(ficha, dict) and ficha.get("confirmado") and ficha.get("nombre"):
+    if (isinstance(ficha, dict) and ficha.get("confirmado") and ficha.get("nombre")
+            and not _roto(ficha["nombre"])):
         return str(ficha["nombre"]).strip()
     return suite.nombre_de(nif)
+
+
+def nombre_guardado(nif) -> str:
+    """El nombre que se guardó de este cliente, confirmado o no (sin uno
+    roto)."""
+    ficha = _leer_todo().get(_normaliza(nif), {}) if nif else {}
+    nombre = ficha.get("nombre") if isinstance(ficha, dict) else ""
+    return "" if not isinstance(nombre, str) or _roto(nombre) else nombre.strip()
+
+
+def mismo_nombre(uno, otro) -> bool:
+    """Si dos nombres son el mismo con el criterio de los clientes (sin
+    tildes, puntuación, guiones ni forma societaria)."""
+    clave = _clave_nombre(uno)
+    return bool(clave) and clave == _clave_nombre(otro)
 
 
 def _clave_nombre(nombre) -> str:

@@ -6,6 +6,56 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.25.0": """
+<h2>Novedades de la versión 1.25.0: memoria y lectura</h2>
+<p><b>Arreglos importantes</b></p>
+<ul>
+  <li><b>Exportar ya no falla por un nombre con un carácter raro.</b> Algunos
+      nombres traían un carácter invisible en lugar de una letra con tilde
+      («JOS?» por «JOSÉ»), copiado de un PDF, y Excel no lo admitía: la
+      exportación entera se paraba. Ahora la letra se recupera con los
+      nombres que ya conoce el programa de ese NIF; si no se puede, la línea
+      sale en ámbar para que lo escriba bien (y se recuerda). Un nombre roto
+      ya no se guarda ni se extiende a otras facturas.</li>
+  <li><b>El programa ya no se queda sin memoria al leer un paquete.</b> Si una
+      factura traía un número muy largo o mal leído, el control de «falta la
+      factura nº…» intentaba repasar miles de millones de números: se comía
+      la memoria y salía «Algo ha fallado». Ahora no pasa de lo necesario.</li>
+  <li>La ventana «Algo ha fallado» ya no sale en blanco: dice qué ha pasado.</li>
+  <li><b>Campos con un tope.</b> Lo leído se queda en lo que identifica la
+      factura: el número hasta 60 caracteres (más, se abrevia con «...» y
+      sale en ámbar) y el nombre hasta 120 (Aplifisa ya lo recorta a 40).</li>
+  <li>La cuenta que pone a un proveedor se recuerda también después de
+      corregirle el nombre.</li>
+</ul>
+<p><b>Novedades</b></p>
+<ul>
+  <li><b>La cuenta de un proveedor, por cliente.</b> La que usted pone se
+      recuerda para ESE cliente: Makro puede ir a la 600 en un bar y a la 629
+      en una oficina. En otro cliente se propone, pero en ámbar. (Las que ya
+      tenía guardadas se siguen poniendo como hasta ahora.)</li>
+  <li><b>NIF puesto de memoria.</b> Si un proveedor ya le factura a ese
+      cliente, o lo leído es su NIF mal impreso (una O por un 0), se pone sin
+      preguntar. Si es la primera vez que aparece en ese cliente sin NIF
+      legible, se avisa: puede ser otra empresa con el mismo nombre.</li>
+  <li><b>Otra persona con el nombre del cliente</b> y su propio NIF ya no se
+      lleva el lote: se pregunta quién es el cliente.</li>
+  <li><b>«Posiblemente ya exportada»</b>: mismo número y mismo total que una
+      ya exportada, aunque el NIF o la fecha se hayan leído distinto.</li>
+  <li><b>Fechas siempre dd/mm/aaaa</b> en el Excel («2026-03-05» o
+      «05/03/26» llegaban tal cual).</li>
+  <li><b>Bienes de inversión a la 200</b>, en ámbar para confirmarlo.</li>
+  <li><b>La doble lectura compara también la cuenta</b>, la subclave, si es
+      bien de inversión y la retención: si las dos lecturas no coinciden, no
+      sale como «Verificada».</li>
+  <li><b>Facturas grandes</b> que redondean el IVA línea a línea: unos
+      céntimos de diferencia ya no la dejan en rojo sin salida.</li>
+  <li>Cuentas por palabras clave: notarías, registros, abogados y Telefónica
+      ya se reconocen.</li>
+  <li>En la ficha, «Usar este» con la cuenta pone cuenta y subclave en toda
+      la factura y la recuerda; la fecha elegida queda en dd/mm/aaaa.</li>
+</ul>
+""",
     "1.24.0": """
 <h2>Novedades de la versión 1.24.0: manda la ley</h2>
 <p>El programa avisa, con su artículo, de lo que la ley dice de cada factura.

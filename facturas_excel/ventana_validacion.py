@@ -136,6 +136,13 @@ class ValidacionMixin:
                                                        pasada["facturas"])
         if rectificada:
             anadir(rectificada, "num_factura")
+        posible = pasada.get("posibles_exportadas", {}).get(r)
+        if posible:
+            anadir("POSIBLEMENTE YA EXPORTADA: en el registro hay una factura "
+                   f"con el mismo número y el mismo total ({posible.get('nombre') or '?'}"
+                   f", {posible.get('fecha') or '?'}), exportada el "
+                   f"{posible.get('exportada') or '?'}. ¿Es esta misma leída con "
+                   "otro NIF o fecha? Si lo es, quítela del lote.", "num_factura")
         for texto in pasada["errores_documento"].get(r, []):
             anadir(texto, gravedad=ERROR)
         otros = pasada.get("otro_nombre", {}).get(r)
@@ -250,6 +257,38 @@ class ValidacionMixin:
             k = historial.clave(facturas[r], tipos[r])
             if k and k in ya:
                 exportadas[r] = ya[k]
+        # Segunda búsqueda: mismo número y mismo total aunque el NIF o la
+        # fecha se hayan leído distinto (una factura exportada sin NIF y
+        # releída con él no se reconocía).
+        por_numero_total = {}
+        for ficha in ya.values():
+            if ficha.get("total") is None:
+                continue
+            por_numero_total.setdefault(
+                (ficha.get("tipo"), registro_facturas.numero_clave(
+                    ficha.get("num_factura")), round(float(ficha["total"]), 2)),
+                ficha)
+        posibles = {}
+        for r in range(n):
+            f = facturas[r]
+            numero = registro_facturas.numero_clave(f.num_factura)
+            # Un número corto («1», «2») se repite cada año (el alquiler, las
+            # ventas de cuota fija): con eso no basta para sospechar.
+            if r in exportadas or f.total_impreso is None or len(numero) < 3:
+                continue
+            ficha = por_numero_total.get((
+                registro_facturas.lado(tipos[r]), numero,
+                round(float(f.total_impreso), 2)))
+            if not ficha:
+                continue
+            dia = fecha_de(f.fecha)
+            if dia and ficha.get("ejercicio") and ficha["ejercicio"] != dia.year:
+                continue                # otro año: otra factura
+            nif_a, nif_b = normaliza_nif(f.nif), normaliza_nif(ficha.get("nif"))
+            if (nif_a and nif_b and nif_a != nif_b and validar_nif(nif_a)
+                    and validar_nif(nif_b)):
+                continue                # dos NIF buenos y distintos: otra empresa
+            posibles[r] = ficha
         return {
             "facturas": facturas, "tipos": tipos, "por_bloque": por_bloque,
             "otro_nombre": _otro_nombre_del_mismo_nif(facturas),
@@ -258,6 +297,7 @@ class ValidacionMixin:
                          for lado in ("gasto", "ingreso")},
             "errores_documento": getattr(self, "_errores_documento", {}),
             "exportadas": exportadas,
+            "posibles_exportadas": posibles,
             # Recargo o actividad exenta: el cliente no deduce el IVA.
             "sin_deducir": bool(getattr(self, "_por_el_total", lambda: False)()),
         }
