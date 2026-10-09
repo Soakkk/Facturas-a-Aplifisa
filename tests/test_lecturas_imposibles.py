@@ -775,3 +775,214 @@ def test_construir_con_el_nombre_del_cliente_roto_no_tarda():
     procesar.construir(lectura(0, receptor_nombre="A\x01" * 28, receptor_nif=None,
                                emisor_nif=None), cliente[1], cliente[0])
     assert time.perf_counter() - inicio < 0.5
+
+
+# =====================================================================
+# Corpus del fuzzing (casos dirigidos de «lecturas absurdas», semilla
+# 20261009), copiado con datos inventados. Cada caso es un taco de hojas tal
+# como las entrega el Worker (doble lectura combinada, o hoja no leída) y se
+# lleva por todo el camino: cliente, lote, validación, ley, documentos,
+# Excel, muestras, señalar, la ventana con su ficha y la sesión.
+# =====================================================================
+def _hoja(d1, tipo="doble", d2=None, msg=""):
+    return {"tipo": tipo, "d1": d1, "d2": d2, "msg": msg}
+
+
+def _tres(tipo="doble", d2=None, mala=None, **cambios):
+    """Hojas 1 y 3 normales; la 2, con los cambios."""
+    mala = lectura(1, **cambios) if mala is None else mala
+    return [_hoja(lectura(0)), _hoja(mala, tipo, d2), _hoja(lectura(2))]
+
+
+def _todo_nan():
+    return dict(total=NAN, lineas_iva=[{"base": NAN, "tipo_iva": 21.0, "cuota_iva": NAN,
+                                        "pct_requiv": None, "cuota_requiv": None}])
+
+
+_INICIO = lectura(5, estado_pagina_factura="inicio", lineas_iva=[], total=None)
+_FINAL_NAN = lectura(5, estado_pagina_factura="final", total=NAN, emisor_nombre=None,
+                     receptor_nombre=None,
+                     lineas_iva=[{"base": NAN, "tipo_iva": 21, "cuota_iva": NAN}])
+
+CORPUS = {
+    "nombre_lista": _tres(emisor_nombre=["PROVEEDOR", "UNO"]),
+    "nombre_dict": _tres(emisor_nombre={"nombre": "X"}),
+    "nombre_10000": _tres(emisor_nombre="PROVEEDOR LARGO " * 625),
+    "nombre_control": _tres(emisor_nombre="JOS\x01 GARC\x0bIA SL"),
+    "nombre_surrogate": _tres(emisor_nombre="PROVEEDOR \ud800 SL"),
+    "nombre_no_caracteres": _tres(emisor_nombre="PROVEEDOR ￾￿ SL"),
+    "numero_5000_cifras": _tres(num_factura="9" * 5000),
+    "numero_int_enorme": _tres(num_factura=10 ** 400),
+    "numero_float_nan": _tres(num_factura=NAN),
+    "total_nan": _tres(total=NAN),
+    "total_inf_simple": _tres("simple", total=INF),
+    "total_int_400_cifras_simple": _tres("simple", total=10 ** 400),
+    "total_texto_1e999": _tres(total="1e999"),
+    "total_lista": _tres(total=[1, 2]),
+    "suplidos_nan": _tres(suplidos=NAN),
+    "todo_nan_simple": _tres("simple", **_todo_nan()),
+    "suma_desborda_simple": _tres("simple", total=1e308, lineas_iva=[
+        {"base": 1e308, "tipo_iva": 0.0, "cuota_iva": 0.0}] * 2),
+    "importe_absurdo_coherente": _tres("simple", total=1210000000000.0, lineas_iva=[
+        {"base": 1e12, "tipo_iva": 21.0, "cuota_iva": 2.1e11}]),
+    "lineas_texto": _tres(lineas_iva="texto"),
+    "lineas_numero_simple": _tres("simple", lineas_iva=5),
+    "lineas_dict": _tres(lineas_iva={"base": 10}),
+    "lineas_con_none": _tres(lineas_iva=[None]),
+    "lineas_300": _tres(lineas_iva=lineas(300), total=363.0),
+    "lineas_3000": _tres(lineas_iva=lineas(3000), total=3630.0),
+    "lineas_anidadas_30": _tres(lineas_iva=anidado(30)),
+    "valor_anidado_900": _tres(concepto_texto=anidado(900)),
+    "fecha_imposible": _tres(fecha="31/02/2026"),
+    "fecha_lista": _tres(fecha=["01/01/2026"]),
+    "nif_9000": _tres(emisor_nif="B12345674" * 1000),
+    "nif_ancho_completo": _tres(emisor_nif="Ｂ１２３４５６７４"),
+    "nif_digitos_arabes": _tres(emisor_nif="١٢٣٤٥٦٧٨Z"),
+    "tipo_documento_inventado": _tres(tipo_documento="abono_raro"),
+    "opciones_raras": _tres(confianza=5, estado_pagina_factura=5,
+                            es_bien_inversion="false", mencion_iva="exenta_rara"),
+    "interna_error_lista": _tres(_error=[1, 2]),
+    "interna_ultima_pagina_1e9": _tres(_ultima_pagina_consolidada=10 ** 9),
+    "interna_paginas_union_triple": _tres(_paginas_union_manual=[[1, 2, 3]]),
+    "interna_discrepancias_raras": _tres("simple", _discrepancias=[
+        {"campo": "total", "etiqueta": None}]),
+    "doble_d2_vacia": _tres("par", d2={}),
+    "doble_d2_tipos_cambiados": _tres("par", d2=lectura(
+        1, total="abc", lineas_iva="x", emisor_nif=[1], fecha={"a": 1},
+        cuenta_gasto=[628])),
+    "doble_d2_total_int_enorme": _tres("par", d2=lectura(1, total=10 ** 400)),
+    "doble_d2_lineas_300": _tres("par", d2=lectura(1, lineas_iva=lineas(300))),
+    "doble_d1_vacia_d2_normal": _tres("par", d2=lectura(1), mala={}),
+    "excepcion_mensaje_raro": [_hoja(lectura(0)), _hoja(None, "excepcion",
+                                                         msg="\x00\ud800" + "E" * 10000),
+                               _hoja(lectura(2))],
+    "lectura_vacia_todas": [_hoja({}), _hoja({}), _hoja({})],
+    "union_inicio_final_nan": [_hoja(lectura(0)), _hoja(_INICIO), _hoja(_FINAL_NAN)],
+}
+
+GRAVES = ("Error en un bloque", "Algo ha fallado", "No se ha podido crear el Excel",
+          "El archivo NO coincide", "No se ha guardado el ejemplo")
+
+
+def leer_como_el_worker(hojas):
+    """(imagen, origen, página, lectura) de cada hoja, como las entrega el
+    Worker: las dos lecturas combinadas, o la hoja en rojo si no se leyó."""
+    from facturas_excel.doble_lectura import combinar
+    registros = []
+    for pagina, hoja in enumerate(hojas, 1):
+        if hoja["tipo"] == "excepcion":
+            datos = {"emisor_nombre": None, "lineas_iva": [{}],
+                     "_error": hoja["msg"][:120]}
+        elif hoja["tipo"] == "simple":
+            datos = combinar(hoja["d1"], None, "modelo-a", "")
+        else:
+            segunda = hoja["d2"]
+            if hoja["tipo"] == "doble":
+                try:
+                    segunda = copy.deepcopy(hoja["d1"])
+                except RecursionError:
+                    segunda = hoja["d1"]
+            datos = combinar(hoja["d1"], segunda, "modelo-a", "modelo-b")
+        registros.append((b"", "taco.pdf", pagina, datos))
+    return registros
+
+
+def _sin_importes_imposibles(facturas):
+    from facturas_excel import lote
+    for f in facturas:
+        for campo in lote.CAMPOS_NUMERO:
+            valor = getattr(f, campo)
+            assert valor is None or (math.isfinite(valor) and abs(valor) <= 1e9), \
+                (campo, valor)
+        for campo in lote.CAMPOS_TEXTO:
+            valor = getattr(f, campo)
+            assert valor is None or isinstance(valor, str), (campo, valor)
+
+
+def _excel_sin_rarezas(facturas, tipos, carpeta):
+    from openpyxl import load_workbook
+
+    from facturas_excel.config_columnas import leer_config
+    from facturas_excel.exportar import exportar_excel, verificar_excel
+    from facturas_excel.rutas import ruta_config
+    for tipo, xml in (("gasto", "gastos.xml"), ("venta", "ingresos.xml")):
+        suyas = [f for f, t in zip(facturas, tipos) if t == tipo]
+        if not suyas:
+            continue
+        config = leer_config(ruta_config(xml))
+        ruta = str(carpeta / f"{tipo}.xlsx")
+        exportar_excel(suyas, config, ruta)
+        assert verificar_excel(suyas, config, ruta) == []
+        libro = load_workbook(ruta)
+        celdas = [str(x).lower() for fila in libro.active.iter_rows(values_only=True)
+                  for x in fila if x is not None]
+        libro.close()
+        assert not [c for c in celdas if c.lstrip("-") in ("nan", "inf", "infinity")]
+
+
+@pytest.mark.parametrize("hojas", list(CORPUS.values()), ids=list(CORPUS))
+def test_corpus_del_fuzzing(hojas, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from facturas_excel import (control_facturas, fiscal, localizar, lote,
+                                muestras_revision, validacion)
+    from facturas_excel.app import VentanaPrincipal
+    dialogos = []
+    for nombre in ("critical", "warning", "information", "question"):
+        monkeypatch.setattr(QMessageBox, nombre, staticmethod(
+            lambda *a, **k: dialogos.append(str(a[1] if len(a) > 1 else ""))
+            or QMessageBox.No))
+    monkeypatch.setattr(QDialog, "exec", lambda self: dialogos.append(
+        type(self).__name__) or 0)
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(tmp_path / "sesion.pkl.gz"))
+    inicio = time.monotonic()
+
+    # Lo que hace el Worker al acabar de leer
+    registros = leer_como_el_worker(hojas)
+    analisis = procesar.analizar_cliente([d for *_, d in registros])
+    nombre, nif = ((analisis.mejor.nombre, analisis.mejor.nif) if analisis.mejor
+                   else CLIENTE)
+    procesadas = procesar.preparar_lote(registros, nombre, nif)
+    assert len(procesadas) >= 1
+    assert {p for *_, p, _ in registros} <= {
+        p for _, pr in procesadas
+        for p in range(pr.pagina, pr.facturas[0].ultima_pagina_origen + 1)}
+
+    # Lo que se hace con el lote
+    facturas = [f for _, pr in procesadas for f in pr.facturas]
+    tipos = [pr.tipo for _, pr in procesadas for _f in pr.facturas]
+    _sin_importes_imposibles(facturas)
+    for f, tipo in zip(facturas, tipos):
+        lote.normalizar(copy.copy(f))
+        validar(f)
+        fiscal.avisos(f, tipo)
+        fiscal.avisos(f, tipo, True)
+        for valor in (f.total_impreso, f.base_iva, f.num_factura, f.nif):
+            localizar._comparable(valor)
+    validacion.encontrar_duplicados(facturas)
+    control_facturas.controles_documentos(facturas, tipos)
+    for _img, pr in procesadas:
+        procesar.a_total_factura(pr)
+    if len(registros) >= 2:
+        procesar.fusionar_paginas_manual(registros[:2])
+    procesar.preparar_lote(registros, "OTRA EMPRESA DE PRUEBA SA", "A12345674")
+    _excel_sin_rarezas(facturas, tipos, tmp_path)
+    muestras_revision.guardar_lecturas(registros)
+
+    # En la ventana: la tabla, la ficha de cada fila y la sesión
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._rutas_actuales = ["taco.pdf"]
+    v._on_terminado(procesadas, nombre, nif, registros)
+    filas = v.tabla.rowCount()
+    assert filas >= 1
+    for r in range(min(filas, 15)):
+        v.tabla.selectRow(r)
+        v._refrescar_ficha()
+    v._guardar_muestra_revision()
+    v._guardar_sesion()
+    recuperada = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert recuperada.tabla.rowCount() == filas
+    assert not sesion.apartada()
+
+    assert not [d for d in dialogos if d.startswith(GRAVES)], dialogos
+    assert time.monotonic() - inicio < 10        # tope por caso
