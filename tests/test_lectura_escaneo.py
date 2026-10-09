@@ -121,6 +121,16 @@ def test_la_hoja_girada_sale_girada_igual_que_antes(tmp_path, sin_mupdf, giro):
     assert _diferencia(otra, antes) > 20
 
 
+def test_el_filtro_puede_venir_como_lista_de_uno(tmp_path, sin_mupdf):
+    def en_lista(documento, hoja):
+        documento.xref_set_key(hoja.get_images()[0][0], "Filter", "[/DCTDecode]")
+    ruta = _modificar(_escaneo(tmp_path / "escaneo.pdf"), en_lista)
+    antes = _como_antes(ruta)
+    sin_mupdf.clear()
+    jpg = pdf.pagina_a_jpg(ruta, 1, 150)
+    assert sin_mupdf == [] and _diferencia(jpg, antes) < 6
+
+
 def test_el_tamano_de_lectura_es_el_de_mupdf(tmp_path):
     """Los mismos redondeos que get_pixmap, también en hojas raras y giradas."""
     documento = fitz.open()
@@ -239,6 +249,15 @@ def _rota(documento, hoja):
     documento.xref_set_key(xref, "Filter", "/DCTDecode")
 
 
+def _dos_filtros(documento, hoja):
+    """El JPEG comprimido otra vez con Flate: ya no es el JPEG tal cual."""
+    import zlib
+    xref = hoja.get_images()[0][0]
+    datos = zlib.compress(documento.xref_stream_raw(xref))
+    documento.update_stream(xref, datos, compress=False)
+    documento.xref_set_key(xref, "Filter", "[/FlateDecode /DCTDecode]")
+
+
 W, H = A6
 CASOS_MUPDF = {
     "texto encima": lambda d, h: h.insert_text((20, 40), "FACTURA 1"),
@@ -256,6 +275,7 @@ CASOS_MUPDF = {
     "con máscara": _foto_mascara,
     "CMYK": _cmyk,
     "foto rota": _rota,
+    "dos filtros": lambda d, h: _dos_filtros(d, h),
 }
 
 

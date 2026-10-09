@@ -158,9 +158,11 @@ def _foto_del_escaneo(doc, hoja, dpi: int):
     xref, mascara, ancho_foto, alto_foto, bits, _cs, _alt, nombre, filtro, dentro = fotos[0]
     if mascara or dentro or bits != 8 or filtro != "DCTDecode":
         return None
-    # Un solo filtro (DCT, el JPEG tal cual), sin parámetros que cambien
-    # los colores ni máscaras de ningún tipo.
-    if doc.xref_get_key(xref, "Filter") != ("name", "/DCTDecode"):
+    # Un solo filtro (DCT, el JPEG tal cual; hay quien lo escribe como lista
+    # de uno), sin parámetros que cambien los colores ni máscaras.
+    tipo, valor = doc.xref_get_key(xref, "Filter")
+    if (tipo, valor.replace(" ", "")) not in (("name", "/DCTDecode"),
+                                              ("array", "[/DCTDecode]")):
         return None
     for clave in ("DecodeParms", "Decode", "Mask", "SMask", "ImageMask"):
         if doc.xref_get_key(xref, clave)[0] != "null":
