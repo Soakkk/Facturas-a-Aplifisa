@@ -270,3 +270,37 @@ def test_una_hoja_pedida_con_el_pdf_ya_cerrado_lo_dice(tmp_path):
     hojas.cerrar()
     with pytest.raises(ValueError, match="cerrado"):
         hojas.imagen(1)
+
+
+def test_al_cerrar_no_se_espera_al_cerrojo_de_mupdf(tmp_path):
+    """El archivo de una exportación puede tener el cerrojo de MuPDF un buen
+    rato (guardando el expediente del año). Cerrar el programa a mitad de
+    lectura no deja la ventana parada esperándolo: el PDF se suelta en
+    cuanto queda libre."""
+    from facturas_excel import pdf
+
+    hojas = pdf.Hojas([_taco(tmp_path / "taco.pdf", 2)])
+    w = hilos.Worker([], "clave")
+    w._hojas = hojas
+    cogido, suelta = threading.Event(), threading.Event()
+
+    def archivo():
+        with pdf.CERROJO:
+            cogido.set()
+            suelta.wait(10)
+    otro = threading.Thread(target=archivo)
+    otro.start()
+    try:
+        assert cogido.wait(5)
+        cierre = threading.Thread(target=w.cancelar)   # se cierra el programa
+        cierre.start()
+        cierre.join(3)
+        assert not cierre.is_alive()
+    finally:
+        suelta.set()
+        otro.join(10)
+    for _ in range(100):
+        if not hojas._abiertos:
+            break
+        time.sleep(0.05)
+    assert not hojas._abiertos

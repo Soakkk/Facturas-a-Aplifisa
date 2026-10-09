@@ -488,11 +488,18 @@ class Hojas:
             with Image.open(ruta) as im:
                 return _comprimir_pil(im)
 
-    def cerrar(self) -> None:
-        with CERROJO:
+    def cerrar(self, espera: float = -1) -> bool:
+        """Cierra los PDF. Con `espera` (en segundos), si el cerrojo de MuPDF
+        no queda libre en ese tiempo no se cierra nada y devuelve False."""
+        if not CERROJO.acquire(timeout=espera):
+            return False
+        try:
             for doc in self._abiertos.values():
                 doc.close()
             self._abiertos.clear()
+        finally:
+            CERROJO.release()
+        return True
 
     def __enter__(self):
         return self

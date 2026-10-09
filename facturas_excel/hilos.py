@@ -51,8 +51,12 @@ class Worker(QThread):
         # espera a la lectura solo 5 s y luego borra la parte de la cola (en
         # Windows, abierta no se puede). Ya no se dibuja ninguna hoja más.
         hojas = self._hojas
-        if hojas is not None:
-            hojas.cerrar()
+        if hojas is not None and not hojas.cerrar(espera=0.5):
+            # El cerrojo de MuPDF lo puede tener un buen rato el archivo de
+            # una exportación (guardando el expediente del año): la ventana
+            # no se queda parada esperándolo; se suelta en cuanto quede libre.
+            threading.Thread(target=hojas.cerrar, daemon=True,
+                             name="soltar-pdf").start()
 
     def run(self):
         hojas = None
