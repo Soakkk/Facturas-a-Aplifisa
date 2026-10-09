@@ -118,42 +118,10 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     nombres: Dict[str, list] = defaultdict(list)
     homonimo = False
     for d in lista_datos:
-        for campo_nif, campo_nom, papel in (
-                ("emisor_nif", "emisor_nombre", "e"),
-                ("receptor_nif", "receptor_nombre", "r")):
-            leido = normaliza_nif(d.get(campo_nif))
-            nombre_leido, roto = limpiar(d.get(campo_nom))
-            nombre_leido = nombre_leido or ""
-            # Para elegir el nombre, el roto tal cual: así gana una lectura
-            # buena y, si no la hay, se intenta recuperar la letra.
-            para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
-            conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
-            if conocido and validar_nif(leido) and leido != conocido[0]:
-                # El nombre de un cliente confirmado con OTRO NIF válido: o es
-                # su NIF mal leído, o es otra persona que se llama igual (un
-                # homónimo). No se decide en silencio: los dos son candidatos
-                # y se pregunta (si no, el lote entero se iba a otro cliente).
-                homonimo = True
-                otro = cuenta.setdefault(leido, Candidato(nif=leido, nombre=""))
-                otro.veces += 1
-                if papel == "e":
-                    otro.como_emisor += 1
-                else:
-                    otro.como_receptor += 1
-                nombres[leido].append(para_elegir)
-            nif = conocido[0] if conocido else leido
-            if not nif:
-                continue
-            c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
-            c.veces += 1
-            if papel == "e":
-                c.como_emisor += 1
-            else:
-                c.como_receptor += 1
-            if conocido and conocido[1]:
-                nombres[nif].append(conocido[1])
-            elif nombre_leido:
-                nombres[nif].append(para_elegir)
+        try:
+            homonimo = _contar_partes(_partes_de(d), cuenta, nombres) or homonimo
+        except Exception:
+            _apuntar_hoja_rara("buscar el cliente del bloque")
 
     for nif, c in cuenta.items():
         c.nombre, c.nombre_roto = _nombre_leido_de(nif, nombres.get(nif, []))
@@ -173,6 +141,61 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     empate = len(orden) > 1 and orden[0].puntos == orden[1].puntos
     return Analisis(candidatos=orden, dudoso=homonimo or empate,
                     homonimo=homonimo, empate=empate)
+
+
+def _partes_de(datos) -> dict:
+    """Los NIF y nombres de una hoja, solo si son texto: una lista, un número
+    o un dict (lectura rara) no cuentan para decidir el cliente (una lista
+    rompía después el recuento de nombres y se perdía el bloque)."""
+    if not isinstance(datos, dict):
+        return {}
+    return {campo: datos[campo] for campo in (
+        "emisor_nif", "emisor_nombre", "receptor_nif", "receptor_nombre")
+        if isinstance(datos.get(campo), str)}
+
+
+def _contar_partes(d: dict, cuenta: Dict[str, Candidato],
+                   nombres: Dict[str, list]) -> bool:
+    """Suma las dos partes de una hoja a los candidatos del cliente; True si
+    una es un homónimo de un cliente confirmado."""
+    homonimo = False
+    for campo_nif, campo_nom, papel in (
+            ("emisor_nif", "emisor_nombre", "e"),
+            ("receptor_nif", "receptor_nombre", "r")):
+        leido = normaliza_nif(d.get(campo_nif))
+        nombre_leido, roto = limpiar(d.get(campo_nom))
+        nombre_leido = nombre_leido or ""
+        # Para elegir el nombre, el roto tal cual: así gana una lectura
+        # buena y, si no la hay, se intenta recuperar la letra.
+        para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
+        conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
+        if conocido and validar_nif(leido) and leido != conocido[0]:
+            # El nombre de un cliente confirmado con OTRO NIF válido: o es
+            # su NIF mal leído, o es otra persona que se llama igual (un
+            # homónimo). No se decide en silencio: los dos son candidatos
+            # y se pregunta (si no, el lote entero se iba a otro cliente).
+            homonimo = True
+            otro = cuenta.setdefault(leido, Candidato(nif=leido, nombre=""))
+            otro.veces += 1
+            if papel == "e":
+                otro.como_emisor += 1
+            else:
+                otro.como_receptor += 1
+            nombres[leido].append(para_elegir)
+        nif = conocido[0] if conocido else leido
+        if not nif:
+            continue
+        c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
+        c.veces += 1
+        if papel == "e":
+            c.como_emisor += 1
+        else:
+            c.como_receptor += 1
+        if conocido and conocido[1]:
+            nombres[nif].append(conocido[1])
+        elif nombre_leido:
+            nombres[nif].append(para_elegir)
+    return homonimo
 
 
 def _nombre_leido_de(nif: str, lista: list) -> tuple:
@@ -957,6 +980,30 @@ def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
     return completados
 
 
+def _apuntar_hoja_rara(que: str) -> None:
+    import traceback
+    from . import errores
+    errores.apuntar(f"Lectura rara al {que}; las demás hojas siguen:\n"
+                    + traceback.format_exc())
+
+
+def _construir_sin_tumbar(datos, cliente_nif, cliente_nombre, origen, pagina):
+    """construir(), pero una hoja rara no se lleva el bloque entero.
+
+    Una lista donde va un nombre o un texto donde van las líneas de IVA (lo
+    que trae una lectura sin esquema o desbocada) lanzaba aquí y se perdían
+    las 25 hojas del bloque, ya pagadas. Ahora esa hoja queda en rojo con su
+    motivo, como una hoja que no se pudo leer, y las demás siguen.
+    """
+    try:
+        return construir(datos, cliente_nif, cliente_nombre, origen, pagina)
+    except Exception as error:
+        _apuntar_hoja_rara(f"construir la hoja {pagina}")
+        motivo = f"lectura que no se pudo interpretar ({type(error).__name__})"
+        return construir({"emisor_nombre": None, "lineas_iva": [{}], "_error": motivo},
+                         cliente_nif, cliente_nombre, origen, pagina)
+
+
 def preparar_lote(registros: List[tuple], cliente_nombre: str,
                   cliente_nif: str) -> List[tuple]:
     """De lo leido por Gemini a las facturas listas para la tabla.
@@ -970,8 +1017,14 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     # ambas acababan como apuntes incompletos distintos. Se juntan primero los
     # fragmentos consecutivos de la misma factura y despues se construye el
     # unico apunte, con todas sus lineas de IVA y recargo.
-    consolidados = consolidar_paginas_factura(registros)
-    procesadas = [(img, construir(datos, cliente_nif, cliente_nombre, origen, pag))
+    try:
+        consolidados = consolidar_paginas_factura(registros)
+    except Exception:
+        # Una lectura que no deja ni comparar las hojas: cada una por su lado.
+        _apuntar_hoja_rara("unir las hojas del bloque")
+        consolidados = list(registros)
+    procesadas = [(img, _construir_sin_tumbar(datos, cliente_nif, cliente_nombre,
+                                              origen, pag))
                   for img, origen, pag, datos in consolidados]
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote

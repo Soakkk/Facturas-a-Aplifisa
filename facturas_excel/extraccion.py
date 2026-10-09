@@ -10,6 +10,7 @@ procesar.py, una vez detectado el cliente.
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import threading
@@ -590,9 +591,11 @@ class Extractor:
                     except ModeloNoDisponible as e:
                         self._retirados.add(modelo)
                         resultados.append((None, modelo, str(e)))
-                    except ErrorLectura as e:
-                        consumos.extend(e.consumos)
-                        resultados.append((None, modelo, str(e)))
+                    except Exception as e:
+                        # ErrorLectura… o cualquier rareza de ESTA lectura:
+                        # la del otro modelo puede ser buena y no se tira.
+                        consumos.extend(getattr(e, "consumos", None) or [])
+                        resultados.append((None, modelo, str(e)[:300]))
             (d1, m1, e1), (d2, m2, e2) = resultados
             if d1 is None and d2 is None:
                 raise ErrorLectura(e1 or e2, consumos)
@@ -651,13 +654,36 @@ def _consumo(resp):
     return modelo, _n("prompt_token_count"),         _n("candidates_token_count") + _n("thoughts_token_count")
 
 
+def _entero_json(cifras: str):
+    # Un entero de más de 15 cifras no es un dato de una factura, y con más
+    # de 4300 json.loads lanzaba ValueError, que no es un JSON roto: se
+    # saltaba los reintentos y tiraba también la otra lectura, que era buena.
+    return int(cifras) if len(cifras.lstrip("-")) <= 15 else None
+
+
+def _decimal_json(texto: str):
+    numero = float(texto)          # «1e999» o 400 cifras: infinito
+    return numero if math.isfinite(numero) else None
+
+
+def _cargar_json(texto: str):
+    """json.loads sin NaN, Infinity, 1e999 ni enteros enormes: quedan en null."""
+    return json.loads(texto, parse_constant=lambda _literal: None,
+                      parse_int=_entero_json, parse_float=_decimal_json)
+
+
 def _parse_json_tolerante(texto: str):
-    """Intenta parsear el JSON de Gemini, tolerando fallos habituales."""
+    """Intenta parsear el JSON de Gemini, tolerando fallos habituales.
+
+    Nunca lanza: lo que no se entiende es None y la hoja se vuelve a pedir
+    (un JSON con miles de niveles anidados daba RecursionError)."""
     if not texto:
         return None
     try:
-        return json.loads(texto)
-    except json.JSONDecodeError:
+        return _cargar_json(texto)
+    except RecursionError:
+        return None
+    except ValueError:             # JSONDecodeError incluido
         pass
     t = texto.strip()
     t = re.sub(r"^```(?:json)?", "", t).strip()
@@ -667,8 +693,8 @@ def _parse_json_tolerante(texto: str):
         t = t[ini:fin + 1]
     t = re.sub(r",\s*([}\]])", r"\1", t)
     try:
-        return json.loads(t)
-    except json.JSONDecodeError:
+        return _cargar_json(t)
+    except (ValueError, RecursionError):
         return None
 
 

@@ -10,6 +10,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import json
 import math
 
 import pytest
@@ -285,3 +286,139 @@ def test_un_fallo_despues_de_pasar_al_siguiente_no_arranca_otro(
 
     assert len(WorkerFalso.creados) == 2           # uno solo más, no dos
     assert ventana._cola_completados == 1
+
+
+# =====================================================================
+# n.º 4 — Una hoja rara no tira el bloque; una lectura desbocada no tira
+#          la otra, que era buena
+# =====================================================================
+def anidado(niveles: int):
+    valor = []
+    for _ in range(niveles):
+        valor = [valor]
+    return valor
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ('{"total": NaN, "suplidos": Infinity, "base_irpf": -Infinity}',
+     {"total": None, "suplidos": None, "base_irpf": None}),
+    ('{"total": 1e999, "pct_irpf": 15}', {"total": None, "pct_irpf": 15}),
+    ('{"total": ' + "9" * 5000 + '}', {"total": None}),
+    ('{"total": ' + "9" * 400 + '.5}', {"total": None}),
+    ('{"total": 9999999999999999}', {"total": None}),
+], ids=["literales", "1e999", "entero_5000_cifras", "decimal_400_cifras",
+        "entero_16_cifras"])
+def test_el_json_de_gemini_sin_numeros_imposibles(texto, esperado):
+    from facturas_excel.extraccion import _parse_json_tolerante
+    assert _parse_json_tolerante(texto) == esperado
+
+
+@pytest.mark.parametrize("texto", [
+    "[" * 100_000 + "]" * 100_000,
+    '{"concepto_texto": ' + "[" * 3000 + "]" * 3000 + "}",
+    '{"total": 1' + "9" * 5000,                     # cortada en mitad del número
+], ids=["100000_niveles", "3000_niveles_dentro", "cortada_en_un_numero"])
+def test_el_json_desbocado_no_lanza(texto):
+    from facturas_excel.extraccion import _parse_json_tolerante
+    assert _parse_json_tolerante(texto) is None      # se vuelve a pedir
+
+
+class ClienteGemini:
+    """Contesta a cada modelo con un TEXTO fijo y apunta las llamadas."""
+
+    def __init__(self, textos):
+        from types import SimpleNamespace
+        self.textos = textos
+        self.llamadas = []
+        self.models = SimpleNamespace(generate_content=self._generar)
+
+    def _generar(self, model, contents, config):
+        from types import SimpleNamespace
+        self.llamadas.append(model)
+        return SimpleNamespace(
+            text=self.textos[model], model_version=model,
+            usage_metadata=SimpleNamespace(prompt_token_count=1000,
+                                           candidates_token_count=100,
+                                           thoughts_token_count=20))
+
+
+def extractor(monkeypatch, textos, modo="siempre"):
+    from facturas_excel import extraccion
+    monkeypatch.setattr(extraccion.genai, "Client", lambda **kw: None)
+    ex = extraccion.Extractor("clave", modelos=["modelo-a", "modelo-b"],
+                              modo_doble=modo)
+    ex.client = ClienteGemini(textos)
+    return ex
+
+
+@pytest.mark.parametrize("desbocada", [
+    "[" * 100_000 + "]" * 100_000,
+    '{"total": ' + "9" * 5000 + ', "lineas_iva": [',
+    '{"total": 1' + "9" * 5000,
+], ids=["100000_niveles", "entero_5000_cifras_cortada", "cortada_en_un_numero"])
+def test_una_lectura_desbocada_no_tira_la_otra(monkeypatch, desbocada):
+    buena = json.dumps(lectura(0))
+    ex = extractor(monkeypatch, {"modelo-a": desbocada, "modelo-b": buena})
+
+    leido = ex.extraer(b"img", "taco.pdf", 1)
+
+    assert leido.crudo["num_factura"] == "F26/00100"   # la del otro modelo
+    assert leido.crudo.get("_error_2")                 # y se dice que la 1.ª falló
+    assert ex.client.llamadas.count("modelo-a") == 3   # se reintentó, se pagó
+    assert len(leido.consumos) == 4
+
+
+def test_una_lectura_con_un_entero_enorme_se_queda(monkeypatch):
+    rara = json.dumps(lectura(0))[:-1] + ', "suplidos": ' + "9" * 5000 + "}"
+    ex = extractor(monkeypatch, {"modelo-a": rara, "modelo-b": rara}, modo="no")
+    leido = ex.extraer(b"img", "taco.pdf", 1)
+    assert leido.crudo["suplidos"] is None and leido.crudo["total"] == 60.5
+    assert ex.client.llamadas == ["modelo-a"]
+
+
+RARAS = {
+    "lineas_texto": dict(lineas_iva="21%"),
+    "lineas_con_none": dict(lineas_iva=[None]),
+    "lineas_con_numero": dict(lineas_iva=[5]),
+    "lineas_numero": dict(lineas_iva=5),
+    "lineas_dict": dict(lineas_iva={"base": 10}),
+    "ultima_pagina_texto": dict(_ultima_pagina_consolidada="abc"),
+    "union_manual_rara": dict(_paginas_union_manual=[[1, 2, 3]]),
+    "anidado_900": dict(concepto_texto=anidado(900)),
+}
+
+
+@pytest.mark.parametrize("cambios", list(RARAS.values()), ids=list(RARAS))
+def test_una_hoja_rara_no_tira_el_bloque_de_25(cambios):
+    lecturas = [lectura(i) for i in range(25)]
+    lecturas[6] = lectura(6, **cambios)
+
+    procesadas = procesar.preparar_lote(crudos_de(*lecturas), *CLIENTE)
+
+    assert len(procesadas) == 25
+    assert sorted(pr.pagina for _, pr in procesadas) == list(range(1, 26))
+    rara = next(pr for _, pr in procesadas if pr.pagina == 7)
+    otras = [pr for _, pr in procesadas if pr.pagina != 7]
+    assert not any("HOJA NO LEÍDA" in pr.aviso for pr in otras)
+    assert all(pr.facturas[0].num_factura for pr in otras)
+    if "HOJA NO LEÍDA" in rara.aviso:            # la rara, en rojo con su motivo
+        assert validar(rara.facturas[0]).estado == ERROR
+
+
+@pytest.mark.parametrize("nombre", [["PROVEEDOR", "UNO"], {"nombre": "X"}, 12345],
+                         ids=["lista", "dict", "numero"])
+def test_un_nombre_raro_no_impide_saber_el_cliente(nombre):
+    lecturas = [lectura(i) for i in range(25)]
+    lecturas[6] = lectura(6, emisor_nombre=nombre)
+    lecturas[7] = lectura(7, receptor_nombre=nombre, receptor_nif=["12345678Z"])
+    assert procesar.detectar_cliente(lecturas) == CLIENTE
+
+
+@pytest.mark.parametrize("lineas", ["21%", 5, {"base": 10}, None],
+                         ids=["texto", "numero", "dict", "nada"])
+def test_comparar_dos_lecturas_con_lineas_raras_no_lanza(lineas):
+    from facturas_excel.doble_lectura import comparar, es_dudosa
+    rara = lectura(0, lineas_iva=lineas)
+    diferencias = comparar(lectura(0), rara)
+    assert [d["campo"] for d in diferencias] == ["lineas_iva"]
+    assert es_dudosa(rara)                  # sin desglose, que la mire otro

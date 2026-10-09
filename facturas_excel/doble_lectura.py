@@ -111,7 +111,9 @@ def _iguales(campo: str, a, b) -> bool:
 def _lineas(datos: dict) -> list:
     """Lineas de IVA comparables: (tipo, base, cuota, recargo) por tipo."""
     salida = []
-    for linea in datos.get("lineas_iva") or []:
+    lineas = datos.get("lineas_iva")
+    # Un número o un texto en lugar de la lista (lectura rara): sin desglose.
+    for linea in lineas if isinstance(lineas, list) else []:
         if not isinstance(linea, dict):
             continue
         valores = tuple(_numero(linea.get(c)) for c in
