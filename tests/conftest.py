@@ -66,6 +66,30 @@ def sin_ventanas_que_esperan(monkeypatch):
                           f"preverla en la prueba: {', '.join(abiertas)}")
 
 
+@pytest.fixture
+def hojas_dibujadas():
+    """Para dar al Worker (hilos.Hojas) hojas ya dibujadas, sin PDF:
+    `monkeypatch.setattr(hilos, "Hojas", hojas_dibujadas([(origen, página,
+    imagen), ...]))`."""
+    def hacer(imagenes):
+        imagenes = list(imagenes)
+
+        class HojasDibujadas:
+            def __init__(self, rutas, dpi=150):
+                self.lista = [(origen, pagina) for origen, pagina, _ in imagenes]
+
+            def __len__(self):
+                return len(imagenes)
+
+            def imagen(self, indice):
+                return imagenes[indice][2]
+
+            def cerrar(self):
+                pass
+        return HojasDibujadas
+    return hacer
+
+
 @pytest.fixture(autouse=True)
 def perfil_aislado(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'perfil'))

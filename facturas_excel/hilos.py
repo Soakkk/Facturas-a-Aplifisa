@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import threading
 import traceback
 
 from PySide6.QtCore import QObject, QThread, Signal
 
 from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
 from facturas_excel.extraccion import Extractor, SinCredito
-from facturas_excel.pdf import cargar_imagenes
+from facturas_excel.pdf import Hojas
 from facturas_excel.procesar import detectar_cliente, preparar_lote
 
 
 HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
+NO_LEIDA_AL_CERRAR = "No leída: se cerró el programa mientras se leía."
 
 
 def hilos_lectura() -> int:
@@ -36,22 +38,40 @@ class Worker(QThread):
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
         self._extractor = None
+        self._hojas = None
+        self._cancelado = threading.Event()
 
     def cancelar(self) -> None:
         """Al cerrar el programa: no se espera a Google ni se piden más hojas."""
-        if self._extractor is not None:
-            self._extractor.cancelado.set()
+        self._cancelado.set()
+        cancelado = getattr(self._extractor, "cancelado", None)
+        if cancelado is not None:
+            cancelado.set()
+        # El PDF se suelta ya, sin esperar a que Gemini conteste: la ventana
+        # espera a la lectura solo 5 s y luego borra la parte de la cola (en
+        # Windows, abierta no se puede). Ya no se dibuja ninguna hoja más.
+        hojas = self._hojas
+        if hojas is not None:
+            hojas.cerrar()
 
     def run(self):
+        hojas = None
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            imagenes = cargar_imagenes(
+            # Aquí solo se cuentan las hojas: cada una se dibuja en su hilo
+            # justo antes de leerla (ver `tarea`). Antes se dibujaba el bloque
+            # entero (de 3 a 5 s) sin que Gemini empezara, con todas sus
+            # imágenes en memoria; ahora en memoria solo están las que se
+            # están leyendo, y la ventana no se para mientras.
+            hojas = self._hojas = Hojas(
                 self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
-            if not imagenes:
+            if not len(hojas):
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
             self._extractor = extractor
-            total = len(imagenes)
+            if self._cancelado.is_set():        # se cerró mientras se contaban
+                self.cancelar()
+            total = len(hojas)
             registros = [None] * total
 
             consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
@@ -64,11 +84,40 @@ class Worker(QThread):
                 return {"emisor_nombre": None, "lineas_iva": [{}],
                         "_error": motivo}
 
+            def sin_imagen(idx, origen, pagina, motivo):
+                """La hoja queda en rojo, sin imagen y sin pedirla a Gemini."""
+                self.fallos.append((origen, pagina, motivo))
+                return idx, (b"", origen, pagina, {
+                    "emisor_nombre": None, "lineas_iva": [{}], "_error": motivo})
+
+            def a_disco(img):
+                """La imagen pasa a las muestras en cuanto se ha leído, aquí,
+                fuera de la ventana, y el lote se queda con su asa (ver
+                imagen_hoja). La que no se pueda escribir sigue con sus bytes."""
+                try:
+                    return imagen_hoja.a_disco(img) if img else img
+                except OSError:
+                    return img
+
             def tarea(idx):
-                origen, pagina, img = imagenes[idx]
+                origen, pagina = hojas.lista[idx]
+                if self._cancelado.is_set():
+                    # Se está cerrando: ni se dibuja ni se pide.
+                    return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
+                try:
+                    # Con el cerrojo de MuPDF solo lo suyo; la foto de un
+                    # escaneo se reduce fuera (pdf.hoja_a_jpg).
+                    img = hojas.imagen(idx)
+                except Exception as e:
+                    # Una hoja que no se puede sacar no tumba el bloque (ni
+                    # se pierde lo ya leído y pagado de las demás).
+                    return sin_imagen(idx, origen, pagina,
+                                      f"No se pudo sacar la imagen de la hoja: {e}"[:120])
                 if sin_credito:
                     # Se acabó el crédito en otra hoja: no se pide nada más.
-                    return idx, (img, origen, pagina, sin_leer(img, origen, pagina))
+                    # La imagen sí se queda, para leerla cuando haya saldo.
+                    return idx, (a_disco(img), origen, pagina,
+                                 sin_leer(img, origen, pagina))
                 try:
                     leido = extractor.extraer(img, origen, pagina)
                     consumo.extend(leido.consumos or [(
@@ -88,7 +137,7 @@ class Worker(QThread):
                     datos = {"emisor_nombre": None, "lineas_iva": [{}],
                              "_error": str(e)[:120]}
                     self.fallos.append((origen, pagina, str(e)[:120]))
-                return idx, (img, origen, pagina, datos)
+                return idx, (a_disco(img), origen, pagina, datos)
 
             hechas = 0
             ex = ThreadPoolExecutor(max_workers=hilos_lectura())
@@ -103,20 +152,22 @@ class Worker(QThread):
                 # Si algo corta el lote, las hojas que aún no han empezado se
                 # cancelan: no se sigue pagando por nada.
                 ex.shutdown(wait=True, cancel_futures=True)
+                # Ya no queda ningún hilo dibujando: los PDF se cierran antes
+                # de avisar a la ventana, que al acabar el bloque mueve el
+                # original o borra la parte (en Windows, abierto no se puede).
+                hojas.cerrar()
                 self._registrar_consumo(consumo)
 
             if sin_credito:
                 self.sin_credito = sin_credito[0]
                 if not leidas:
                     raise SinCredito(sin_credito[0])
-            # La imagen de cada hoja se guarda ya en las muestras y el lote se
-            # queda solo con su asa (ver imagen_hoja), aquí, fuera de la
-            # ventana. La que no se pueda escribir sigue con sus bytes.
-            registros = imagen_hoja.Conversor().registros(registros)
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)
         except Exception as e:  # noqa
+            if hojas is not None:
+                hojas.cerrar()
             self.fallo.emit(str(e))
 
     def _registrar_consumo(self, consumo) -> None:

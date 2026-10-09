@@ -372,7 +372,7 @@ def test_sin_la_carpeta_de_imagenes_nada_se_rompe(tmp_path, monkeypatch):
     assert v._clasificar_exportacion()[0]["gasto"]
 
 
-def test_la_lectura_deja_cada_imagen_en_disco_fuera_de_la_ventana(monkeypatch):
+def test_la_lectura_deja_cada_imagen_en_disco_fuera_de_la_ventana(monkeypatch, hojas_dibujadas):
     from facturas_excel import hilos
     from facturas_excel.extraccion import DatosFactura
     from facturas_excel.imagen_hoja import ImagenHoja
@@ -388,8 +388,8 @@ def test_la_lectura_deja_cada_imagen_en_disco_fuera_de_la_ventana(monkeypatch):
             return DatosFactura(crudo=_datos(f"F-{pagina}"), pagina=pagina,
                                 consumos=[("gemini-falso", 1, 1)])
     monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
-    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
-        ("a.pdf", n, imagenes[n - 1]) for n in (1, 2)])
+    monkeypatch.setattr(hilos, "Hojas", hojas_dibujadas([
+        ("a.pdf", n, imagenes[n - 1]) for n in (1, 2)]))
     monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
     w = hilos.Worker(["a.pdf"], "clave")
     entregado = []
