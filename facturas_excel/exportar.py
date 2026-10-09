@@ -13,6 +13,7 @@ from openpyxl.utils import column_index_from_string
 
 from .config_columnas import ConfigColumnas, ETIQUETA_CABECERA
 from .modelo import CAMPOS_IMPORTE, CAMPOS_PORCENTAJE, Factura
+from .texto import sin_invisibles
 
 # Modo en que se escriben los numeros en las celdas:
 #   "texto"  -> "1234,56" como texto (separador decimal coma)
@@ -64,6 +65,12 @@ def _valor_celda(campo: str, valor, modo: str):
     """Devuelve el valor listo para escribir en la celda segun el tipo de campo."""
     if valor is None or valor == "":
         return None
+    if isinstance(valor, str):
+        # Un carácter de control en un nombre tumbaba la exportación entera
+        # (openpyxl no lo admite). La validación ya lo ha señalado en ámbar.
+        valor = sin_invisibles(valor)
+        if not valor:
+            return None
 
     # Aplifisa: el NIF de la cuenta no puede llevar puntos, espacios ni guiones.
     if campo == "nif":

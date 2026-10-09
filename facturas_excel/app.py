@@ -3103,6 +3103,16 @@ def _argumentos(argv):
 FICHERO_ERRORES = errores.FICHERO
 
 
+def _texto_del_error(tipo, valor) -> str:
+    """Lo que se le dice a la persona. Un error sin mensaje (el de memoria
+    lo es) dejaba la ventana con un hueco en blanco."""
+    if issubclass(tipo, MemoryError):
+        return ("El programa se ha quedado sin memoria. Guarde lo que esté "
+                "haciendo, cierre otros programas y vuelva a intentarlo.")
+    texto = str(valor).strip()
+    return texto or f"Error interno del programa ({tipo.__name__})."
+
+
 def _aviso_de_error(tipo, valor, rastro) -> None:
     """Ningún fallo pasa en silencio.
 
@@ -3125,7 +3135,8 @@ def _aviso_de_error(tipo, valor, rastro) -> None:
         try:
             QMessageBox.critical(
                 None, "Algo ha fallado",
-                f"No se ha podido terminar lo que estaba haciendo:\n\n{valor}"
+                "No se ha podido terminar lo que estaba haciendo:\n\n"
+                f"{_texto_del_error(tipo, valor)}"
                 f"\n\nEl detalle queda apuntado en {FICHERO_ERRORES}, en la "
                 "carpeta de datos del programa (%APPDATA%\\FacturasAplifisa). "
                 "Lo que ya estaba hecho no se ha perdido.")

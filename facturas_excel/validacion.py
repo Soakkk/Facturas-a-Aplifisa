@@ -12,6 +12,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from .modelo import Factura
+from .texto import tiene_invisibles
 
 # Estados (semaforo)
 OK = "ok"            # verde: todo cuadra
@@ -277,6 +278,12 @@ def validar(f: Factura) -> Resultado:
         marcar_error("Falta el nº de factura (obligatorio)", "num_factura")
     if not f.nombre:
         marcar_error("Falta el nombre (obligatorio)", "nombre")
+    elif tiene_invisibles(f.nombre):
+        # Suele ser una letra con tilde que llegó mal («JOS?» por «JOSÉ»): al
+        # exportar se quita el carácter y el nombre quedaría sin esa letra.
+        marcar_revisar("El nombre trae un carácter que no se ve, casi siempre "
+                       "una letra con tilde mal leída. Escríbalo bien: el "
+                       "programa lo recordará para las próximas.", "nombre")
     if not f.concepto:
         marcar_error("Falta el concepto (obligatorio)", "concepto")
     else:
@@ -515,6 +522,19 @@ MINIMO_SERIE = 3        # con menos de 3 no hay serie que valga
 MAXIMO_HUECO = 12       # un salto enorme suele ser otra serie, no una perdida
 
 
+def _faltan(vistos: set, menor: int, mayor: int):
+    """Los números que faltan entre `menor` y `mayor`, o None si son más de
+    MAXIMO_HUECO (otra serie, o un número mal leído).
+
+    Se cuentan antes de listarlos: un número de diez cifras en la serie
+    obligaba a recorrer miles de millones y agotaba la memoria.
+    """
+    dentro = sum(1 for n in vistos if menor <= n <= mayor)
+    if (mayor - menor + 1) - dentro > MAXIMO_HUECO:
+        return None
+    return [n for n in range(menor, mayor) if n not in vistos]
+
+
 def _trozos(num_factura: str):
     """'01/25' -> (('', '/', ''), ('01', '25')): la forma y los numeros."""
     partes = re.split(r"(\d+)", str(num_factura or "").strip().upper())
@@ -595,13 +615,11 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
             antes = [n for n in de_la_serie if n < menor]
             if antes:
                 con_anterior = vistos | {max(antes)}
-                faltan = [n for n in range(min(con_anterior), mayor)
-                          if n not in con_anterior]
                 # Muy lejos: es otra cosa (otra serie, un año entero).
-                if len(faltan) <= MAXIMO_HUECO:
+                if _faltan(con_anterior, min(con_anterior), mayor) is not None:
                     vistos = con_anterior
-        faltan = [n for n in range(min(vistos), max(vistos)) if n not in vistos]
-        if not faltan or len(faltan) > MAXIMO_HUECO:
+        faltan = _faltan(vistos, min(vistos), max(vistos))
+        if not faltan:
             continue
         modelo, quien = entradas[0]
         ancho = len(modelo[col])
