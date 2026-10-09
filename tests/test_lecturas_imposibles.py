@@ -10,6 +10,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import copy
 import json
 import math
 
@@ -422,3 +423,169 @@ def test_comparar_dos_lecturas_con_lineas_raras_no_lanza(lineas):
     diferencias = comparar(lectura(0), rara)
     assert [d["campo"] for d in diferencias] == ["lineas_iva"]
     assert es_dudosa(rara)                  # sin desglose, que la mire otro
+
+
+# =====================================================================
+# n.º 14 — La lectura se sanea a la entrada de la doble lectura: solo las
+#           claves del esquema y las internas conocidas, con su tipo y tamaño
+# =====================================================================
+def combinada(principal, segunda=None):
+    from facturas_excel.doble_lectura import combinar
+    if segunda is None:
+        return combinar(principal, None, "modelo-a", "")
+    return combinar(principal, segunda, "modelo-a", "modelo-b")
+
+
+def test_una_lectura_normal_pasa_igual():
+    d = lectura(0)
+    c = combinada(d, copy.deepcopy(d))
+    assert {k: c[k] for k in d} == d
+    assert "_saneado" not in c and c["_discrepancias"] == []
+    assert "Gemini traía datos" not in lote(d)[0][1].aviso
+
+
+@pytest.mark.parametrize("campo,valor,esperado", [
+    ("emisor_nombre", ["PROVEEDOR", "UNO"], None),
+    ("emisor_nombre", {"nombre": "X"}, None),
+    ("emisor_nombre", 12345, "12345"),
+    ("emisor_nif", True, None),
+    ("num_factura", 10 ** 400, None),
+    ("num_factura", NAN, None),
+    ("fecha", ["01/01/2026"], None),
+    ("total", "abc", None),
+    ("total", [1, 2], None),
+    ("total", "9" * 5000, None),
+    ("suplidos", NAN, None),
+    ("es_bien_inversion", "false", False),
+    ("manuscrito_en_importes", [], False),
+    ("tipo_documento", "abono_raro", None),
+    ("tipo_documento", ["factura"], None),
+    ("confianza", 5, None),
+    ("estado_pagina_factura", 5, None),
+    ("lineas_iva", "21%", []),
+    ("lineas_iva", 5, []),
+    ("lineas_iva", [None, {"base": "x", "tipo_iva": 21, "cuota_iva": NAN}],
+     [{"base": None, "tipo_iva": 21.0, "cuota_iva": None, "pct_requiv": None,
+       "cuota_requiv": None}]),
+], ids=lambda v: corto(v) if not isinstance(v, str) else v[:20])
+def test_cada_dato_queda_con_su_tipo(campo, valor, esperado):
+    c = combinada(lectura(0, **{campo: valor}))
+    assert c[campo] == esperado
+    # Un número por nombre o «false» en texto se entienden sin más; lo
+    # demás se apunta para avisar en ámbar.
+    if (campo, valor) not in (("emisor_nombre", 12345), ("es_bien_inversion", "false")):
+        assert c.get("_saneado")
+
+
+def test_los_textos_desbocados_se_recortan():
+    c = combinada(lectura(0, emisor_nombre="PROVEEDOR LARGO " * 625,
+                          num_factura="9" * 5000, moneda="x" * 1000))
+    assert len(c["emisor_nombre"]) <= 300 and len(c["num_factura"]) <= 200
+    assert len(c["moneda"]) <= 20
+    pr = lote(c)[0][1]
+    assert len(pr.facturas[0].num_factura) <= 60    # y la fila, como siempre
+
+
+def test_lo_saneado_sale_en_ambar_diciendo_que():
+    c = combinada(lectura(0, tipo_documento="abono_raro", confianza=5))
+    pr = lote(c)[0][1]
+    assert "tipo de documento «abono_raro»" in pr.aviso
+    assert "confianza" in pr.aviso
+
+
+@pytest.mark.parametrize("clave,valor", [
+    ("_ultima_pagina_consolidada", 10 ** 9), ("_ultima_pagina_consolidada", "abc"),
+    ("_ultima_pagina_consolidada", NAN), ("_paginas_union_manual", 5),
+    ("_paginas_union_manual", [[1, 2, 3]]), ("_paginas_union_manual", [("o", 10 ** 9)]),
+    ("_paginas_union_inferida", [10 ** 9]), ("_discrepancias", "x"),
+    ("_discrepancias", [{"campo": None}]), ("_discrepancias", [{}]),
+    ("_lectura_2", "x"), ("_verificacion", 5), ("_union_inferida", "si"),
+    ("_error", "E" * 10000), ("_error", [1, 2]), ("_modelo_1", []),
+    ("_otra_cosa", 1), ("campo_inventado", "x"),
+], ids=lambda v: corto(v) if not isinstance(v, str) else v[:20])
+def test_una_clave_interna_con_otra_forma_se_quita(clave, valor):
+    c = combinada(lectura(0, **{clave: valor}), lectura(0))
+    assert clave not in c or clave in ("_modelo_1", "_verificacion",
+                                       "_lectura_2", "_discrepancias")
+    assert c["_modelo_1"] == "modelo-a" and c["_verificacion"] == "doble"
+    assert c.get("_saneado")
+    procesadas = lote(c, lectura(1))            # y el lote sale entero
+    assert len(procesadas) == 2
+
+
+def test_las_claves_internas_conocidas_se_quedan_con_su_forma():
+    c = combinada(lectura(0, _error_2="la otra no contestó",
+                          _paginas_union_manual=[["taco.pdf", 1], ["taco.pdf", 2]],
+                          _ultima_pagina_consolidada=2, _union_manual=True))
+    assert c["_error_2"] == "la otra no contestó"
+    assert c["_paginas_union_manual"] == [["taco.pdf", 1], ["taco.pdf", 2]]
+    assert c["_ultima_pagina_consolidada"] == 2 and c["_union_manual"] is True
+    assert "_saneado" not in c
+
+
+def test_una_ultima_pagina_de_mil_millones_no_llena_la_memoria():
+    import tracemalloc
+
+    from facturas_excel import registro_facturas, separar
+    c = combinada(lectura(0, _ultima_pagina_consolidada=10 ** 9))
+    procesadas = lote(c)
+    f = procesadas[0][1].facturas[0]
+    assert f.ultima_pagina_origen <= 10_000        # antes: 1.000.000.000
+    tracemalloc.start()
+    try:
+        registro_facturas._agrupar({"gasto": [f]})
+        separar.paginas_de(f)
+        _actual, pico = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert pico < 20 * 2 ** 20
+
+
+def test_modo_dudosas_no_paga_otra_lectura_por_un_false_en_texto(monkeypatch):
+    buena = json.dumps(lectura(0, manuscrito_en_importes="false"))
+    ex = extractor(monkeypatch, {"modelo-a": buena, "modelo-b": buena},
+                   modo="dudosas")
+    leido = ex.extraer(b"img", "taco.pdf", 1)
+    assert leido.crudo["manuscrito_en_importes"] is False
+    assert ex.client.llamadas == ["modelo-a"]          # sin segunda lectura
+
+
+# =====================================================================
+# n.º 12 — Muestras con \ud800 o NaN; n.º 13 — localizar con enteros enormes
+# =====================================================================
+@pytest.mark.parametrize("valor", ["PROVEEDOR \ud800 SL", "\udfff" * 3, NAN, INF,
+                                   10 ** 5000, {"a": [NAN, "\ud800"]}],
+                         ids=["surrogate", "surrogates", "nan", "inf",
+                              "entero_5000_cifras", "anidado"])
+def test_las_muestras_se_guardan_con_cualquier_lectura(valor):
+    from facturas_excel import muestras_revision
+    contenido = muestras_revision._json({"datos": {"emisor_nombre": valor}})
+    assert isinstance(json.loads(contenido.decode("utf-8")), dict)
+    muestras_revision.guardar_lecturas(
+        [(b"", "taco.pdf", 1, {"emisor_nombre": valor, "total": NAN})])
+
+
+def test_un_bloque_con_letras_sueltas_no_avisa_de_las_muestras(
+        ventana, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    avisos = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: avisos.append(a[1:3])))
+    crudos = crudos_de(combinada(lectura(0, emisor_nombre="PROVEEDOR \ud800 SL")),
+                       combinada(lectura(1, num_factura="\ud800123")))
+    ventana._rutas_actuales = ["taco.pdf"]
+    ventana._on_terminado(procesar.preparar_lote(crudos, *CLIENTE), *CLIENTE, crudos)
+    ventana._guardar_muestra_revision()
+    assert ventana.tabla.rowCount() == 2
+    assert avisos == []
+
+
+@pytest.mark.parametrize("valor", [10 ** 400, -10 ** 400, 10 ** 5000, NAN, INF,
+                                   "9" * 5000],
+                         ids=["10e400", "-10e400", "10e5000", "nan", "inf",
+                              "texto_5000_cifras"])
+def test_localizar_compara_cualquier_valor(valor):
+    from facturas_excel import localizar
+    assert isinstance(localizar._comparable(valor), str)
+    caja = localizar.Caja("total", "121,00", 0.1, 0.1, 0.2, 0.2)
+    assert localizar.cajas_de([caja], "total", valor) == []

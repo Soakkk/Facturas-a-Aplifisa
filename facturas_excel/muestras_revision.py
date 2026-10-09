@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -33,8 +34,29 @@ def _hash(contenido: bytes) -> str:
 
 
 def _json(valor) -> bytes:
-    return json.dumps(valor, ensure_ascii=False, sort_keys=True, indent=2,
-                      allow_nan=False).encode("utf-8")
+    # Un NaN, un infinito o un entero de miles de cifras (lectura desbocada,
+    # sesión vieja) no es JSON: va como null. Una mitad suelta de surrogate (\ud800) no se puede escribir
+    # en UTF-8: va escapada, que sigue siendo JSON válido. Antes, cualquiera
+    # de los dos dejaba sin guardar la muestra, con un aviso cada vez.
+    try:
+        texto = json.dumps(valor, ensure_ascii=False, sort_keys=True, indent=2,
+                           allow_nan=False)
+    except ValueError:
+        texto = json.dumps(_solo_json(valor), ensure_ascii=False, sort_keys=True,
+                           indent=2, allow_nan=False)
+    return texto.encode("utf-8", "backslashreplace")
+
+
+def _solo_json(valor):
+    if isinstance(valor, float) and not math.isfinite(valor):
+        return None
+    if isinstance(valor, int) and valor.bit_length() > 64:
+        return None
+    if isinstance(valor, dict):
+        return {k: _solo_json(v) for k, v in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_solo_json(v) for v in valor]
+    return valor
 
 
 def _atomico(destino: Path, contenido: bytes) -> None:

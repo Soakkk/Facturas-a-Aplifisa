@@ -26,6 +26,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
+from .sanear_lectura import aviso_saneado
 from .validacion import fecha_de, normalizar_fecha, validar_nif
 from .texto import limpiar, reparar, tiene_invisibles, visible
 
@@ -483,6 +484,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    aviso = f"{aviso} {aviso_saneado(datos)}".strip()
     if datos.get("_error"):
         aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
                 "esta hoja; no se ha rellenado ningún dato.".strip()

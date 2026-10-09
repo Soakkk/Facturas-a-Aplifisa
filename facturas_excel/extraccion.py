@@ -609,7 +609,9 @@ class Extractor:
             d1, m1, gastado = self._leer_uno(img, pagina)
             consumos.extend(gastado)
             crudo = combinar(d1, None, m1, "")
-            if modo == DOBLE_DUDOSAS and es_dudosa(d1):
+            # Lo combinado, no lo leído tal cual: ya viene saneado («false»
+            # escrito como texto no es «hay importes a mano»).
+            if modo == DOBLE_DUDOSAS and es_dudosa(crudo):
                 otro = next((m for m in self._disponibles() if m != self._base(m1)), None)
                 if otro:
                     try:

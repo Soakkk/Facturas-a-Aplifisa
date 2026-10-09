@@ -66,6 +66,8 @@ def _texto(valor) -> str:
 def _comparable(valor) -> str:
     """Para emparejar un valor con lo que devolvió Gemini (sin puntos ni €)."""
     from .tabla_facturas import parse_numero
+    if isinstance(valor, int) and abs(valor) > 10 ** 15:
+        return ""      # un entero desbocado: ni float() ni str() (> 4300 cifras)
     numero = parse_numero(valor) if not isinstance(valor, (int, float)) else float(valor)
     if numero is not None and any(c.isdigit() for c in str(valor)) and not any(
             c.isalpha() for c in str(valor)):

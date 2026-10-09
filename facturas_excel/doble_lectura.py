@@ -218,8 +218,16 @@ def combinar(principal: dict, segunda: Optional[dict], modelo_1: str,
     """La lectura que va a la tabla, con el resultado de la comparacion.
 
     Los datos que se usan son SIEMPRE los del modelo principal; la segunda
-    lectura solo confirma o señala. Se guardan las dos para poder elegir.
+    lectura solo confirma o señala. Las dos entran saneadas (sanear_lectura):
+    un dato con otra forma no tumba nada más adelante.
     """
+    from .sanear_lectura import sanear
+    principal = sanear(principal)
+    if segunda is not None:
+        # Lo raro de la segunda ya sale como diferencia con la principal, y
+        # sus claves internas no pintan nada.
+        segunda = sanear(segunda, internas=False)
+        segunda.pop("_saneado", None)
     datos = dict(principal)
     datos["_modelo_1"] = modelo_1
     if segunda is None:
