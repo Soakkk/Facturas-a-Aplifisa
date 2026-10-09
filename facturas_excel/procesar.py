@@ -117,6 +117,10 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     cuenta: Dict[str, Candidato] = {}
     nombres: Dict[str, list] = defaultdict(list)
     homonimo = False
+    # Los clientes y los proveedores, leídos una vez para todo el lote (no
+    # por cada nombre o NIF leído: con 450 hojas era casi un segundo por
+    # bloque, y más cuantos más clientes y proveedores hubiera guardados).
+    directorio = clientes.Directorio()
     for d in lista_datos:
         for campo_nif, campo_nom, papel in (
                 ("emisor_nif", "emisor_nombre", "e"),
@@ -127,7 +131,7 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
             # Para elegir el nombre, el roto tal cual: así gana una lectura
             # buena y, si no la hay, se intenta recuperar la letra.
             para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
-            conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
+            conocido = directorio.buscar_por_nombre(nombre_leido)
             if conocido and validar_nif(leido) and leido != conocido[0]:
                 # El nombre de un cliente confirmado con OTRO NIF válido: o es
                 # su NIF mal leído, o es otra persona que se llama igual (un
@@ -155,15 +159,16 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
             elif nombre_leido:
                 nombres[nif].append(para_elegir)
 
+    nifs_proveedores = _nifs_de_proveedores() if cuenta else set()
     for nif, c in cuenta.items():
         c.nombre, c.nombre_roto = _nombre_leido_de(nif, nombres.get(nif, []))
-        c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
+        c.cliente_confirmado = directorio.es_confirmado(nif)
         # El nombre con el que ya se le conoce (aqui o en la suite) manda
         # sobre las variantes leidas en las facturas.
-        confirmado = clientes.nombre_confirmado(nif)
+        confirmado = directorio.nombre_confirmado(nif)
         if confirmado:
             c.nombre, c.nombre_roto = confirmado, False
-        c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
+        c.proveedor_conocido = nif in nifs_proveedores
 
     # Con empate se propone al que RECIBE las facturas: un taco de facturas
     # iguales suele ser de compras (gasolinera, proveedor de la tienda...). Es
@@ -189,13 +194,13 @@ def _nombre_leido_de(nif: str, lista: list) -> tuple:
     return (recuperado, False) if recuperado else (limpiar(roto)[0], True)
 
 
-def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
-    """Si ya se le ha comprado alguna vez, no es el cliente de la asesoria."""
-    ficha = proveedores.leer(clave_proveedor(nombre)) if nombre else None
-    if ficha and normaliza_nif(ficha.get("nif")) == nif:
-        return True
-    return any(normaliza_nif(f.get("nif")) == nif
-               for f in proveedores.leer_todo().values() if isinstance(f, dict))
+def _nifs_de_proveedores() -> set:
+    """Los NIF de todos los proveedores guardados: si ya se le ha comprado
+    alguna vez, no es el cliente de la asesoria. (Antes se miraba por cada
+    candidato, primero la ficha de su nombre y luego todas, leyendo la base
+    dos veces; la de su nombre es una de todas: sale lo mismo.)"""
+    return {normaliza_nif(f.get("nif")) for f in proveedores.leer_todo().values()
+            if isinstance(f, dict)}
 
 
 def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:

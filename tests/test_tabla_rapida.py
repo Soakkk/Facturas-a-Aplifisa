@@ -513,3 +513,99 @@ def test_eliminar_varias_carga_la_hoja_y_la_ficha_una_vez(tmp_path, monkeypatch)
     # Y se puede deshacer como siempre.
     v._deshacer_borrado()
     assert len(v.filas) == n and v.filas[4:16] == quitadas
+
+
+# ------------------------- el cliente del lote, sin abrir la base por cada hoja
+def _directorio_de_la_suite(clientes_suite):
+    import json
+    from facturas_excel import suite
+    ruta = suite.ruta_directorio()
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1, "clientes": clientes_suite}, fh)
+    suite._cache.update(mtime=None, ruta=None, datos=None)
+
+
+def _clientes_inventados():
+    """Clientes guardados aquí y en la suite (identificadores inventados, no
+    son NIF), con homónimos, nombres en conflicto y uno roto."""
+    from facturas_excel import clientes
+    for i in range(40):
+        clientes._guardar_ficha(f"ZZPRUEBA{i:04d}", {
+            "nombre": f"CLIENTE INVENTADO {i:04d} SL", "confirmado": i % 4 != 0})
+    clientes._guardar_ficha("ZZHOMONIMO1", {"nombre": "Repetido, S.L.", "confirmado": True})
+    clientes._guardar_ficha("ZZHOMONIMO2", {"nombre": "REPETIDO SL", "confirmado": True})
+    clientes._guardar_ficha("ZZROTO", {"nombre": "JOS​ PRUEBA", "confirmado": True})
+    suite_clientes = {f"ZZSUITE{i:04d}": {"nif": f"ZZSUITE{i:04d}",
+                                          "nombre": f"Socio Inventado {i:04d}"}
+                      for i in range(40)}
+    suite_clientes["ZZSUITE0007"]["conflictos"] = {"nombre": ["Uno", "Otro"]}
+    suite_clientes["ZZDOBLE"] = {"nif": "ZZDOBLE", "nombre": "Cliente Inventado 0001 SL"}
+    suite_clientes["ZZPRUEBA0002"] = {"nif": "ZZPRUEBA0002", "nombre": "Otro nombre"}
+    _directorio_de_la_suite(suite_clientes)
+
+
+def _buscar_como_antes(nombre):
+    """buscar_confirmado_por_nombre tal como era (la referencia)."""
+    from facturas_excel import clientes, suite
+    clave = clientes._clave_nombre(nombre)
+    if not clave:
+        return None
+    coincidencias = {}
+    for nif, ficha in clientes._leer_todo().items():
+        if (isinstance(ficha, dict) and ficha.get("confirmado")
+                and clientes._clave_nombre(ficha.get("nombre")) == clave):
+            coincidencias[clientes._normaliza(nif)] = ficha.get("nombre", "")
+    for nif in suite.clientes():
+        otro = suite.nombre_de(nif)
+        if otro and clientes._clave_nombre(otro) == clave:
+            coincidencias.setdefault(nif, otro)
+    return next(iter(coincidencias.items())) if len(coincidencias) == 1 else None
+
+
+def test_el_directorio_de_clientes_responde_lo_mismo_que_antes():
+    from facturas_excel import clientes, suite
+    _clientes_inventados()
+    nombres = ([f"cliente inventado {i:04d} s.l." for i in range(40)]
+               + [f"SOCIO INVENTADO {i:04d}" for i in range(40)]
+               + ["Repetido SL", "JOS​ PRUEBA", "JOS PRUEBA", "Otro nombre",
+                  "NADIE CONOCIDO", "", None, "Uno"])
+    directorio = clientes.Directorio()
+    for nombre in nombres:
+        assert directorio.buscar_por_nombre(nombre) == _buscar_como_antes(nombre), nombre
+        assert clientes.buscar_confirmado_por_nombre(nombre) == _buscar_como_antes(nombre)
+    todo = clientes._leer_todo()
+    for nif in [*todo, *suite.clientes(), "zzprueba0001", "ZZ-SUITE-0003", "NADIE", ""]:
+        ficha = todo.get(clientes._normaliza(nif), {})
+        confirmado = bool(clientes._normaliza(nif) and (
+            ficha.get("confirmado") or suite.es_cliente(clientes._normaliza(nif))))
+        assert directorio.es_confirmado(nif) == confirmado, nif
+        if ficha.get("confirmado") and ficha.get("nombre") and not clientes._roto(ficha["nombre"]):
+            esperado = ficha["nombre"].strip()
+        else:
+            esperado = suite.nombre_de(clientes._normaliza(nif))
+        assert directorio.nombre_confirmado(nif) == esperado, nif
+
+
+def test_el_indice_de_nombres_se_rehace_solo_si_cambian_los_clientes(monkeypatch):
+    from facturas_excel import clientes
+    _clientes_inventados()
+    assert clientes.Directorio().buscar_por_nombre("Socio Inventado 0003")
+    normalizados = _contar(monkeypatch, clientes, "_clave_nombre")
+    assert clientes.Directorio().buscar_por_nombre("Socio Inventado 0004")[0] == "ZZSUITE0004"
+    assert len(normalizados) == 1                      # solo el nombre buscado
+    clientes.marcar_cliente("ZZNUEVO", "CLIENTE NUEVO INVENTADO")
+    assert clientes.Directorio().buscar_por_nombre("Cliente nuevo inventado") == (
+        "ZZNUEVO", "CLIENTE NUEVO INVENTADO")
+
+
+def test_analizar_el_lote_lee_los_clientes_y_proveedores_una_vez(monkeypatch):
+    from facturas_excel import clientes, procesar, proveedores
+    _clientes_inventados()
+    lecturas = [d for d, _segunda in _lecturas(80)]
+    antes = procesar.analizar_cliente(lecturas)
+    leidas_clientes = _contar(monkeypatch, clientes, "_leer_todo")
+    leidas_proveedores = _contar(monkeypatch, proveedores, "leer_todo")
+    ahora = procesar.analizar_cliente(lecturas)
+    assert len(leidas_clientes) == 1 and len(leidas_proveedores) == 1   # antes, cientos
+    assert ahora == antes
