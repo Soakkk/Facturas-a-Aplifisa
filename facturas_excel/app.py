@@ -3021,9 +3021,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._avisar(f"Este {self._motivo_por_el_total()}: ya registra "
                          "todas sus compras por el total.", INFO)
             return
+        del_documento = self._filas_de_los_documentos(seleccionadas)
         fuentes = []
-        for fila in sorted({r for s in seleccionadas
-                            for r in self._filas_del_documento(s)}):
+        for fila in del_documento:
             if self._tipo_fila(fila) != "gasto":
                 continue
             registro = self.filas[fila]
@@ -3041,9 +3041,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f.no_deducible = valor
             self._rellenar_tabla()
             self._revalidar_todo()
-        exportadas = any(self.filas[r].get("ya_exportada")
-                         for s in seleccionadas
-                         for r in self._filas_del_documento(s))
+        exportadas = any(self.filas[r].get("ya_exportada") for r in del_documento)
         aplicar(poner)
         documentos = len({clave_documento(f) for f in fuentes})
         texto = (f"{documentos} factura(s) por el total: su IVA no se deduce y "
@@ -3071,8 +3069,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if not seleccionadas:
             self._avisar("Seleccione una o varias filas ámbar.", AVISO)
             return None
-        filas = sorted({r for fila in seleccionadas
-                        for r in self._filas_del_documento(fila)})
+        filas = self._filas_de_los_documentos(seleccionadas)
         confirmadas = []
         for fila in filas:
             registro = self.filas[fila]

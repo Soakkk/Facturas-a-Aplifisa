@@ -441,3 +441,30 @@ def test_lo_exportado_se_pregunta_una_vez_hasta_que_se_apunta_algo(monkeypatch):
         con.execute("UPDATE facturas SET exportada_en = NULL")
     assert historial.exportadas_de("12345678Z") == {}
     assert len(consultas) == antes + 1
+
+
+# ------------------------------- las líneas de cada factura, de una pasada
+def test_marcar_revisada_todo_busca_las_lineas_de_cada_factura_de_una_pasada(
+        tmp_path, monkeypatch):
+    from facturas_excel import app, control_facturas, ventana_ficha
+    from facturas_excel.validacion import REVISAR
+    v = _ventana_con_lote(tmp_path, 60)
+    n = len(v.filas)
+    # Lo que habría marcado buscando fila a fila, como antes.
+    esperadas = sorted({r for fila in range(n) for r in v._filas_del_documento(fila)
+                        if v.filas[r].estado == REVISAR})
+    claves = []
+
+    def contada(f):
+        claves.append(f)
+        return control_facturas.clave_documento(f)
+    monkeypatch.setattr(ventana_ficha, "clave_documento", contada)
+    monkeypatch.setattr(app, "clave_documento", contada)
+    v.tabla.selectAll()
+    assert v._marcar_revisada() is not None
+    # Unas pocas pasadas por el lote (marcar, revisar y la ficha de la que
+    # se ve), no una por cada fila seleccionada (n × n).
+    assert len(claves) <= 6 * n
+    monkeypatch.undo()
+    assert sorted(r for r in range(n) if v.filas[r].factura.revision_confirmada
+                  and v.filas[r].estado == REVISAR) == esperadas

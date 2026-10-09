@@ -326,6 +326,17 @@ class FichaMixin:
         return [r for r in range(len(self.filas))
                 if clave_documento(self.filas[r]["factura"]) == clave]
 
+    def _filas_de_los_documentos(self, filas) -> list[int]:
+        """Todas las líneas de las facturas de esas filas, en orden.
+
+        De una pasada por el lote: con todo seleccionado, buscar las de cada
+        fila por separado recorría el lote entero por cada una (800 × 800)."""
+        por_documento = {}
+        for r, registro in enumerate(self.filas):
+            por_documento.setdefault(clave_documento(registro["factura"]), []).append(r)
+        return sorted({r for fila in filas
+                       for r in por_documento[clave_documento(self.filas[fila]["factura"])]})
+
     def _datos_ficha(self, fila: int) -> dict:
         """Lo que enseña la ficha, a partir de la fila y de sus avisos."""
         from facturas_excel.doble_lectura import _fmt as fmt_lectura
