@@ -143,6 +143,10 @@ class Worker(QThread):
                 # Si algo corta el lote, las hojas que aún no han empezado se
                 # cancelan: no se sigue pagando por nada.
                 ex.shutdown(wait=True, cancel_futures=True)
+                # Ya no queda ningún hilo dibujando: los PDF se cierran antes
+                # de avisar a la ventana, que al acabar el bloque mueve el
+                # original o borra la parte (en Windows, abierto no se puede).
+                hojas.cerrar()
                 self._registrar_consumo(consumo)
 
             if sin_credito:
@@ -153,11 +157,9 @@ class Worker(QThread):
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)
         except Exception as e:  # noqa
-            self.fallo.emit(str(e))
-        finally:
-            # Ya no queda ningún hilo dibujando (shutdown espera).
             if hojas is not None:
                 hojas.cerrar()
+            self.fallo.emit(str(e))
 
     def _registrar_consumo(self, consumo) -> None:
         """Lo gastado en Gemini, con los tokens reales de cada respuesta."""

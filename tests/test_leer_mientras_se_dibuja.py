@@ -195,3 +195,31 @@ def test_el_orden_el_progreso_y_las_imagenes_se_mantienen(
                for img, *_ in crudos)
     assert "crédito" in w.sin_credito
     assert procesadas[0][0] is crudos[0][0]
+
+
+@pytest.mark.parametrize("acaba", ["terminado", "fallo"])
+def test_el_pdf_esta_cerrado_cuando_la_ventana_se_entera(tmp_path, monkeypatch, acaba):
+    """Al acabar el bloque la ventana mueve el original al archivo del
+    cliente (o borra la parte); en Windows un fichero abierto no se puede
+    mover, así que la lectura lo cierra antes de avisar."""
+    from facturas_excel import pdf
+
+    abiertas = []
+
+    class HojasVigiladas(pdf.Hojas):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            abiertas.append(self)
+
+    def extraer(img, origen, pagina):
+        if acaba == "fallo":
+            raise SinCredito("Tu API key no tiene crédito")
+        return _leida(pagina)
+    w = _worker(monkeypatch, _taco(tmp_path / "taco.pdf", 2), extraer)
+    monkeypatch.setattr(hilos, "Hojas", HojasVigiladas)
+    monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
+    al_avisar = []
+    getattr(w, acaba).connect(lambda *_a: al_avisar.append(
+        [bool(h._abiertos) for h in abiertas]), Qt.ConnectionType.DirectConnection)
+    w.run()
+    assert al_avisar == [[False]]
