@@ -456,6 +456,10 @@ class TablaFacturas(QTableWidget):
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
+    def editando(self) -> bool:
+        """Si hay una celda abierta escribiendo en ella."""
+        return self.state() == QAbstractItemView.EditingState
+
     def fila_del_combo(self, control) -> int:
         for r in range(self.rowCount()):
             if self.cellWidget(r, C_TIPO) is control:

@@ -198,3 +198,132 @@ def test_abrir_con_la_sesion_guardada_pone_las_filas_de_una_vez(tmp_path, monkey
     assert [[otra.tabla.item(r, c).text() for c in range(2, otra.tabla.columnCount())]
             for r in range(otra.tabla.rowCount())] == textos
     assert insertadas == []
+
+
+def _color(valor):
+    if valor is None:
+        return None
+    return (valor.color() if hasattr(valor, "color") else valor).name()
+
+
+def _entero(valor):
+    try:
+        return int(valor)
+    except TypeError:
+        return int(valor.value)
+
+
+def _huella(v):
+    """Todo lo que se ve de la tabla y lo que el programa decide de cada línea."""
+    from PySide6.QtCore import Qt
+    from facturas_excel.tabla_facturas import C_TIPO
+    t = v.tabla
+    celdas = []
+    for r in range(t.rowCount()):
+        fila = [t.isRowHidden(r), t.rowHeight(r)]
+        for c in range(t.columnCount()):
+            if c == C_TIPO:
+                combo = t.cellWidget(r, c)
+                fila.append((combo.currentData(), combo.toolTip()))
+                continue
+            it = t.item(r, c)
+            fila.append((it.text(), _color(it.data(Qt.BackgroundRole)),
+                         _color(it.data(Qt.ForegroundRole)), it.font().bold(),
+                         it.toolTip(), _entero(it.textAlignment()), _entero(it.flags())))
+        celdas.append(fila)
+    lineas = [(f.presentacion, f.estado, f.estado_base, [str(m) for m in f.mensajes],
+               f.aviso, f.tipo, f.bloque, f.aceptada, f.ya_exportada, f.factura.nombre,
+               f.factura.nif) for f in v.filas]
+    columnas = [(t.isColumnHidden(c), t.columnWidth(c)) for c in range(t.columnCount())]
+    seleccion = (t.currentRow(), t.currentColumn(),
+                 sorted(i.row() for i in t.selectionModel().selectedRows()),
+                 t.verticalScrollBar().value())
+    textos = (v.lbl_resultados.text(), v.lbl_contadores.text(), v.lbl_origen.text(),
+              v.lbl_pagina.text())
+    return celdas, lineas, columnas, seleccion, textos
+
+
+# ---------------------------- cada bloque añade sus filas, sin rehacerlas
+class _Gemelas:
+    """Dos ventanas con el mismo lote, cada una con su carpeta de datos (lo
+    que aprende una, un NIF o una cuenta, no lo encuentra hecho la otra)."""
+
+    def __init__(self, tmp_path, monkeypatch):
+        self.monkeypatch = monkeypatch
+        self.carpetas = [tmp_path / "a", tmp_path / "b"]
+        self.ventanas = [self._en(i, lambda: _ventana(tmp_path)) for i in (0, 1)]
+
+    def _en(self, i, hacer):
+        self.monkeypatch.setenv("APPDATA", str(self.carpetas[i] / "perfil"))
+        self.monkeypatch.setenv("LOCALAPPDATA", str(self.carpetas[i] / "local"))
+        return hacer()
+
+    def ambas(self, hacer):
+        for i, v in enumerate(self.ventanas):
+            self._en(i, lambda: hacer(v))
+
+
+def test_cada_bloque_anade_sus_filas_y_queda_igual_que_rehaciendo(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from facturas_excel.tabla_facturas import C_BASE, C_NIF, C_NOMBRE, C_TIPO
+    from facturas_excel.validacion import REVISAR
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    gemelas = _Gemelas(tmp_path, monkeypatch)
+    a, b = gemelas.ventanas
+    # «a» como ahora: añade las filas nuevas; «b» como antes: rehace la
+    # tabla entera en cada bloque.
+    monkeypatch.setattr(b, "_solo_se_anaden", lambda filas: False, raising=False)
+    gemelas.ambas(lambda v: v.resize(1400, 800))
+    rehechas = _contar(monkeypatch, a.tabla, "poner_filas")
+
+    def ambar(v):
+        return next(r for r, f in enumerate(v.filas)
+                    if f.estado == REVISAR and not f.factura.revision_confirmada)
+
+    def quitar_bloque(v):
+        v.combo_filtro_bloque.setCurrentIndex(2)
+        v._quitar_bloque()
+
+    def por_el_total(v):
+        v.tabla.selectRow(4)
+        v._alternar_por_el_total()
+
+    def eliminar(v):
+        v.tabla.selectRow(6)
+        v._eliminar_seleccion()
+
+    # Entre bloque y bloque, lo que haría una persona revisando a la vez.
+    entre = [
+        lambda v: None,
+        lambda v: v.tabla.selectRow(5),
+        lambda v: v.tabla.item(3, C_BASE).setText("150,00"),
+        lambda v: v._marcar_revisada([ambar(v)]),
+        lambda v: v.tabla.cellWidget(7, C_TIPO).setCurrentIndex(1),
+        lambda v: v.tabla.item(2, C_NIF).setText("B12345674"),
+        lambda v: v.combo_filtro_estado.setCurrentIndex(1),
+        lambda v: v.combo_filtro_estado.setCurrentIndex(0),
+        eliminar,
+        por_el_total,
+        quitar_bloque,
+        lambda v: v._rehacer_con_cliente(*CLIENTE),
+        lambda v: v._ordenar_tabla_por(C_NOMBRE),
+        lambda v: None,
+    ]
+    lotes = [gemelas._en(i, lambda: _bloques(tmp_path, 8 * len(entre), 8)) for i in (0, 1)]
+    for paso, ((pa, ca), (pb, cb)) in enumerate(zip(*lotes)):
+        gemelas._en(0, lambda: a._on_terminado(pa, *CLIENTE, ca))
+        gemelas._en(1, lambda: b._on_terminado(pb, *CLIENTE, cb))
+        assert _huella(a) == _huella(b), f"distinto tras el bloque {paso + 1}"
+        if paso == 0:
+            combo = a.tabla.cellWidget(0, C_TIPO)
+        if paso == 8:
+            # Hasta aquí, las celdas de la primera fila son las de siempre.
+            assert a.tabla.cellWidget(0, C_TIPO) is combo
+        gemelas.ambas(entre[paso])
+        assert _huella(a) == _huella(b), f"distinto tras lo hecho en el paso {paso + 1}"
+    # Solo se ha rehecho entera con el primer bloque y cuando hacía falta
+    # (por el total, quitar un bloque, cambiar de cliente, ordenar y el
+    # bloque siguiente a cada una de esas cosas, salvo tras quitar uno).
+    assert 6 <= len(rehechas) <= 9
+    assert a.tabla.rowCount() > 100
