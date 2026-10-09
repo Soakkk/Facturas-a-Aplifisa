@@ -388,7 +388,7 @@ def test_la_lectura_deja_cada_imagen_en_disco_fuera_de_la_ventana(monkeypatch):
             return DatosFactura(crudo=_datos(f"F-{pagina}"), pagina=pagina,
                                 consumos=[("gemini-falso", 1, 1)])
     monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
-    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "dibujar_hojas", lambda rutas, dpi, cancelado: [
         ("a.pdf", n, imagenes[n - 1]) for n in (1, 2)])
     monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
     w = hilos.Worker(["a.pdf"], "clave")

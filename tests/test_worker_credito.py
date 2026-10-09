@@ -26,7 +26,7 @@ def test_sin_credito_no_se_siguen_pidiendo_hojas(monkeypatch):
 
     monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
     monkeypatch.setattr(hilos, "hilos_lectura", lambda: 1)
-    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "dibujar_hojas", lambda rutas, dpi, cancelado: [
         ("a.pdf", n, b"img") for n in range(1, 21)])
     w = modulo_app.Worker(["a.pdf"], "clave")
     fallos = []
@@ -49,7 +49,7 @@ def test_lo_pagado_por_una_hoja_fallida_se_cuenta(monkeypatch):
 
     registrados = []
     monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
-    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "dibujar_hojas", lambda rutas, dpi, cancelado: [
         ("a.pdf", 1, b"img"), ("a.pdf", 2, b"img")])
     monkeypatch.setattr(modulo_app.costes, "registrar",
                         lambda m, e, s: registrados.append(m) or 0.001)
@@ -168,7 +168,7 @@ def test_si_se_acaba_el_credito_se_queda_lo_ya_leido(monkeypatch):
 
     monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
     monkeypatch.setattr(hilos, "hilos_lectura", lambda: 1)
-    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
+    monkeypatch.setattr(hilos, "dibujar_hojas", lambda rutas, dpi, cancelado: [
         ("a.pdf", n, b"img") for n in range(1, 6)])
     monkeypatch.setattr(modulo_app.costes, "registrar", lambda m, e, s: 0.001)
     w = modulo_app.Worker(["a.pdf"], "clave")

@@ -2,17 +2,70 @@
 
 from __future__ import annotations
 
+import os
+import threading
 import traceback
 
 from PySide6.QtCore import QObject, QThread, Signal
 
 from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
 from facturas_excel.extraccion import Extractor, SinCredito
-from facturas_excel.pdf import cargar_imagenes
+from facturas_excel.pdf import (
+    CALIDAD, CERROJO, EXT_IMAGEN, cargar_imagenes, soltar_cache,
+)
 from facturas_excel.procesar import detectar_cliente, preparar_lote
 
 
 HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
+# Lo que dice una hoja que no se ha pedido porque se cerró el programa (o se
+# vació el lote) mientras se leía. Es el mismo texto que pone la lectura
+# (extraccion.Extractor) cuando la cancelan con la hoja esperando turno: la
+# ventana lo usa para saber que el bloque se quedó a medias.
+NO_LEIDA_AL_CERRAR = "No leída: se cerró el programa mientras se leía."
+
+
+class LecturaCancelada(Exception):
+    """Se ha cancelado la lectura antes de pedir nada a Gemini."""
+
+
+def dibujar_hojas(rutas, dpi: int, cancelado: threading.Event) -> list:
+    """Las hojas del bloque (origen, página, JPEG), como pdf.cargar_imagenes,
+    pero mirando entre hoja y hoja si se ha cancelado.
+
+    Dibujar un bloque de 25 hojas tarda de 2 a 5 s (más a 300 ppp), y
+    mientras tanto cancelar no hacía nada: al cerrar el programa se esperaba
+    al dibujo y después se mandaban las 25 hojas a Gemini con la ventana ya
+    cerrada. Cada hoja sale igual que con pdf.paginas_pdf_a_jpg: el PDF se
+    abre una vez y cada hoja se dibuja con el cerrojo de MuPDF, vaciando su
+    caché al acabarla."""
+    import fitz
+    salida = []
+    for ruta in rutas:
+        extension = os.path.splitext(ruta)[1].lower()
+        if extension in EXT_IMAGEN:
+            if cancelado.is_set():
+                raise LecturaCancelada(NO_LEIDA_AL_CERRAR)
+            salida.extend(cargar_imagenes([ruta], dpi))
+            continue
+        if extension != ".pdf":
+            continue
+        with CERROJO:
+            documento = fitz.open(ruta)
+            paginas = len(documento)
+        try:
+            for numero in range(paginas):
+                if cancelado.is_set():
+                    raise LecturaCancelada(NO_LEIDA_AL_CERRAR)
+                with CERROJO:
+                    pix = documento[numero].get_pixmap(dpi=dpi)
+                    salida.append((ruta, numero + 1,
+                                   pix.pil_tobytes(format="JPEG", quality=CALIDAD)))
+                    del pix
+                    soltar_cache()
+        finally:
+            with CERROJO:
+                documento.close()
+    return salida
 
 
 def hilos_lectura() -> int:
@@ -36,21 +89,29 @@ class Worker(QThread):
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
         self._extractor = None
+        # Se crea ya, no con la lectura: cancelar mientras se dibujan las
+        # hojas (antes de que exista la lectura) también tiene que valer.
+        self._cancelado = threading.Event()
 
     def cancelar(self) -> None:
-        """Al cerrar el programa: no se espera a Google ni se piden más hojas."""
-        if self._extractor is not None:
-            self._extractor.cancelado.set()
+        """Al cerrar el programa (o vaciar el lote): no se dibujan más hojas,
+        no se espera a Google ni se piden más."""
+        self._cancelado.set()
+        cancelado = getattr(self._extractor, "cancelado", None)
+        if cancelado is not None:
+            cancelado.set()
 
     def run(self):
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            imagenes = cargar_imagenes(
-                self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
+            imagenes = dibujar_hojas(
+                self.rutas, int(ajustes.leer('lectura_ppp', 150)), self._cancelado)
             if not imagenes:
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
             self._extractor = extractor
+            if self._cancelado.is_set():        # se canceló justo al dibujar
+                self.cancelar()
             total = len(imagenes)
             registros = [None] * total
 
@@ -66,6 +127,12 @@ class Worker(QThread):
 
             def tarea(idx):
                 origen, pagina, img = imagenes[idx]
+                if self._cancelado.is_set():
+                    # Se está cerrando: la hoja no se pide (queda sin leer).
+                    self.fallos.append((origen, pagina, NO_LEIDA_AL_CERRAR))
+                    return idx, (img, origen, pagina, {
+                        "emisor_nombre": None, "lineas_iva": [{}],
+                        "_error": NO_LEIDA_AL_CERRAR})
                 if sin_credito:
                     # Se acabó el crédito en otra hoja: no se pide nada más.
                     return idx, (img, origen, pagina, sin_leer(img, origen, pagina))
