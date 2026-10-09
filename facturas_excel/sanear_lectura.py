@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 
 from .extraccion import ESQUEMA, _num
+from .texto import visible
 
 _PROPIEDADES = ESQUEMA["properties"]
 
@@ -273,7 +274,6 @@ INTERNAS = {
     "_motivo_union_inferida": _texto_corto(300),
     "_paginas_union_inferida": _lista(_entero, 500),
     "_paginas_union_manual": _lista(_pagina_de, 500),
-    "_saneado": _lista(_texto_corto(300), 20),
 }
 
 
@@ -296,14 +296,15 @@ def sanear(datos, internas: bool = True) -> dict:
             else:
                 notas.append(f"dato interno {clave} con otra forma")
         else:
-            ajenas.append(str(clave)[:30])
+            ajenas.append(visible(str(clave)[:30]))
     if len(salida.get("lineas_iva") or ()) > LINEAS_MAXIMAS:
         salida["lineas_iva"], nota = juntar_por_tipo(salida["lineas_iva"])
         notas.append(nota)
     if ajenas:
         notas.append("datos de más: " + ", ".join(sorted(ajenas)[:5])
                      + ("…" if len(ajenas) > 5 else ""))
-    notas = list(salida.pop("_saneado", None) or []) + notas
+    # «_saneado» lo pone solo esto: si lo trae la lectura, es un dato de más
+    # (su texto no llega al aviso).
     if notas:
         salida["_saneado"] = notas[:20]
     return salida
@@ -313,7 +314,6 @@ def _nota(clave: str, valor) -> str:
     """Qué se ha corregido, con lo leído si es una opción corta."""
     nota = ETIQUETAS.get(clave, clave)
     if "enum" in _PROPIEDADES[clave] and isinstance(valor, str):
-        from .texto import visible
         nota += f" «{visible(valor[:30])}»"
     return nota
 

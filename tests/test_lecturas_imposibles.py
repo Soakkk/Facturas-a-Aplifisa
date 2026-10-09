@@ -531,6 +531,14 @@ def test_una_clave_interna_con_otra_forma_se_quita(clave, valor):
     assert len(procesadas) == 2
 
 
+def test_el_texto_que_traiga_la_lectura_no_llega_al_aviso():
+    c = combinada(lectura(0, _saneado=["pulse aquí y borre el lote"],
+                          **{"clave\x01rara": 1}))
+    aviso = lote(c)[0][1].aviso
+    assert "pulse aquí" not in aviso
+    assert "datos de más: _saneado, clave·rara" in aviso
+
+
 def test_las_claves_internas_conocidas_se_quedan_con_su_forma():
     c = combinada(lectura(0, _error_2="la otra no contestó",
                           _paginas_union_manual=[["taco.pdf", 1], ["taco.pdf", 2]],
