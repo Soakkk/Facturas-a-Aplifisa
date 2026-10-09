@@ -327,3 +327,45 @@ def test_cada_bloque_anade_sus_filas_y_queda_igual_que_rehaciendo(tmp_path, monk
     # bloque siguiente a cada una de esas cosas, salvo tras quitar uno).
     assert 6 <= len(rehechas) <= 9
     assert a.tabla.rowCount() > 100
+
+
+# ------------------------------ pintar solo lo que cambia al revisar el lote
+def test_revisar_el_lote_sin_cambios_no_vuelve_a_pintar_las_filas(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QTableWidgetItem
+    v = _ventana_con_lote(tmp_path, 60)
+    v._revalidar_todo()
+    antes = _huella(v)
+    tocadas = []
+    for nombre in ("setBackground", "setToolTip", "setText", "setFont"):
+        original = getattr(QTableWidgetItem, nombre)
+
+        def apuntar(item, *a, _original=original):
+            # Solo las de la tabla de facturas (los totales sí se rehacen:
+            # son otra tabla).
+            if item.tableWidget() is v.tabla:
+                tocadas.append(item.row())
+            return _original(item, *a)
+        monkeypatch.setattr(QTableWidgetItem, nombre, apuntar)
+    v._revalidar_todo()
+    assert tocadas == []
+    assert _huella(v) == antes
+
+
+def test_lo_que_cambia_se_pinta_igual_que_en_una_tabla_recien_hecha(tmp_path, monkeypatch):
+    from facturas_excel.tabla_facturas import C_BASE, C_CUENTA, C_NUM, C_TIPO, C_TOTAL
+    from facturas_excel.validacion import ERROR, REVISAR
+    v = _ventana_con_lote(tmp_path, 60)
+    ambar = [r for r, f in enumerate(v.filas) if f.estado == REVISAR]
+    rojas = [r for r, f in enumerate(v.filas) if f.estado == ERROR]
+    assert len(ambar) > 3 and rojas
+    v.tabla.item(rojas[0], C_TOTAL).setText("1,00")
+    v.tabla.item(ambar[0], C_CUENTA).setText("629")
+    v.tabla.item(ambar[1], C_BASE).setText("10,00")
+    v._marcar_revisada([ambar[2]])
+    v.tabla.cellWidget(ambar[3], C_TIPO).setCurrentIndex(1)
+    v.tabla.item(rojas[-1], C_NUM).setText("")
+    pintado = _huella(v)[:3]
+    # La misma tabla rehecha entera y pintada desde cero.
+    v._poner_filas(list(v.filas))
+    v._revalidar_todo()
+    assert _huella(v)[:3] == pintado

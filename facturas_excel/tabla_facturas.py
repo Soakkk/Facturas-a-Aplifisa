@@ -146,6 +146,16 @@ AYUDA_GXX = ("Subclave del suministro. En Aplifisa la 628 NO puede ir sin ella:\
              + "\n".join(f"  {g} = {d}" for g, d in SUBCLAVES_628.items()))
 AYUDA_SUPLIDO = ("SUPLIDO: se registra como una línea de base más del mismo "
                  "apunte, sin IVA (así lo pide Aplifisa).")
+# Lo último que se pintó del estado y de los avisos de cada fila, guardado en
+# su celda de estado: si una revisión del lote no cambia nada de una línea,
+# no se vuelve a pintar (con 800 líneas, repintarlas todas en cada
+# corrección era casi medio segundo). Una celda nueva no lo trae: se pinta.
+_PINTADO_ESTADO = Qt.UserRole + 50
+_PINTADO_AVISOS = Qt.UserRole + 51
+
+
+def _nombre_color(color) -> str:
+    return color.name(QColor.HexArgb) if isinstance(color, QColor) else str(color)
 
 
 class TablaFacturas(QTableWidget):
@@ -186,6 +196,9 @@ class TablaFacturas(QTableWidget):
         self._timer_medir.setInterval(0)
         self._timer_medir.timeout.connect(self.medir)
         self.model().rowsRemoved.connect(lambda *_: self._medida_pendiente())
+        # Lo que se escribe a mano en una celda también se mide (lo demás
+        # llega pintado por `pintar`, que ya pide la medida).
+        self.itemChanged.connect(lambda *_: self._medida_pendiente())
         cabecera = self.horizontalHeader()
         cabecera.setSectionResizeMode(QHeaderView.Interactive)
         cabecera.setSectionsClickable(True)
@@ -448,11 +461,13 @@ class TablaFacturas(QTableWidget):
                 combo.setCurrentIndex(max(0, combo.findData(fila.tipo)))
                 combo.blockSignals(False)
                 aviso = (fila.aviso or "").lower()
-                combo.setToolTip(
+                ayuda = (
                     "Clasificación dudosa: compruebe si corresponde a Gasto o Ingreso."
                     if "dudoso" in aviso or "confirma" in aviso else
                     "Clasificación automática según el NIF y el papel del "
                     "cliente en la factura.")
+                if combo.toolTip() != ayuda:
+                    combo.setToolTip(ayuda)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
@@ -472,6 +487,9 @@ class TablaFacturas(QTableWidget):
         celda = self.item(r, C_ESTADO)
         if celda is None:
             return
+        firma = repr((texto, _nombre_color(color), fondo, ayuda))
+        if celda.data(_PINTADO_ESTADO) == firma:
+            return                      # ya está así
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         celda.setText(texto)
@@ -481,11 +499,20 @@ class TablaFacturas(QTableWidget):
         fuente.setBold(True)
         celda.setFont(fuente)
         celda.setToolTip(ayuda)
+        celda.setData(_PINTADO_ESTADO, firma)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
     def resaltar(self, r: int, fila: Fila, estado: str, mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
+        estado_celda = self.item(r, C_ESTADO)
+        # Todo lo que decide cómo se pinta: el estado, si es un suplido y
+        # cada aviso con su dato y su gravedad (o texto suelto, sin dato).
+        firma = repr((estado, bool(getattr(fila.factura, "es_suplido", False)),
+                      [(str(m), getattr(m, "campos", None), getattr(m, "gravedad", None))
+                       for m in mensajes]))
+        if estado_celda is not None and estado_celda.data(_PINTADO_AVISOS) == firma:
+            return                      # ya está así
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         for columna in COLUMNAS_DATO:
@@ -558,6 +585,8 @@ class TablaFacturas(QTableWidget):
             ayuda = "\n".join(dict.fromkeys(detalles))
             item.setToolTip(
                 f"{ayuda_anterior}\n\n{ayuda}" if ayuda_anterior else ayuda)
+        if estado_celda is not None:
+            estado_celda.setData(_PINTADO_AVISOS, firma)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
