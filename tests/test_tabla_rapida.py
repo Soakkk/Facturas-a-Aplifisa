@@ -274,12 +274,11 @@ class _Gemelas:
 
 
 def test_la_tabla_aprovecha_sus_filas_y_queda_igual_que_rehaciendola(tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox, QTableWidget
     from facturas_excel.tabla_facturas import C_BASE, C_NIF, C_NOMBRE, C_TIPO
     from facturas_excel.validacion import REVISAR
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.Yes))
-    from PySide6.QtWidgets import QTableWidget
     gemelas = _Gemelas(tmp_path, monkeypatch)
     a, b = gemelas.ventanas
     # «a» como ahora: aprovecha las filas que ya tiene la tabla; «b» como
