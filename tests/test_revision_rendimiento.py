@@ -191,3 +191,32 @@ def test_quitar_un_bloque_mientras_se_archiva_y_deshacerlo_deja_su_taco(monkeypa
     assert len(v.filas) == 3
     assert _origenes_que_ya_no_estan(v) == []
     assert all(os.path.isfile(b["original"]) for b in v._bloques)
+
+
+def test_acabar_un_escaneo_mientras_se_archiva_no_abre_el_pdf_a_la_vez(monkeypatch):
+    """Al acabar un escaneo se cuentan sus hojas con PyMuPDF, que no admite
+    dos hilos a la vez (ver pdf.CERROJO). Antes el archivo iba en la
+    ventana y no podía coincidir; ahora va en otro hilo y el escaneo puede
+    acabar en mitad: se espera a que termine, como al cargar."""
+    import fitz
+    from PySide6.QtWidgets import QMessageBox
+    from facturas_excel import ventana_lectura
+    from test_exportar_sin_parar import _pdf_escaneado
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(ventana_lectura, "leer_api_key", lambda: "")
+    v = _ventana_con_dos_bloques(monkeypatch)
+    escaneo = _pdf_escaneado(os.path.join(os.environ["APPDATA"], "escaneo.pdf"), [7, 8])
+    v._hojas_puestas = 2
+    abierto_archivando = []
+    abrir = fitz.open
+
+    def abrir_y_apuntar(*a, **k):
+        if a and a[0] == escaneo:
+            abierto_archivando.append(v.archivando())
+        return abrir(*a, **k)
+    monkeypatch.setattr(fitz, "open", abrir_y_apuntar)
+
+    _exportar_y_mientras_se_archiva(
+        monkeypatch, v, lambda v: v._on_escaneo_hecho(escaneo))
+
+    assert abierto_archivando and not any(abierto_archivando)

@@ -160,6 +160,9 @@ class ArchivoMixin:
             self.procesar_rutas(dialogo.rutas_elegidas)
 
     def _on_escaneo_hecho(self, ruta):
+        # Contar sus hojas usa PyMuPDF, que no admite dos hilos a la vez: si
+        # mientras se escaneaba se exportó, antes acaba el archivo.
+        self._esperar_archivo()
         self.progreso.setRange(0, 100)
         self.btn_escanear.setEnabled(True)
         self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
