@@ -488,3 +488,91 @@ def test_deshacer_marcar_revisada_sigue_devolviendo_el_aviso(tmp_path):
     deshacer()
     assert [fila.aviso for fila in v.filas] == avisos
     assert not any(fila.factura.revision_confirmada for fila in v.filas)
+
+
+# ------------------------------------------ guardado automático de la sesión
+def _contar_escrituras(monkeypatch, sesion, frenar=None):
+    """Cuántas veces se escribe de verdad el fichero, y desde cuántos hilos
+    a la vez (`frenar`: la primera escritura espera a ese aviso)."""
+    import threading
+    escribir = sesion._escribir
+    escritas, a_la_vez, dentro = [], [], [0]
+    cerrojo = threading.Lock()
+
+    def contando(paquete, numero):
+        with cerrojo:
+            dentro[0] += 1
+            a_la_vez.append(dentro[0])
+        if frenar is not None and not escritas:
+            frenar.wait(5)
+        try:
+            escribir(paquete, numero)
+            escritas.append(pickle_dice(paquete))
+        finally:
+            with cerrojo:
+                dentro[0] -= 1
+    monkeypatch.setattr(sesion, "_escribir", contando)
+    return escritas, a_la_vez
+
+
+def pickle_dice(paquete):
+    import pickle
+    return pickle.loads(paquete)["datos"]["bloques"][0]
+
+
+def test_el_guardado_automatico_no_reescribe_lo_que_no_ha_cambiado(
+        tmp_path, monkeypatch):
+    from facturas_excel import sesion
+
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(tmp_path / "sesion.pkl.gz"))
+    escritas, _ = _contar_escrituras(monkeypatch, sesion)
+    for _ in range(3):
+        sesion.guardar_en_segundo_plano({"bloques": ["igual"]})
+        sesion.esperar()
+    assert escritas == ["igual"]
+    sesion.guardar_en_segundo_plano({"bloques": ["cambiado"]})
+    sesion.esperar()
+    assert escritas == ["igual", "cambiado"]
+    # Al cerrar, si en el disco ya está lo mismo, tampoco se reescribe.
+    sesion.guardar({"bloques": ["cambiado"]})
+    assert escritas == ["igual", "cambiado"]
+    assert sesion.cargar() == {"bloques": ["cambiado"]}
+
+
+def test_varios_guardados_seguidos_dejan_uno_pendiente_y_gana_el_ultimo(
+        tmp_path, monkeypatch):
+    import threading
+    from facturas_excel import sesion
+
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(tmp_path / "sesion.pkl.gz"))
+    soltar = threading.Event()
+    escritas, a_la_vez = _contar_escrituras(monkeypatch, sesion, frenar=soltar)
+    for n in range(5):
+        sesion.guardar_en_segundo_plano({"bloques": [f"foto {n}"]})
+    assert sum(h.is_alive() for h in sesion._hilos) <= 1
+    soltar.set()
+    sesion.esperar()
+    # La primera ya estaba escribiéndose; de las demás, solo la última.
+    assert escritas == ["foto 0", "foto 4"]
+    assert max(a_la_vez) == 1
+    assert sesion.cargar() == {"bloques": ["foto 4"]}
+
+
+def test_un_guardado_que_falla_se_vuelve_a_intentar_y_vaciar_lo_olvida(
+        tmp_path, monkeypatch):
+    from facturas_excel import sesion
+
+    ruta = tmp_path / "no-existe" / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    sesion.guardar_en_segundo_plano({"bloques": ["lote"]})
+    sesion.esperar()
+    assert sesion.ultimo_error()
+    ruta.parent.mkdir()
+    sesion.guardar_en_segundo_plano({"bloques": ["lote"]})   # lo mismo: otra vez
+    sesion.esperar()
+    assert not sesion.ultimo_error() and sesion.cargar() == {"bloques": ["lote"]}
+    sesion.borrar()
+    sesion.guardar_en_segundo_plano({"bloques": ["lote"]})   # tras vaciar, se escribe
+    sesion.esperar()
+    assert sesion.cargar() == {"bloques": ["lote"]}
+
