@@ -1102,3 +1102,37 @@ def test_corpus_del_fuzzing(hojas, tmp_path, monkeypatch):
 
     assert not [d for d in dialogos if d.startswith(GRAVES)], dialogos
     assert time.monotonic() - inicio < 10        # tope por caso
+
+
+@pytest.mark.parametrize("motivo,leida", [("MAX_TOKENS", True), ("STOP", False)],
+                         ids=["cortada_por_el_tope", "rota_sin_mas"])
+def test_una_respuesta_cortada_por_el_tope_se_pide_con_mas_sitio(monkeypatch, motivo, leida):
+    """Una hoja legítima larga (muchos artículos) que no cabe en el tope no se
+    paga tres veces cortada para acabar en rojo: el reintento pide con más
+    sitio. Si solo viene rota (sin pasar del tope), se reintenta igual que
+    siempre."""
+    from types import SimpleNamespace
+
+    from facturas_excel.extraccion import (ErrorLectura, MAX_TOKENS_AMPLIADO,
+                                           MAX_TOKENS_SALIDA)
+    completa = json.dumps(lectura(0))
+    ex = extractor(monkeypatch, {"modelo-a": completa}, modo="no")
+    topes = []
+
+    def generar(model, contents, config):
+        topes.append(config.max_output_tokens)
+        cabe = config.max_output_tokens >= MAX_TOKENS_AMPLIADO
+        return SimpleNamespace(
+            text=completa if cabe else completa[:len(completa) // 2],
+            candidates=[SimpleNamespace(finish_reason=SimpleNamespace(value=motivo))],
+            model_version=model, usage_metadata=None)
+    ex.client.models.generate_content = generar
+
+    if leida:
+        leido = ex.extraer(b"img", "taco.pdf", 1)
+        assert leido.crudo["num_factura"] == "F26/00100"
+        assert topes == [MAX_TOKENS_SALIDA, MAX_TOKENS_AMPLIADO]
+    else:
+        with pytest.raises(ErrorLectura):
+            ex._leer_con("modelo-a", b"img", 1)
+        assert topes == [MAX_TOKENS_SALIDA] * 3

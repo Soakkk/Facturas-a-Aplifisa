@@ -75,6 +75,12 @@ TIEMPO_LIMITE = 90       # segundos
 # 65.000 tokens pagados y a cientos de KB por hoja en la sesión y las
 # muestras. Sin esquema el modelo piensa lo que quiere: el doble de margen.
 MAX_TOKENS_SALIDA = 8192
+# Si aun así una respuesta llega cortada por el tope (no rota: Gemini dice que
+# paró por los tokens), se vuelve a pedir con este. Una hoja legítima larga
+# (80-100 líneas de artículos en una página) cabe, y no se paga tres veces la
+# misma respuesta cortada para acabar en rojo; una desbocada sigue sin llegar
+# a los 65.000.
+MAX_TOKENS_AMPLIADO = 4 * MAX_TOKENS_SALIDA
 
 
 class SinCredito(Exception):
@@ -434,7 +440,7 @@ class Extractor:
             time.sleep(trozo)
             resto -= trozo
 
-    def _pedir(self, modelo: str, img: bytes):
+    def _pedir(self, modelo: str, img: bytes, tope: Optional[int] = None):
         """La petición a Gemini, esperando cuando Google pide ir más despacio.
 
         Si ni así hay sitio (o es la cuota del día), las hojas que quedan no
@@ -451,7 +457,7 @@ class Extractor:
                     model=modelo,
                     contents=[types.Part.from_bytes(data=img, mime_type="image/jpeg"),
                               _PROMPT],
-                    config=self._config(),
+                    config=self._config(tope),
                 )
             except Exception as e:
                 if not _es_limite_de_peticiones(e):
@@ -466,26 +472,27 @@ class Extractor:
                 self._pausar(_segundos_de_espera(e, vez))
 
     # ------------------------------------------------------------ llamadas
-    def _config(self):
+    def _config(self, tope: Optional[int] = None):
+        tope = tope or MAX_TOKENS_SALIDA
         if not self._con_esquema:
             return types.GenerateContentConfig(
                 response_mime_type="application/json",
-                max_output_tokens=2 * MAX_TOKENS_SALIDA)
+                max_output_tokens=2 * tope)
         return types.GenerateContentConfig(
             response_mime_type="application/json",
             response_json_schema=ESQUEMA,
-            max_output_tokens=MAX_TOKENS_SALIDA,
+            max_output_tokens=tope,
             # LOW: estos modelos no admiten MINIMAL y la temperatura se
             # ignora. Pensar poco basta para copiar datos y va mas rapido.
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.LOW))
 
-    def _llamar(self, modelo: str, img: bytes):
+    def _llamar(self, modelo: str, img: bytes, tope: Optional[int] = None):
         """Una respuesta de ese modelo, con reintentos solo ante saturacion."""
         ultimo = None
         for intento in range(3):
             try:
-                return self._pedir(modelo, img)
+                return self._pedir(modelo, img, tope)
             except DemasiadasPeticiones:
                 raise
             except Exception as e:  # 503, red, etc.
@@ -537,9 +544,10 @@ class Extractor:
         """(datos, modelo real, consumos) de un modelo concreto."""
         consumos = []
         ultimo_texto = ""
+        tope = None
         for _ in range(3):  # Gemini a veces emite JSON invalido; reintentar
             try:
-                resp = self._llamar(modelo, img)
+                resp = self._llamar(modelo, img, tope)
             except (SinCredito, ModeloNoDisponible):
                 raise
             except Exception as e:
@@ -551,6 +559,8 @@ class Extractor:
             datos = _parse_json_tolerante(ultimo_texto)
             if isinstance(datos, dict):
                 return datos, (real or modelo), consumos
+            if _cortada_por_el_tope(resp):
+                tope = MAX_TOKENS_AMPLIADO
         raise ErrorLectura(
             f"No se pudo leer el JSON de Gemini (pag {pagina}): "
             f"{ultimo_texto[:200]}", consumos)
@@ -666,6 +676,15 @@ def _consumo(resp):
 
     # El "pensamiento" de los modelos nuevos se factura como salida.
     return modelo, _n("prompt_token_count"),         _n("candidates_token_count") + _n("thoughts_token_count")
+
+
+def _cortada_por_el_tope(resp) -> bool:
+    """Si Gemini dejó de escribir por el tope de tokens de salida."""
+    try:
+        motivo = resp.candidates[0].finish_reason
+    except Exception:
+        return False
+    return str(getattr(motivo, "value", motivo) or "").upper().endswith("MAX_TOKENS")
 
 
 def _entero_json(cifras: str):
