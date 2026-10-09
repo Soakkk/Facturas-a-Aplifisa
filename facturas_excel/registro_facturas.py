@@ -362,10 +362,10 @@ def _apuntar(cliente_nif: str, cliente_nombre: str,
                     lectura = (leidas_en or {}).get(id(f)) or lectura
                 ficha["leida_en"] = lectura or momento
             filas.append(tuple(_sin_rotos(ficha.get(c)) for c in _COLUMNAS))
-        try:
-            con.executemany(_INSERTAR, filas)
-        finally:
-            _apuntado()
+        con.executemany(_INSERTAR, filas)
+    # Ya guardado: lo exportado que se recordaba no vale. (Si no se pudo
+    # guardar, la base se queda como estaba.)
+    _apuntado()
     return anteriores, agrupadas
 
 

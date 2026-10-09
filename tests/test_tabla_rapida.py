@@ -664,3 +664,23 @@ def test_la_muestra_se_guarda_en_json_compacto(tmp_path):
     # La misma foto otra vez no se repite.
     v._guardar_muestra_revision()
     assert len(list((muestras_revision.carpeta() / "revisiones").glob("*.json"))) == 1
+
+
+def test_lo_exportado_se_olvida_despues_de_guardar_el_apunte(monkeypatch):
+    """Si otro hilo pregunta justo cuando se olvida lo recordado, tiene que
+    leer ya lo apuntado (si se olvidara antes de guardar, se quedaría
+    recordado lo de antes)."""
+    from facturas_excel import historial, registro_facturas
+    historial.registrar("12345678Z", {"gasto": [_factura_exportada("F-1")]}, {})
+    # Sin la firma del fichero (en un disco con la hora de los ficheros
+    # gruesa no avisaría a tiempo): solo cuenta el orden.
+    monkeypatch.setattr(registro_facturas, "_firma_base",
+                        lambda carpeta: (registro_facturas._apuntes,))
+    olvidar = registro_facturas._apuntado
+
+    def y_pregunta_otro():
+        olvidar()
+        historial.exportadas_de("12345678Z")
+    monkeypatch.setattr(registro_facturas, "_apuntado", y_pregunta_otro)
+    historial.registrar("12345678Z", {"gasto": [_factura_exportada("F-2")]}, {})
+    assert len(historial.exportadas_de("12345678Z")) == 2
