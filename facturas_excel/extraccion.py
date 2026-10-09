@@ -20,6 +20,8 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
+from .validacion import importe_posible
+
 # Modelos de lectura (septiembre de 2026).
 #
 # Se usan modelos FIJOS, nunca los alias "-latest": un alias salta solo al
@@ -671,12 +673,22 @@ def _parse_json_tolerante(texto: str):
 
 
 def _num(v):
+    """El número leído, o None si no lo es o no puede ser un importe (NaN,
+    infinito, 1e999, 10**400 o más de mil millones: ver importe_posible)."""
+    n = _num_leido(v)
+    return n if n is not None and importe_posible(n) else None
+
+
+def _num_leido(v):
     if v is None or v == "":
         return None
     if isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
-        return float(v)
+        try:
+            return float(v)
+        except OverflowError:       # un entero de cientos de cifras
+            return None
     t = str(v).strip().replace("€", "").replace(" ", "")
     # Signo DETRAS del numero: Coca-Cola imprime asi los abonos ("15,51-" son
     # MENOS 15,51). Sin esto float() petaba y el importe se perdia entero.

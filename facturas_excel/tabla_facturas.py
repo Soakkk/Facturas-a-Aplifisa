@@ -86,9 +86,13 @@ def parse_numero(texto):
     ):
         t = t.replace(".", "")
     try:
-        return float(t)
+        numero = float(t)
     except ValueError:
         return None
+    # «nan», «inf» o «1e999» escritos en una celda no son un importe: con
+    # uno así se paraba todo y el lote no se podía recuperar al reabrir.
+    from .validacion import importe_posible
+    return numero if importe_posible(numero) else None
 
 
 def fmt(v):

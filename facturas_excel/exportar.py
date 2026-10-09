@@ -5,6 +5,7 @@ colocando cada campo en la columna que indica la configuracion (ConfigColumnas).
 from __future__ import annotations
 
 import io
+import math
 from datetime import date
 from typing import List
 
@@ -88,7 +89,14 @@ def _valor_celda(campo: str, valor, modo: str):
     if not es_numerico:
         return str(valor)
 
-    valor = float(valor)
+    try:
+        valor = float(valor)
+    except OverflowError:           # un entero de cientos de cifras
+        return None
+    if not math.isfinite(valor):
+        # Ni «nan» ni «inf» en el Excel de Aplifisa: la celda queda vacía (la
+        # fila ya sale en rojo, «Importe imposible»).
+        return None
     if modo == MODO_NUMERO:
         return round(valor, 2)
 

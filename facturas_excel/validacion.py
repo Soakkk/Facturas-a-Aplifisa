@@ -6,6 +6,7 @@ cuentas de la factura. Un digito mal leido casi siempre rompe alguna cuenta.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -20,6 +21,27 @@ REVISAR = "revisar"  # ambar: falta un dato o hay algo dudoso
 ERROR = "error"      # rojo: una cuenta no cuadra
 
 TOLERANCIA = 0.02  # euros de margen por redondeos
+
+# Un importe de una factura de verdad no llega a mil millones de euros: más
+# es una lectura desbocada (cifras repetidas, 1e300). Y un NaN o un infinito
+# (el JSON los admite) no se puede sumar, pintar ni exportar: con uno solo se
+# paraba la cola y el lote no se podía recuperar (fuzzing, 09/10/2026).
+IMPORTE_MAXIMO = 1e9
+CAMPOS_IMPORTE_IMPOSIBLE = {
+    "base_iva": "la base", "pct_iva": "el % de IVA", "cuota_iva": "la cuota de IVA",
+    "base_irpf": "la base de la retención", "pct_irpf": "el % de retención",
+    "cuota_irpf": "la retención", "base_requiv": "la base del recargo",
+    "pct_requiv": "el % del recargo", "cuota_requiv": "el recargo",
+    "total_impreso": "el total", "suplidos": "los suplidos"}
+
+
+def importe_posible(valor) -> bool:
+    """Si un número puede ser un importe (o un tipo) de una factura."""
+    try:
+        return math.isfinite(valor) and abs(valor) <= IMPORTE_MAXIMO
+    except (TypeError, OverflowError):
+        return False
+
 
 # El recargo de equivalencia va SIEMPRE emparejado con su tipo de IVA: es el
 # regimen quien lo fija, no el proveedor (confirmado por el usuario 2026-09-02).
@@ -309,6 +331,17 @@ def validar(f: Factura) -> Resultado:
         elif clase == "invalido":
             marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): "
                            f"{f.nif}", "nif")
+
+    # Un importe imposible (de una sesión de antes de la 1.26: ahora no se
+    # deja entrar) no puede salir en verde: con NaN ninguna cuenta descuadra.
+    for campo, nombre in CAMPOS_IMPORTE_IMPOSIBLE.items():
+        valor = getattr(f, campo, None)
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool) \
+                and not importe_posible(valor):
+            # Un entero de miles de cifras ni se puede escribir con repr().
+            leido = f"{valor:.6g}" if isinstance(valor, float) else "un número enorme"
+            marcar_error(f"Importe imposible en {nombre} ({leido}): escriba el "
+                         "de la factura.", campo)
 
     # Verde significa que están presentes todos los importes necesarios para
     # el flujo rutinario. Antes, al faltar todos, no se ejecutaba ninguna
