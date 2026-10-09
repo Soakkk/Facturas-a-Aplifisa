@@ -397,15 +397,66 @@ def dividir_pdf(ruta_pdf: str, paginas_por_parte: int = PAGINAS_POR_BLOQUE,
         return salidas
 
 
+class Hojas:
+    """Las hojas de unos PDF e imágenes, para dibujarlas de una en una.
+
+    La lectura dibujaba el bloque entero (25 hojas, de 3 a 5 s) antes de
+    mandar ninguna a Gemini, y las tenía todas en memoria. Ahora aquí solo
+    se cuentan, y cada hilo de lectura dibuja la suya justo antes de leerla
+    (`imagen`). Los PDF se quedan abiertos mientras: `cerrar` al acabar (o
+    `with`), cuando ya no quede ningún hilo dibujando.
+    """
+
+    def __init__(self, rutas: List[str], dpi: int = 150):
+        self.dpi = dpi
+        self.lista: List[Tuple[str, int]] = []      # (ruta, página desde 1)
+        self._abiertos = {}
+        try:
+            for ruta in rutas:
+                ext = os.path.splitext(ruta)[1].lower()
+                if ext == ".pdf":
+                    with CERROJO:
+                        doc = self._abiertos.get(ruta)
+                        if doc is None:
+                            doc = self._abiertos[ruta] = fitz.open(ruta)
+                        total = len(doc)
+                    self.lista.extend((ruta, n) for n in range(1, total + 1))
+                elif ext in EXT_IMAGEN:
+                    self.lista.append((ruta, 1))
+        except BaseException:
+            self.cerrar()
+            raise
+
+    def __len__(self) -> int:
+        return len(self.lista)
+
+    def imagen(self, indice: int) -> bytes:
+        """La hoja `indice` (de `lista`), como se manda a leer."""
+        ruta, pagina = self.lista[indice]
+        doc = self._abiertos.get(ruta)
+        if doc is not None:
+            return hoja_a_jpg(doc, pagina - 1, self.dpi)
+        # Una foto suelta (de móvil) decodificada ocupa decenas de MB: como
+        # las de los escaneos, pocas a la vez.
+        with _REDUCIENDO:
+            with Image.open(ruta) as im:
+                return _comprimir_pil(im)
+
+    def cerrar(self) -> None:
+        with CERROJO:
+            for doc in self._abiertos.values():
+                doc.close()
+            self._abiertos.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_error):
+        self.cerrar()
+
+
 def cargar_imagenes(rutas: List[str], dpi: int = 150) -> List[Tuple[str, int, bytes]]:
     """A partir de rutas (PDFs y/o imagenes) devuelve (origen, pagina, jpeg_bytes)."""
-    salida = []
-    for ruta in rutas:
-        ext = os.path.splitext(ruta)[1].lower()
-        if ext == ".pdf":
-            for i, jpg in enumerate(paginas_pdf_a_jpg(ruta, dpi), start=1):
-                salida.append((ruta, i, jpg))
-        elif ext in EXT_IMAGEN:
-            with Image.open(ruta) as im:
-                salida.append((ruta, 1, _comprimir_pil(im)))
-    return salida
+    with Hojas(rutas, dpi) as hojas:
+        return [(ruta, pagina, hojas.imagen(i))
+                for i, (ruta, pagina) in enumerate(hojas.lista)]
