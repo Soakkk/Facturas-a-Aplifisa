@@ -19,7 +19,13 @@ from PIL import Image
 
 EXT_IMAGEN = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 MIME = "image/jpeg"
-CALIDAD = 80
+# Calidad del JPEG que se manda a leer. Con 80 la letra pequeña perdía en
+# cada vuelta (el escaneo ya viene en JPEG: NAPS2 lo guarda a 75). Gemini
+# cobra por los píxeles, no por los bytes, así que 90 cuesta lo mismo; solo
+# pesa casi el doble en la carpeta de ejemplos (unos 300 KB por hoja en vez
+# de 160). Las imágenes de antes se siguen encontrando: cada una se guarda
+# con su propia huella.
+CALIDAD = 90
 MAX_LADO = 2000  # px; redimensiona si la imagen es mayor (suficiente para OCR)
 PAGINAS_POR_BLOQUE = 25
 # Las partes de la cola más nuevas que esto no se tocan al arrancar: pueden

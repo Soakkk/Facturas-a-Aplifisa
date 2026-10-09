@@ -303,3 +303,43 @@ def test_si_reducir_la_foto_falla_se_dibuja_como_siempre(tmp_path, sin_mupdf, mo
     sin_mupdf.clear()
     assert pdf.pagina_a_jpg(ruta, 1, 150).startswith(b"\xff\xd8")
     assert sin_mupdf == [0]
+
+
+# ------------------------------------------ calidad de lo que se manda
+def _tablas(jpg):
+    """La tabla de cuantificación del brillo: dice la calidad del JPEG."""
+    return Image.open(io.BytesIO(jpg)).quantization[0]
+
+
+def _tablas_de(calidad):
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 16), "white").save(buf, format="JPEG", quality=calidad)
+    return _tablas(buf.getvalue())
+
+
+def test_lo_que_se_manda_a_leer_va_en_jpeg_de_calidad_90(tmp_path):
+    """Con 80 la letra pequeña perdía otro poco; Gemini cobra igual (por
+    píxeles), así que se manda a 90 por los tres caminos."""
+    assert _tablas_de(90) != _tablas_de(80)
+    escaneo = _escaneo(tmp_path / "escaneo.pdf")             # la foto, con PIL
+    con_texto = _modificar(escaneo, CASOS_MUPDF["texto encima"])   # MuPDF
+    suelta = tmp_path / "foto.png"                            # imagen suelta
+    Image.open(io.BytesIO(_foto(500, 700))).save(suelta)
+    for jpg in (pdf.pagina_a_jpg(escaneo, 1, 150), pdf.pagina_a_jpg(con_texto, 1, 150),
+                pdf.pagina_a_jpg(str(suelta))):
+        assert _tablas(jpg) == _tablas_de(90)
+
+
+def test_las_imagenes_de_lecturas_de_antes_se_siguen_encontrando(tmp_path):
+    """Una sesión de antes guarda el asa (la huella) de su imagen a 80: la
+    imagen sigue en su sitio y con su clave aunque ahora se lea a 90."""
+    import pickle
+    from facturas_excel import imagen_hoja, localizar
+
+    ruta = _modificar(_escaneo(tmp_path / "escaneo.pdf"), CASOS_MUPDF["texto encima"])
+    de_antes = _como_antes(ruta)                                   # JPEG 80
+    asa = pickle.loads(pickle.dumps(imagen_hoja.a_disco(de_antes)))
+    ahora = imagen_hoja.a_disco(pdf.pagina_a_jpg(ruta, 1, 150))
+    assert ahora != asa                         # otra imagen, con otra huella
+    assert asa.existe() and bytes(asa) == de_antes
+    assert localizar.clave_imagen(asa) == localizar.clave_imagen(de_antes)
