@@ -147,7 +147,11 @@ def _lineas(valor):
 def _sumar(a, b):
     if a is None:
         return b
-    return a if b is None else round(a + b, 2)
+    # Sin redondear a céntimos en cada suma: con importes de tres decimales
+    # (carburante, granel…) el error se acumulaba línea a línea y la línea
+    # juntada ya no cuadraba con el total. Solo se quita el ruido de la coma
+    # flotante (0,1 + 0,2).
+    return a if b is None else round(a + b, 6)
 
 
 def juntar_por_tipo(lineas: list) -> tuple:

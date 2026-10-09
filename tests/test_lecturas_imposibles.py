@@ -706,6 +706,22 @@ def test_se_juntan_por_tipo_de_iva_y_de_recargo():
     assert c["lineas_iva"][0]["cuota_requiv"] == 5.2
 
 
+def test_juntar_lineas_con_tres_decimales_no_descuadra():
+    # Importes de artículos con tres decimales (carburante, granel…): con
+    # cada suma redondeada a céntimos el error se acumulaba línea a línea
+    # (13 líneas de 1,005 € daban 13,02 en vez de 13,065).
+    raras = [{"base": 1.005, "tipo_iva": 21.0, "cuota_iva": 0.211, "pct_requiv": 5.2,
+              "cuota_requiv": 0.052}] * 13
+    raras += [{"base": round(0.5 + i * 0.731, 3), "tipo_iva": 10.0,
+               "cuota_iva": round((0.5 + i * 0.731) * 0.1, 3), "pct_requiv": None,
+               "cuota_requiv": None} for i in range(60)]
+    c = combinada(lectura(0, lineas_iva=raras))
+    for tipo, juntas in ((21.0, c["lineas_iva"][0]), (10.0, c["lineas_iva"][1])):
+        de_ese_tipo = [x for x in raras if x["tipo_iva"] == tipo]
+        for campo in ("base", "cuota_iva", "cuota_requiv"):
+            leido = math.fsum(x[campo] or 0 for x in de_ese_tipo)
+            assert abs((juntas[campo] or 0) - leido) < 1e-6, (tipo, campo)
+
 
 def test_con_tipos_inventados_se_quedan_doce_como_mucho():
     inventadas = [dict(linea, tipo_iva=float(i)) for i, linea in enumerate(lineas(300))]
