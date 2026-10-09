@@ -194,6 +194,7 @@ def test_exportar_parte_el_taco_y_actualiza_la_ventana(monkeypatch):
         v._anadir_fila(b"", f, "gasto", "622", "G13", "", "b1")
     v._revalidar_todo()
     v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
     gastos = sorted(n for n in os.listdir(carpeta) if n.endswith(".pdf"))
     assert gastos == ["2026-02-10 PROVEEDOR PRUEBA F-1.pdf",
                       "2026-02-10 PROVEEDOR PRUEBA F-2.pdf"]
@@ -240,6 +241,7 @@ def test_las_revisadas_con_motivo_se_exportan_y_tienen_su_pdf(monkeypatch):
     v.tabla.selectRow(1)
     v._marcar_revisada()
     v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
     # Ya no hay «apartadas»: si INV-1 tiene su PDF es porque salió en el Excel.
     assert "2 línea(s)" in v.banda.historial[-1]
     gastos = sorted(n for n in os.listdir(carpeta) if n.endswith(".pdf"))

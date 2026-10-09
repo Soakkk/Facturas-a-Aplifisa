@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from . import identidad_archivo, registro_facturas
+from .pdf import CERROJO
 from .recoger import CARPETA_EXCEL
 
 TIPOS = (("Gastos", "Gastos"), ("Ingresos", "Ingresos"))
@@ -92,19 +93,25 @@ FILAS_POR_PAGINA_INDICE = 50
 
 
 def _unir(pdfs: List[str], destino: str, titulo: str) -> int:
-    """Un PDF con índice y un marcador por archivo. Devuelve sus páginas."""
+    """Un PDF con índice y un marcador por archivo. Devuelve sus páginas.
+
+    El expediente se puede hacer en un hilo aparte mientras el visor dibuja
+    una hoja, y PyMuPDF no admite dos hilos a la vez (ver pdf.CERROJO): el
+    cerrojo se coge archivo a archivo, no durante todo el expediente."""
     import fitz
     # 1º cuántas páginas tiene cada uno, para saber cuántas ocupa el índice.
     abiertos = []
     for ruta in pdfs:
         try:
-            abiertos.append((ruta, fitz.open(ruta)))
+            with CERROJO:
+                abiertos.append((ruta, fitz.open(ruta)))
         except Exception:
             abiertos.append((ruta, None))
     hojas_indice = max(1, -(-len(abiertos) // FILAS_POR_PAGINA_INDICE))
-    salida = fitz.open()
-    for _ in range(hojas_indice):
-        salida.new_page(width=595, height=842)
+    with CERROJO:
+        salida = fitz.open()
+        for _ in range(hojas_indice):
+            salida.new_page(width=595, height=842)
     marcadores = [[1, "Índice", 1]]
     filas = []
     try:
@@ -113,36 +120,40 @@ def _unir(pdfs: List[str], destino: str, titulo: str) -> int:
             if doc is None:
                 filas.append((nombre, None, "no se pudo abrir"))
                 continue
-            inicio = salida.page_count + 1
-            salida.insert_pdf(doc)
-            marcadores.append([1, nombre, inicio])
-            filas.append((nombre, inicio, f"{doc.page_count} pág."))
+            with CERROJO:
+                inicio = salida.page_count + 1
+                salida.insert_pdf(doc)
+                marcadores.append([1, nombre, inicio])
+                filas.append((nombre, inicio, f"{doc.page_count} pág."))
     finally:
         for _ruta, doc in abiertos:
             if doc is not None:
-                doc.close()
+                with CERROJO:
+                    doc.close()
     for n in range(hojas_indice):
-        pagina = salida[n]
-        y = 60
-        if n == 0:
-            pagina.insert_text((50, y), titulo, fontsize=15, fontname="helv")
-            y += 20
-            pagina.insert_text(
-                (50, y), f"{len(pdfs)} documento(s) · generado el "
-                f"{datetime.now():%d/%m/%Y %H:%M}", fontsize=9, fontname="helv")
-            y += 24
-        tramo = filas[n * FILAS_POR_PAGINA_INDICE:(n + 1) * FILAS_POR_PAGINA_INDICE]
-        for nombre, inicio, detalle in tramo:
-            pagina.insert_text((50, y), nombre[:72], fontsize=9, fontname="helv")
-            pagina.insert_text(
-                (440, y), f"pág. {inicio}  ({detalle})" if inicio else detalle,
-                fontsize=9, fontname="helv")
-            y += 14
-    salida.set_toc(marcadores)
+        with CERROJO:
+            pagina = salida[n]
+            y = 60
+            if n == 0:
+                pagina.insert_text((50, y), titulo, fontsize=15, fontname="helv")
+                y += 20
+                pagina.insert_text(
+                    (50, y), f"{len(pdfs)} documento(s) · generado el "
+                    f"{datetime.now():%d/%m/%Y %H:%M}", fontsize=9, fontname="helv")
+                y += 24
+            tramo = filas[n * FILAS_POR_PAGINA_INDICE:(n + 1) * FILAS_POR_PAGINA_INDICE]
+            for nombre, inicio, detalle in tramo:
+                pagina.insert_text((50, y), nombre[:72], fontsize=9, fontname="helv")
+                pagina.insert_text(
+                    (440, y), f"pág. {inicio}  ({detalle})" if inicio else detalle,
+                    fontsize=9, fontname="helv")
+                y += 14
     temporal = destino + ".tmp"
-    salida.save(temporal, garbage=3, deflate=True)
-    paginas = salida.page_count
-    salida.close()
+    with CERROJO:
+        salida.set_toc(marcadores)
+        salida.save(temporal, garbage=3, deflate=True)
+        paginas = salida.page_count
+        salida.close()
     os.replace(temporal, destino)
     return paginas
 

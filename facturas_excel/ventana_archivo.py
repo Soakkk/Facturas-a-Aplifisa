@@ -6,13 +6,17 @@ viva en su sitio. Los métodos usan el estado de la ventana (self).
 
 from __future__ import annotations
 
+import copy
 import os
+import traceback
 
 from collections import Counter
 
+from PySide6.QtCore import QCoreApplication, QEventLoop
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 from facturas_excel import archivo, escaner, registro_facturas
+from facturas_excel import errores as registro_errores
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_escaneo import DialogoEscaneo
@@ -20,11 +24,12 @@ from facturas_excel.dialogo_escaneos import DialogoEscaneos
 from facturas_excel.clientes import nombres_conocidos
 from facturas_excel.validacion import fecha_de
 
-from facturas_excel.hilos import HiloEscaneo
+from facturas_excel.hilos import HiloArchivo, HiloEscaneo, soltar_hilo
 
 
 class ArchivoMixin:
     def _escanear(self):
+        self._esperar_archivo()      # antes, lo que se esté archivando
         if getattr(self, "_hilo_escaneo", None) and self._hilo_escaneo.isRunning():
             self._avisar("Espere a que termine el escaneo en curso.", AVISO)
             return
@@ -76,6 +81,7 @@ class ArchivoMixin:
         from facturas_excel import recoger
         from facturas_excel.dialogo_recogida import (
             DialogoRecogida, ejecutar_con_progreso)
+        self._esperar_archivo()      # antes, lo que se esté archivando
         base = archivo.carpeta_escaneos()
         origenes = recoger.carpetas_origen()
         if not origenes:
@@ -126,30 +132,13 @@ class ArchivoMixin:
         Los que no se pueden (un PDF abierto en otro programa…) quedan en
         `_expedientes_sin_actualizar`, para decirlo: ver
         `_texto_expedientes_sin_actualizar`."""
-        from facturas_excel import errores, expediente
-        base = archivo.carpeta_escaneos()
-        hechos = 0
-        self._expedientes_sin_actualizar = []
-        for nombre, nif, ejercicio in afectados:
-            e = expediente.buscar(base, nif, nombre, ejercicio)
-            if not e:
-                continue
-            try:
-                expediente.crear(base, e)
-                hechos += 1
-            except (OSError, ValueError, RuntimeError) as error:
-                errores.apuntar(f"Expediente {nombre or nif} {ejercicio}: {error}")
-                self._expedientes_sin_actualizar.append(
-                    f"{nombre or nif} {ejercicio} ({error})")
+        hechos, self._expedientes_sin_actualizar = actualizar_expedientes(
+            archivo.carpeta_escaneos(), afectados)
         return hechos
 
     def _texto_expedientes_sin_actualizar(self) -> str:
-        fallidos = getattr(self, "_expedientes_sin_actualizar", [])
-        if not fallidos:
-            return ""
-        return (f" No se pudo poner al día el expediente de "
-                f"{'; '.join(fallidos[:3])}: ¿tiene abierto su PDF? Ciérrelo y "
-                "vuelva a abrir Expedientes.")
+        return texto_expedientes_sin_actualizar(
+            getattr(self, "_expedientes_sin_actualizar", []))
 
     def _ver_registro_facturas(self) -> None:
         from facturas_excel.dialogo_registro_facturas import DialogoRegistroFacturas
@@ -157,11 +146,13 @@ class ArchivoMixin:
 
     def _ver_expedientes(self) -> None:
         from facturas_excel.dialogo_expedientes import DialogoExpedientes
+        self._esperar_archivo()      # antes, lo que se esté archivando
         DialogoExpedientes(archivo.carpeta_escaneos(), self).exec()
 
     def _ver_escaneos(self):
         """Los PDF que va generando el escaneo: abrirlos, recolocarlos o
         volver a pasarlos por el programa."""
+        self._esperar_archivo()      # antes, lo que se esté archivando
         dialogo = DialogoEscaneos(self)
         if dialogo.exec() == QDialog.Accepted and dialogo.rutas_elegidas:
             self.procesar_rutas(dialogo.rutas_elegidas)
@@ -256,75 +247,107 @@ class ArchivoMixin:
             f"{'Ingresos' if tipo == 'ingresos' else 'Gastos'}")
 
     def _archivar_exportacion(self, exportadas, rutas_por_tipo,
-                              apartadas=None) -> str:
+                              apartadas=None, al_terminar=None) -> bool:
         """Copia el Excel al archivo del cliente y pone al día su expediente.
 
         Así el expediente de cada cliente y ejercicio se mantiene solo, sin
-        tener que acordarse. Si algo falla, la exportación sigue siendo buena:
-        solo se avisa.
+        tener que acordarse. Se hace en un hilo aparte (con 800 líneas eran
+        19 s de ventana parada), después de avisar de que el Excel está
+        listo; la barra de estado dice cómo va. Al terminar, la ventana se
+        pone al día y `al_terminar(texto, problemas)` recibe lo que hay que
+        contar (o el fallo, que también se apunta) y si algo no ha salido. Si
+        algo falla, la exportación sigue siendo buena: solo se avisa. Devuelve
+        False si no hay cliente: entonces no hay nada que archivar.
         """
-        from facturas_excel import expediente
-        nif = getattr(self, "_cliente_nif", "")
         nombre = getattr(self, "_cliente_nombre", "")
         if not nombre:
-            return ""
-        from facturas_excel import separar
-        base = archivo.carpeta_escaneos()
-        afectados = set()
-        avisos = []
-        # Una factura, un PDF: el taco escaneado se parte ahora que cada
-        # factura está revisada, y el original se aparta intacto.
+            return False
+        self._esperar_archivo()          # nunca dos a la vez sobre el archivo
+        # Copias: mientras se archiva se puede seguir corrigiendo en la tabla.
+        documentos = {t: [copy.copy(f) for f in list(exportadas.get(t, []))
+                          + list((apartadas or {}).get(t, []))]
+                      for t in set(exportadas) | set(apartadas or {})}
+        excels = [(rutas_por_tipo[tipo], self._ejercicio_exportacion(facturas), tipo)
+                  for tipo, facturas in exportadas.items()]
+        trabajo = ArchivoExportacion(archivo.carpeta_escaneos(), nombre,
+                                     getattr(self, "_cliente_nif", ""),
+                                     documentos, excels)
+        hilo = HiloArchivo(trabajo)
+        hilo.progreso.connect(self._progreso_archivo)
+        hilo.hecho.connect(self._archivo_terminado)
+        self._hilo_archivo = hilo
+        self._al_terminar_archivo = al_terminar
+        self._progreso_archivo("Guardando el archivo del cliente…")
+        hilo.start()
+        return True
+
+    def _progreso_archivo(self, texto: str) -> None:
+        if not self.archivando():
+            return            # un «cómo va» que llega tarde, ya terminado
+        self._texto_progreso_archivo = texto
+        self.lbl_estado.setText(texto)
+
+    def archivando(self) -> bool:
+        """Si el archivo del cliente se está guardando todavía."""
+        return getattr(self, "_hilo_archivo", None) is not None
+
+    def _esperar_archivo(self) -> None:
+        """Si el archivo del cliente se está guardando, espera a que acabe.
+
+        Lo que también toca el archivo o los PDF (otra exportación, cargar,
+        escanear, recoger, expedientes, cerrar el programa) llama a esto
+        antes: así nunca van dos a la vez, como cuando la ventana se quedaba
+        parada. Mientras, la barra de estado sigue diciendo cómo va, pero no
+        se atienden clics ni teclas."""
+        hilo = getattr(self, "_hilo_archivo", None)
+        if hilo is None:
+            return
+        while not hilo.wait(50):
+            QCoreApplication.processEvents(QEventLoop.ExcludeUserInputEvents, 50)
+        self._archivo_terminado()
+
+    def _archivo_terminado(self, hilo=None) -> None:
+        """El archivo del cliente ya está: la ventana se pone al día (los
+        tacos apartados) y se avisa de cómo ha ido."""
+        actual = getattr(self, "_hilo_archivo", None)
+        if actual is None or (hilo is not None and hilo is not actual):
+            return              # ya se dio por terminado al esperarlo
+        actual.wait()           # acaba de decir que ha terminado: un instante
+        self._hilo_archivo = None
+        soltar_hilo(actual)
+        trabajo = actual.trabajo
         try:
-            documentos = {t: list(exportadas.get(t, [])) + list((apartadas or {}).get(t, []))
-                          for t in set(exportadas) | set(apartadas or {})}
-            partido = separar.separar(
-                documentos, base, nombre, nif,
-                pdf_previo=lambda tipo, f: registro_facturas.pdf_de(
-                    nif, f, tipo, nombre))
-        except Exception as error:  # nunca debe estropear la exportación
-            partido = None
-            avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
-        if partido:
-            for viejo, nuevo in partido["tacos"].items():
+            for viejo, nuevo in trabajo.tacos.items():
                 self._cambiar_origen(viejo, nuevo)
-            afectados.update((nombre, nif, e) for e in partido["afectados"])
-            # Cada factura queda en el registro con su PDF.
-            registro_facturas.archivar(nif, nombre, partido["pdfs"])
-            if partido["creados"]:
-                avisos.append(f"{len(partido['creados'])} factura(s) guardadas "
-                              "en su propio PDF en el archivo del cliente.")
-            if partido["sin_paginas"]:
-                avisos.append(
-                    f"{len(partido['sin_paginas'])} factura(s) sin PDF propio "
-                    "(no se encontró su documento original): siguen dentro "
-                    "del taco.")
-        try:
-            for tipo, facturas in exportadas.items():
-                ejercicio = self._ejercicio_exportacion(facturas)
-                expediente.guardar_excel_exportado(
-                    base, rutas_por_tipo[tipo], nombre, nif, ejercicio, tipo)
-                afectados.add((nombre, nif, ejercicio))
-        except (OSError, ValueError) as error:
-            avisos.append(f"No se pudo guardar la copia del Excel en el archivo: {error}")
-        hechos = self._actualizar_expedientes(sorted(afectados))
-        if hechos:
-            avisos.append(f"Expediente del cliente actualizado ({hechos}).")
-        if self._texto_expedientes_sin_actualizar():
-            avisos.append(self._texto_expedientes_sin_actualizar().strip())
-        return "".join(f"\n{a}" for a in avisos)
+        except Exception as error:     # nunca debe estropear la exportación
+            if trabajo.error is None:
+                trabajo.error, trabajo.detalle = error, traceback.format_exc()
+        if trabajo.error is not None:
+            registro_errores.apuntar(trabajo.detalle)
+            texto = texto_fallo_archivo(trabajo.error)
+        else:
+            texto = "".join(f"\n{a}" for a in trabajo.avisos)
+        if self.lbl_estado.text() == getattr(self, "_texto_progreso_archivo", None):
+            self._resumen()
+        if trabajo.tacos:
+            # Que la sesión y las muestras guarden ya el sitio nuevo del taco.
+            for nombre_timer in ("_timer_sesion", "_timer_muestras"):
+                if hasattr(self, nombre_timer):
+                    getattr(self, nombre_timer).start()
+            self._refrescar_ficha()
+        al_terminar, self._al_terminar_archivo = (
+            getattr(self, "_al_terminar_archivo", None), None)
+        if al_terminar:
+            al_terminar(texto, trabajo.problemas or trabajo.error is not None)
 
     def _cambiar_origen(self, viejo: str, nuevo: str) -> None:
-        """El taco se ha apartado en «Tacos escaneados»: que todo lo sepa."""
+        """El taco se ha apartado en «Tacos escaneados»: que la ventana lo
+        sepa. El registro ya lo sabe: lo cambia ArchivoExportacion.hacer."""
         def mismo(ruta):
-            return ruta and os.path.normcase(os.path.abspath(ruta)) == \
-                os.path.normcase(os.path.abspath(viejo))
+            return _misma_ruta(ruta, viejo)
 
         def cambiar(f):
-            if mismo(f.origen_imagen):
-                f.origen_imagen = nuevo
-            if getattr(f, "paginas_documento", ()):
-                f.paginas_documento = tuple(
-                    (nuevo if mismo(o) else o, p) for o, p in f.paginas_documento)
+            cambiar_origen_factura(f, viejo, nuevo)
 
         for bloque in self._bloques:
             if mismo(bloque.get("original")):
@@ -340,4 +363,136 @@ class ArchivoMixin:
             cambiar(registro["factura"])
             for f in registro.get("fuentes", []):
                 cambiar(f)
-        registro_facturas.cambiar_ruta(viejo, nuevo)
+
+
+# ------------------------------------------------------------------------
+#  Lo que no toca la ventana: se puede hacer en un hilo aparte (HiloArchivo)
+# ------------------------------------------------------------------------
+
+def _misma_ruta(ruta, otra) -> bool:
+    return bool(ruta) and os.path.normcase(os.path.abspath(ruta)) == \
+        os.path.normcase(os.path.abspath(otra))
+
+
+def cambiar_origen_factura(f, viejo: str, nuevo: str) -> None:
+    """La factura sale del taco `viejo`, que ahora está en `nuevo`."""
+    if _misma_ruta(f.origen_imagen, viejo):
+        f.origen_imagen = nuevo
+    if getattr(f, "paginas_documento", ()):
+        f.paginas_documento = tuple(
+            (nuevo if _misma_ruta(o, viejo) else o, p) for o, p in f.paginas_documento)
+
+
+def actualizar_expedientes(base: str, afectados, progreso=None) -> tuple:
+    """Rehace los expedientes de esos (nombre, nif, ejercicio).
+
+    Devuelve (cuántos, [los que no se pudieron, con el motivo]); los que no
+    se pueden (un PDF abierto en otro programa…) se apuntan en errores.log."""
+    from facturas_excel import errores, expediente
+    hechos, fallidos = 0, []
+    for nombre, nif, ejercicio in afectados:
+        e = expediente.buscar(base, nif, nombre, ejercicio)
+        if not e:
+            continue
+        if progreso:
+            progreso(f"Poniendo al día el expediente {ejercicio} del cliente…")
+        try:
+            expediente.crear(base, e)
+            hechos += 1
+        except (OSError, ValueError, RuntimeError) as error:
+            errores.apuntar(f"Expediente {nombre or nif} {ejercicio}: {error}")
+            fallidos.append(f"{nombre or nif} {ejercicio} ({error})")
+    return hechos, fallidos
+
+
+def texto_expedientes_sin_actualizar(fallidos) -> str:
+    if not fallidos:
+        return ""
+    return (f" No se pudo poner al día el expediente de "
+            f"{'; '.join(fallidos[:3])}: ¿tiene abierto su PDF? Ciérrelo y "
+            "vuelva a abrir Expedientes.")
+
+
+def texto_fallo_archivo(error) -> str:
+    return (f"\nOJO: el Excel está bien, pero no se pudo poner al día el "
+            f"archivo del cliente ({error}). El detalle queda en "
+            f"{registro_errores.FICHERO}.")
+
+
+class ArchivoExportacion:
+    """El archivo del cliente tras exportar: un PDF por factura (el taco se
+    parte y el original se aparta intacto), la copia del Excel y el
+    expediente al día.
+
+    Se prepara en la ventana con copias de las facturas y se hace sin
+    tocarla (`hacer`), en un hilo aparte. Lo que hay que contar queda en
+    `avisos` (`problemas` si algo no ha salido), los tacos apartados en
+    `tacos` (la ventana los pone al día al terminar) y un fallo inesperado
+    en `error` y `detalle`.
+    """
+
+    def __init__(self, base: str, nombre: str, nif: str, documentos: dict,
+                 excels: list):
+        self.base, self.nombre, self.nif = base, nombre, nif
+        self.documentos = documentos      # {tipo: [copias de las facturas]}
+        self.excels = excels              # [(ruta del Excel, ejercicio, tipo)]
+        self.avisos: list = []
+        self.problemas = False
+        self.tacos: dict = {}             # {ruta vieja: ruta nueva}
+        self.error = None
+        self.detalle = ""
+
+    def hacer(self, progreso=None) -> None:
+        from facturas_excel import expediente, separar
+        avisar = progreso or (lambda _texto: None)
+        afectados = set()
+        nombre, nif = self.nombre, self.nif
+        # Una factura, un PDF: el taco escaneado se parte ahora que cada
+        # factura está revisada, y el original se aparta intacto.
+        try:
+            partido = separar.separar(
+                self.documentos, self.base, nombre, nif,
+                pdf_previo=lambda tipo, f: registro_facturas.pdf_de(
+                    nif, f, tipo, nombre),
+                progreso=lambda hechas, total: avisar(
+                    f"Guardando cada factura en su PDF: {hechas} de {total}…"))
+        except Exception as error:  # nunca debe estropear la exportación
+            partido = None
+            self.problemas = True
+            self.avisos.append(f"No se pudieron separar las facturas en PDF: {error}")
+        if partido:
+            self.tacos = dict(partido["tacos"])
+            for viejo, nuevo in self.tacos.items():
+                # Antes de apuntar cada PDF en el registro, que las facturas
+                # (y el registro) sepan dónde está ahora su taco.
+                for facturas in self.documentos.values():
+                    for f in facturas:
+                        cambiar_origen_factura(f, viejo, nuevo)
+                registro_facturas.cambiar_ruta(viejo, nuevo)
+            afectados.update((nombre, nif, e) for e in partido["afectados"])
+            # Cada factura queda en el registro con su PDF.
+            registro_facturas.archivar(nif, nombre, partido["pdfs"])
+            if partido["creados"]:
+                self.avisos.append(f"{len(partido['creados'])} factura(s) guardadas "
+                                   "en su propio PDF en el archivo del cliente.")
+            if partido["sin_paginas"]:
+                self.problemas = True
+                self.avisos.append(
+                    f"{len(partido['sin_paginas'])} factura(s) sin PDF propio "
+                    "(no se encontró su documento original): siguen dentro "
+                    "del taco.")
+        try:
+            for ruta, ejercicio, tipo in self.excels:
+                expediente.guardar_excel_exportado(
+                    self.base, ruta, nombre, nif, ejercicio, tipo)
+                afectados.add((nombre, nif, ejercicio))
+        except (OSError, ValueError) as error:
+            self.problemas = True
+            self.avisos.append(
+                f"No se pudo guardar la copia del Excel en el archivo: {error}")
+        hechos, fallidos = actualizar_expedientes(self.base, sorted(afectados), avisar)
+        if hechos:
+            self.avisos.append(f"Expediente del cliente actualizado ({hechos}).")
+        if fallidos:
+            self.problemas = True
+            self.avisos.append(texto_expedientes_sin_actualizar(fallidos).strip())

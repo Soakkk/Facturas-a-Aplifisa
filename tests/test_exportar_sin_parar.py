@@ -275,3 +275,157 @@ def test_si_falla_al_rehacerlo_el_expediente_de_antes_queda_entero(tmp_path, mon
     monkeypatch.setattr(expediente, "_pdf_desde_html", resumen)
     segundo = expediente.crear(base, e)
     assert segundo["documentos"]["Ingresos"] == (3, 1 + 3, "Ingresos 2026.pdf")
+
+
+# ------------------------------------- 4. el archivo, en segundo plano
+class _Orden:
+    def __init__(self, parent):
+        pass
+
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+        return QDialog.Accepted
+
+    def recordar(self):
+        pass
+
+    def orden(self):
+        from facturas_excel import ventana_aplifisa
+        return ventana_aplifisa.ORDEN_PDF
+
+
+def _ventana_con_taco(monkeypatch, hojas=2):
+    """Una ventana con un taco escaneado en el archivo y una factura por hoja,
+    lista para exportar (como test_separar_facturas)."""
+    import facturas_excel.app as modulo_app
+    from facturas_excel import ventana_aplifisa
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", _Orden)
+    base = archivo.carpeta_escaneos()
+    taco = _taco_escaneado(base, hojas)
+    v = modulo_app.VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nombre, v._cliente_nif = CLIENTE
+    v._bloques = [{"nombre": "b1", "cliente": CLIENTE[0], "nif": CLIENTE[1],
+                   "original": taco, "procesadas": [], "crudos": []}]
+    for pag in range(1, hojas + 1):
+        f = _f(f"F-{pag}", "PROVEEDOR PRUEBA", "10/02/2026", taco, pag)
+        f.concepto, f.subclave, f.verificacion = "622", "G13", "doble"
+        v._anadir_fila(b"", f, "gasto", "622", "G13", "", "b1")
+    v._revalidar_todo()
+    return v, os.path.dirname(taco)
+
+
+def _separar_que_espera(monkeypatch):
+    """separar.separar se queda esperando a que la prueba le deje seguir, y
+    apunta desde qué hilo se llamó y qué decía la ventana en ese momento."""
+    import threading
+    from facturas_excel import separar
+    original = separar.separar
+    seguir, visto = threading.Event(), {}
+
+    def esperando(*a, **k):
+        visto["hilo_principal"] = threading.current_thread() is threading.main_thread()
+        visto["avisado"] = list(_ventana_de_la_prueba[0].banda.historial)
+        seguir.wait(10)
+        return original(*a, **k)
+    monkeypatch.setattr(separar, "separar", esperando)
+    return seguir, visto
+
+
+_ventana_de_la_prueba = [None]
+
+
+def test_exportar_avisa_del_excel_y_archiva_sin_parar_la_ventana(monkeypatch):
+    """Con 800 líneas la ventana se quedaba 19 s parada: casi todo era el
+    archivo del cliente. Ahora se avisa de que el Excel está listo, y el
+    archivo se hace en otro hilo mientras la ventana sigue respondiendo."""
+    from PySide6.QtCore import QCoreApplication
+    v, gastos = _ventana_con_taco(monkeypatch)
+    _ventana_de_la_prueba[0] = v
+    seguir, visto = _separar_que_espera(monkeypatch)
+
+    v._exportar_todo()              # vuelve aunque el archivo no ha acabado
+    for _ in range(100):
+        QCoreApplication.processEvents()
+        if "hilo_principal" in visto:
+            break
+        import time
+        time.sleep(0.01)
+    assert visto["hilo_principal"] is False
+    # El Excel se anunció antes de empezar a archivar…
+    assert "Exportación terminada y comprobada" in visto["avisado"][-1]
+    assert v.archivando() and "Guardando" in v.lbl_estado.text()
+    # …y lo archivado se cuenta al terminar, en el mismo aviso.
+    assert "guardadas en su propio PDF" not in v.banda.historial[-1]
+    seguir.set()
+    v._esperar_archivo()
+    QCoreApplication.processEvents()        # los «cómo va» que llegan tarde
+    final = v.banda.historial[-1]
+    assert final.startswith(visto["avisado"][-1])
+    assert "2 factura(s) guardadas en su propio PDF" in final
+    assert "Expediente del cliente actualizado (1)." in final
+    assert not v.archivando()
+    assert "Guardando" not in v.lbl_estado.text()
+    assert "Poniendo al día" not in v.lbl_estado.text()
+    assert sorted(n for n in os.listdir(gastos) if n.endswith(".pdf")) == [
+        "2026-02-10 PROVEEDOR PRUEBA F-1.pdf", "2026-02-10 PROVEEDOR PRUEBA F-2.pdf"]
+    # La ventana sabe dónde ha quedado el taco (lo apartó el otro hilo).
+    nuevo = v.filas[0]["factura"].origen_imagen
+    assert "Tacos escaneados" in nuevo and os.path.exists(nuevo)
+    assert v._bloques[0]["original"] == nuevo
+
+
+def test_cerrar_el_programa_espera_a_que_acabe_el_archivo(monkeypatch):
+    """Cerrar a mitad dejaría facturas sin su PDF y el expediente a medias:
+    se espera, y la sesión se guarda ya con el taco en su sitio nuevo."""
+    import threading
+    from facturas_excel import hilos, sesion
+    v, gastos = _ventana_con_taco(monkeypatch)
+    _ventana_de_la_prueba[0] = v
+    seguir, _visto = _separar_que_espera(monkeypatch)
+    v._exportar_todo()
+    threading.Timer(0.3, seguir.set).start()
+
+    v.close()
+
+    assert not v.archivando() and not hilos.VIVOS
+    assert len([n for n in os.listdir(gastos) if n.endswith(".pdf")]) == 2
+    nuevo = v._bloques[0]["original"]
+    assert "Tacos escaneados" in nuevo
+    sesion.esperar()
+    guardada = sesion.cargar()
+    assert guardada["bloques"][0]["original"] == nuevo
+
+
+def test_un_fallo_al_archivar_se_apunta_y_se_avisa(monkeypatch):
+    from facturas_excel import registro_facturas
+    from facturas_excel.rutas import dir_datos
+    v, _gastos = _ventana_con_taco(monkeypatch)
+
+    def bloqueada(*_a, **_k):
+        raise RuntimeError("base de datos bloqueada")
+    monkeypatch.setattr(registro_facturas, "archivar", bloqueada)
+    v._exportar_todo()
+    v._esperar_archivo()
+
+    final = v.banda.historial[-1]
+    assert final.startswith("Exportación terminada y comprobada")
+    assert ("OJO: el Excel está bien, pero no se pudo poner al día el archivo "
+            "del cliente (base de datos bloqueada)") in final
+    with open(os.path.join(dir_datos(), "errores.log"), encoding="utf-8") as fh:
+        assert "base de datos bloqueada" in fh.read()
+    # Lo que sí se hizo antes del fallo (apartar el taco) la ventana lo sabe.
+    assert "Tacos escaneados" in v._bloques[0]["original"]
+
+
+def test_si_mientras_se_archiva_se_avisa_de_otra_cosa_no_se_tapa(monkeypatch):
+    """Un aviso con «Deshacer» que sale mientras se archiva no lo tapa lo
+    archivado (si todo ha ido bien): eso va a la barra de estado."""
+    v, _gastos = _ventana_con_taco(monkeypatch)
+    _ventana_de_la_prueba[0] = v
+    seguir, _visto = _separar_que_espera(monkeypatch)
+    v._exportar_todo()
+    v._avisar("1 línea(s) eliminada(s).", deshacer=lambda: None)
+    seguir.set()
+    v._esperar_archivo()
+    assert v.banda.historial[-1] == "1 línea(s) eliminada(s)."
+    assert "2 factura(s) guardadas en su propio PDF" in v.lbl_estado.text()

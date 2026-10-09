@@ -87,7 +87,16 @@ def perfil_aislado(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
     if QApplication.instance():
         for ventana in QApplication.topLevelWidgets():
+            # Lo que se archiva en segundo plano tras exportar acaba aquí,
+            # con el perfil de la prueba todavía puesto.
+            if hasattr(ventana, '_esperar_archivo'):
+                ventana._esperar_archivo()
             if hasattr(ventana, '_timer_muestras'):
                 ventana._timer_muestras.stop()
             ventana.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    # Y los hilos del archivo cuya ventana ya no está.
+    from facturas_excel import hilos
+    for hilo in list(hilos.VIVOS):
+        hilo.wait()
+        hilos.soltar_hilo(hilo)
