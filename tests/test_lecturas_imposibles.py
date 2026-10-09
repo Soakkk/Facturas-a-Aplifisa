@@ -305,9 +305,11 @@ def anidado(niveles: int):
     ('{"total": NaN, "suplidos": Infinity, "base_irpf": -Infinity}',
      {"total": None, "suplidos": None, "base_irpf": None}),
     ('{"total": 1e999, "pct_irpf": 15}', {"total": None, "pct_irpf": 15}),
-    ('{"total": ' + "9" * 5000 + '}', {"total": None}),
+    # Un entero de más de 15 cifras llega como texto, nunca como número (y
+    # sin int(): con más de 4300 cifras lanzaba). Ver el del nº de factura.
+    ('{"total": ' + "9" * 5000 + '}', {"total": "9" * 5000}),
     ('{"total": ' + "9" * 400 + '.5}', {"total": None}),
-    ('{"total": 9999999999999999}', {"total": None}),
+    ('{"total": 9999999999999999}', {"total": "9999999999999999"}),
 ], ids=["literales", "1e999", "entero_5000_cifras", "decimal_400_cifras",
         "entero_16_cifras"])
 def test_el_json_de_gemini_sin_numeros_imposibles(texto, esperado):
@@ -412,6 +414,21 @@ def test_una_lectura_con_un_entero_enorme_se_queda(monkeypatch):
     leido = ex.extraer(b"img", "taco.pdf", 1)
     assert leido.crudo["suplidos"] is None and leido.crudo["total"] == 60.5
     assert ex.client.llamadas == ["modelo-a"]
+
+
+def test_un_numero_de_factura_largo_escrito_sin_comillas_se_queda(monkeypatch):
+    # Sin esquema, el nº de factura puede llegar como número, y los de las
+    # eléctricas o las telefónicas tienen 16-20 cifras: pasaba a null sin
+    # avisar y la factura se quedaba sin número.
+    texto = json.dumps(lectura(0, num_factura=0, suplidos=0)).replace(
+        '"num_factura": 0', '"num_factura": 21240000012345678').replace(
+        '"suplidos": 0', '"suplidos": 9999999999999999')
+    ex = extractor(monkeypatch, {"modelo-a": texto}, modo="no")
+    leido = ex.extraer(b"img", "taco.pdf", 1)
+    assert leido.crudo["num_factura"] == "21240000012345678"
+    assert lote(leido.crudo)[0][1].facturas[0].num_factura == "21240000012345678"
+    # Donde va un importe sigue sin valer, pero ahora se dice (ámbar).
+    assert leido.crudo["suplidos"] is None and leido.crudo.get("_saneado")
 
 
 RARAS = {

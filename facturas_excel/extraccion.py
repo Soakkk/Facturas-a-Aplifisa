@@ -669,10 +669,13 @@ def _consumo(resp):
 
 
 def _entero_json(cifras: str):
-    # Un entero de más de 15 cifras no es un dato de una factura, y con más
-    # de 4300 json.loads lanzaba ValueError, que no es un JSON roto: se
-    # saltaba los reintentos y tiraba también la otra lectura, que era buena.
-    return int(cifras) if len(cifras.lstrip("-")) <= 15 else None
+    # Un entero de más de 15 cifras no es un importe, y con más de 4300
+    # json.loads lanzaba ValueError, que no es un JSON roto: se saltaba los
+    # reintentos y tiraba también la otra lectura, que era buena. Se queda
+    # como texto: puede ser un nº de factura sin comillas (los de las
+    # eléctricas tienen 16-20 cifras); donde va un importe, el saneado lo
+    # deja en blanco y avisa.
+    return int(cifras) if len(cifras.lstrip("-")) <= 15 else cifras
 
 
 def _decimal_json(texto: str):
