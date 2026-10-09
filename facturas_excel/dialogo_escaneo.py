@@ -28,10 +28,16 @@ from .escaner import DPI_POR_DEFECTO, carpeta_por_defecto
 
 # (etiqueta, valor). El orden va de lo mas rapido a lo mas fiel.
 COLORES = [
-    ("Blanco y negro — lo más rápido y ligero", "bn"),
+    ("Blanco y negro — NO sirve para tiques ni letra fina", "bn"),
     ("Escala de grises — recomendado para facturas", "grises"),
     ("Color", "color"),
 ]
+# En blanco y negro cada punto sale blanco o negro: lo gris claro (la letra
+# de un tique de papel térmico, una letra fina o desvaída) se queda en blanco
+# o comido, y ya no hay forma de leerlo. Se avisa al elegirlo.
+AVISO_BN = ("Ojo: en blanco y negro los tiques y la letra fina o clara se "
+            "pierden (salen en blanco o comidos) y no se pueden leer. Para "
+            "facturas, mejor «Escala de grises».")
 CALIDADES = [
     ("75 ppp — muy rápido, solo si la letra es grande", 75),
     ("150 ppp — rápido", 150),
@@ -80,8 +86,16 @@ class DialogoEscaneo(QDialog):
         self._elegir(self.combo_color, ajustes.leer("escaneo_color", "grises"))
         self.combo_color.setToolTip(
             "En escala de grises se escanea antes y el PDF pesa un tercio.\n"
-            "El color solo hace falta si necesita ver sellos o marcas de color.")
+            "El color solo hace falta si necesita ver sellos o marcas de color.\n"
+            "Blanco y negro solo para letra grande y bien negra: los tiques\n"
+            "y la letra fina se pierden.")
         formulario.addRow("Color:", self.combo_color)
+        self.aviso_bn = QLabel(AVISO_BN)
+        self.aviso_bn.setObjectName("alertaTitulo")
+        self.aviso_bn.setWordWrap(True)
+        formulario.addRow("", self.aviso_bn)
+        self.combo_color.currentIndexChanged.connect(self._avisar_bn)
+        self._avisar_bn()
 
         self.combo_calidad = QComboBox()
         for etiqueta, valor in CALIDADES:
@@ -128,6 +142,10 @@ class DialogoEscaneo(QDialog):
         botones.accepted.connect(self.accept)
         botones.rejected.connect(self.reject)
         raiz.addWidget(botones)
+
+    def _avisar_bn(self, *_indice) -> None:
+        """El aviso del blanco y negro, solo mientras esté elegido."""
+        self.aviso_bn.setVisible(self.combo_color.currentData() == "bn")
 
     @staticmethod
     def _elegir(combo: QComboBox, valor) -> None:
