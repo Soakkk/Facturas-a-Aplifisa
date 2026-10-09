@@ -296,3 +296,25 @@ def test_por_el_cristal_se_sigue_usando_wia(tmp_path, monkeypatch):
     monkeypatch.setattr(escaner, "armar_pdf", lambda paginas, destino: destino)
     assert escaner.escanear(str(tmp_path / "y.pdf"),
                             alimentador=False) == str(tmp_path / "y.pdf")
+
+
+@pytest.mark.parametrize("con_resolucion", [True, False])
+def test_la_hoja_del_cristal_mide_lo_que_el_papel(tmp_path, con_resolucion):
+    """El BMP de WIA dice a cuántos ppp se escaneó. Al pasarlo a JPEG se
+    perdía, y MuPDF tomaba la foto por 96 ppp: un A4 a 200 ppp salía como
+    una hoja de 44 x 62 cm, y la lectura (a 150 ppp) mandaba a Gemini la
+    foto ampliada al doble (2585 x 3655 en vez de 1240 x 1754)."""
+    import fitz
+    from PIL import Image
+    bmp = tmp_path / "pag_001.bmp"
+    Image.new("RGB", (1654, 2339), "white").save(
+        bmp, dpi=(200, 200) if con_resolucion else (0, 0))
+
+    # Si el BMP no lo dice, valen los ppp que se pidieron al escáner.
+    jpg = (escaner._a_jpeg(str(bmp), "grises") if con_resolucion
+           else escaner._a_jpeg(str(bmp), "grises", 200))
+    destino = escaner.armar_pdf([jpg], str(tmp_path / "cristal.pdf"))
+
+    with fitz.open(destino) as doc:
+        ancho, alto = doc[0].rect.width, doc[0].rect.height
+    assert abs(ancho - 595.4) < 1 and abs(alto - 842) < 1      # A4

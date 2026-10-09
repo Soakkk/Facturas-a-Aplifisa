@@ -237,7 +237,7 @@ def _formato_de(item) -> str:
     return formatos[0] if formatos else FORMATO_BMP
 
 
-def _a_jpeg(ruta: str, modo_color: str = "color") -> str:
+def _a_jpeg(ruta: str, modo_color: str = "color", dpi: Optional[int] = None) -> str:
     """Convierte a JPEG lo que no lo sea (un BMP de A4 a 200 ppp son 10 MB:
     un taco de 30 hojas dejaria un PDF imposible de mandar)."""
     if ruta.lower().endswith((".jpg", ".jpeg")):
@@ -248,7 +248,15 @@ def _a_jpeg(ruta: str, modo_color: str = "color") -> str:
         with Image.open(ruta) as imagen:
             # En grises o B/N el JPEG pesa la mitad guardandolo en un solo canal.
             modo = "RGB" if modo_color == "color" else "L"
-            imagen.convert(modo).save(destino, "JPEG", quality=80, optimize=True)
+            # Los ppp van en el JPEG: sin ellos MuPDF toma la foto por 96 ppp
+            # y un A4 a 200 ppp sale como una hoja de 44 x 62 cm (y la lectura
+            # manda a Gemini la foto ampliada al doble).
+            # Si el BMP no lo dice (0), valen los que se pidieron al escáner.
+            ppp = imagen.info.get("dpi") or (0, 0)
+            if min(ppp) < 1:
+                ppp = (dpi, dpi) if dpi else None
+            imagen.convert(modo).save(destino, "JPEG", quality=80, optimize=True,
+                                      **({"dpi": ppp} if ppp else {}))
         os.remove(ruta)
         return destino
     except Exception:
@@ -335,7 +343,7 @@ def capturar_paginas(dispositivo, carpeta_temporal: str, dpi: int = DPI_POR_DEFE
         ruta = os.path.join(carpeta_temporal,
                             f"pag_{len(paginas) + 1:03d}.{extension}")
         imagen.SaveFile(ruta)
-        paginas.append(_a_jpeg(ruta, modo_color))
+        paginas.append(_a_jpeg(ruta, modo_color, dpi))
         if progreso:
             progreso(len(paginas))
         if not alimentador:
