@@ -223,3 +223,50 @@ def test_el_pdf_esta_cerrado_cuando_la_ventana_se_entera(tmp_path, monkeypatch, 
         [bool(h._abiertos) for h in abiertas]), Qt.ConnectionType.DirectConnection)
     w.run()
     assert al_avisar == [[False]]
+
+
+def test_al_cerrar_el_pdf_se_suelta_sin_esperar_a_gemini(tmp_path, monkeypatch):
+    """Al cerrar el programa la ventana espera 5 s a la lectura y luego
+    borra la parte de la cola. Una petición a Gemini tarda más que eso: si el
+    PDF siguiera abierto hasta que contestara, en Windows la parte no se
+    podría borrar (antes se cerraba nada más dibujar el bloque)."""
+    from facturas_excel import pdf
+
+    abiertas = []
+
+    class HojasVigiladas(pdf.Hojas):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            abiertas.append(self)
+
+    en_gemini, contesta = threading.Event(), threading.Event()
+
+    def extraer(img, origen, pagina):
+        en_gemini.set()
+        contesta.wait(10)               # Gemini sin contestar todavía
+        return _leida(pagina)
+    w = _worker(monkeypatch, _taco(tmp_path / "taco.pdf", 4), extraer, hilos_a_la_vez=2)
+    monkeypatch.setattr(hilos, "Hojas", HojasVigiladas)
+    monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
+    hilo = threading.Thread(target=w.run)
+    hilo.start()
+    try:
+        assert en_gemini.wait(10)
+        w.cancelar()                    # se cierra el programa
+        abiertos_al_cancelar = [bool(h._abiertos) for h in abiertas]
+    finally:
+        contesta.set()
+        hilo.join(30)
+    assert abiertos_al_cancelar == [False]
+    assert not w.fallado and len(w.entregado[0][3]) == 4
+
+
+def test_una_hoja_pedida_con_el_pdf_ya_cerrado_lo_dice(tmp_path):
+    """Un hilo que llega tarde (se cerró el programa) no intenta abrir el
+    PDF como si fuera una foto: dice que ya está cerrado."""
+    from facturas_excel import pdf
+
+    hojas = pdf.Hojas([_taco(tmp_path / "taco.pdf", 2)])
+    hojas.cerrar()
+    with pytest.raises(ValueError, match="cerrado"):
+        hojas.imagen(1)

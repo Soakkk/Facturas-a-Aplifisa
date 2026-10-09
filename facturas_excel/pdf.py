@@ -438,6 +438,8 @@ class Hojas:
         doc = self._abiertos.get(ruta)
         if doc is not None:
             return hoja_a_jpg(doc, pagina - 1, self.dpi)
+        if os.path.splitext(ruta)[1].lower() == ".pdf":
+            raise ValueError("el PDF ya se ha cerrado")
         # Una foto suelta (de móvil) decodificada ocupa decenas de MB: como
         # las de los escaneos, pocas a la vez.
         with _REDUCIENDO:

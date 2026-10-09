@@ -37,6 +37,7 @@ class Worker(QThread):
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
         self._extractor = None
+        self._hojas = None
         self._cancelado = threading.Event()
 
     def cancelar(self) -> None:
@@ -45,6 +46,12 @@ class Worker(QThread):
         cancelado = getattr(self._extractor, "cancelado", None)
         if cancelado is not None:
             cancelado.set()
+        # El PDF se suelta ya, sin esperar a que Gemini conteste: la ventana
+        # espera a la lectura solo 5 s y luego borra la parte de la cola (en
+        # Windows, abierta no se puede). Ya no se dibuja ninguna hoja más.
+        hojas = self._hojas
+        if hojas is not None:
+            hojas.cerrar()
 
     def run(self):
         hojas = None
@@ -55,7 +62,8 @@ class Worker(QThread):
             # entero (de 3 a 5 s) sin que Gemini empezara, con todas sus
             # imágenes en memoria; ahora en memoria solo están las que se
             # están leyendo, y la ventana no se para mientras.
-            hojas = Hojas(self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
+            hojas = self._hojas = Hojas(
+                self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
             if not len(hojas):
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
