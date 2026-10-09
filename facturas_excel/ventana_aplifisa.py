@@ -400,6 +400,17 @@ class AplifisaMixin:
         # Si aún se está guardando el archivo de la exportación anterior, se
         # espera: las dos tocan el registro y los PDF del cliente.
         self._esperar_archivo()
+        # Con la cola a medias el Excel salía sin los bloques que faltaban, y
+        # el taco se apartaba con ellos aún por leer. El botón está apagado
+        # mientras; Ctrl+G llega aquí igual, así que se pregunta.
+        faltan = self._bloques_por_leer()
+        if faltan and QMessageBox.question(
+                self, "Faltan bloques por leer",
+                f"Faltan {faltan} bloque(s) por leer de la cola. Si exporta "
+                "ahora, sus facturas no irán en este Excel y habría que "
+                "exportarlas aparte cuando se lean.\n\n¿Exportar ya lo leído?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
         self._revalidar_todo()
         self._guardar_muestra_revision()
         clientes = {b.get("nif") or b.get("cliente") for b in self._bloques

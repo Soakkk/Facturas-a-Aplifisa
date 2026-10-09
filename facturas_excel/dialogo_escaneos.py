@@ -207,6 +207,7 @@ class DialogoEscaneos(QDialog):
     def _puede_organizar(self):
         padre = self.parent()
         if padre and (getattr(padre, "_bloques", []) or getattr(padre, "_cola", [])
+                      or getattr(padre, "_cola_guardada", [])
                       or getattr(padre, "_elemento_cola_actual", None)
                       or getattr(padre, "_escaneo_reciente", False)):
             QMessageBox.information(self, "Organizar carpetas",

@@ -122,13 +122,15 @@ def _carpeta_interna_cola(ruta_pdf: str) -> str:
     return os.path.join(dir_datos(), "cola_pdf", f"{base}_{huella}")
 
 
-def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
+def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES,
+                             conservar=()) -> int:
     """Borra las partes de la cola que se quedaron de otra vez.
 
     Las partes de un PDF largo se borran al leer cada bloque; si el programa
     se cerraba o se caía a mitad de la cola, se quedaban para siempre (200 MB
-    por cada PDF de 200 MB). La cola no pasa de una apertura a otra, así que
-    al arrancar ya no sirven. Devuelve cuántos ficheros se han borrado.
+    por cada PDF de 200 MB). Las de la cola guardada con la sesión (para
+    seguir leyendo) van en `conservar` y no se tocan. Devuelve cuántos
+    ficheros se han borrado.
     """
     from .rutas import dir_datos
 
@@ -136,6 +138,7 @@ def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
     if not os.path.isdir(raiz):
         return 0
     limite = time.time() - horas * 3600
+    conservar = {os.path.normcase(os.path.abspath(r)) for r in conservar}
     borrados = 0
     for carpeta, _subcarpetas, ficheros in os.walk(raiz, topdown=False):
         try:
@@ -145,6 +148,8 @@ def limpiar_partes_huerfanas(horas: float = HORAS_PARTES_RECIENTES) -> int:
             antigua = False
         for nombre in ficheros:
             ruta = os.path.join(carpeta, nombre)
+            if os.path.normcase(os.path.abspath(ruta)) in conservar:
+                continue        # la cola guardada la va a leer
             try:
                 if os.path.getmtime(ruta) < limite:
                     os.remove(ruta)

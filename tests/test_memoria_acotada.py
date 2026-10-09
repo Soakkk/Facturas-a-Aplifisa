@@ -639,8 +639,11 @@ def test_al_arrancar_se_borran_las_partes_que_quedaron_de_otra_vez(tmp_path):
     assert nueva.exists() and recien_creada.is_dir()
 
 
-def test_al_cerrar_se_borran_las_partes_de_lo_que_quedaba_en_la_cola(tmp_path):
+def test_al_cerrar_lo_que_quedaba_en_la_cola_se_guarda_con_sus_partes(tmp_path):
+    # Antes se borraban (la cola no se guardaba); ahora la cola va con la
+    # sesión para seguir leyendo la próxima vez, y sus partes se quedan.
     from PySide6.QtGui import QCloseEvent
+    from facturas_excel import sesion
     from facturas_excel.app import VentanaPrincipal
     from facturas_excel.rutas import dir_datos
 
@@ -652,7 +655,9 @@ def test_al_cerrar_se_borran_las_partes_de_lo_que_quedaba_en_la_cola(tmp_path):
     v._cola = [{"rutas": [str(partes[2])], "partes": 3},
                {"rutas": [str(original)], "partes": 1}]
     v.closeEvent(QCloseEvent())
-    assert not partes[1].exists() and not partes[2].exists()
+    assert partes[1].exists() and partes[2].exists()
+    assert [e["rutas"] for e in sesion.cargar()["cola"]] == [
+        [str(partes[1])], [str(partes[2])], [str(original)]]
     assert original.exists()               # el PDF del usuario, nunca
 
 

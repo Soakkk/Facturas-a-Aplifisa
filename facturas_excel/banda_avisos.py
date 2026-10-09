@@ -62,8 +62,12 @@ class BandaAvisos(QFrame):
         self.hide()
 
     def mostrar(self, texto: str, tipo: str = INFO,
-                deshacer: Optional[Callable] = None, segundos: int = 10) -> None:
-        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo."""
+                deshacer: Optional[Callable] = None, segundos: int = 10,
+                boton: str = "Deshacer") -> None:
+        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo.
+
+        `boton` es el texto del botón de `deshacer`, que también vale para
+        ofrecer otra acción («Seguir leyendo»)."""
         fondo, borde, tinta = _ESTILOS.get(tipo, _ESTILOS[INFO])
         self.setStyleSheet(
             f"QFrame#bandaAvisos {{ background: {fondo}; border: 1px solid {borde};"
@@ -78,6 +82,7 @@ class BandaAvisos(QFrame):
         self.lbl.setText(texto)
         self.historial.append(texto)
         self._accion_deshacer = deshacer
+        self.btn_deshacer.setText(boton)
         self.btn_deshacer.setVisible(deshacer is not None)
         self.show()
         if segundos:
