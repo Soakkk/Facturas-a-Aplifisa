@@ -3172,14 +3172,26 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._guardar_muestra_revision()
         self._invalidar_contraste_registro()
         self._ultimo_borrado = []
-        for fila in filas:
-            registro = self.filas[fila]
-            for fuente in registro.get("fuentes", [registro["factura"]]):
-                fuente.eliminada = True
-            self._ultimo_borrado.append({
-                "registro": registro, "tipo": registro.tipo, "posicion": fila})
-            self.tabla.removeRow(fila)
-            self.filas.pop(fila)
+        # Sin avisar de cada fila que se quita: cada una cambiaba la selección
+        # y volvía a cargar la hoja y la ficha (64 filas, más de un segundo).
+        # Se hace una vez al final, con la fila en la que se queda.
+        fila_antes, columna_antes = self._fila_actual()
+        self.tabla.blockSignals(True)
+        try:
+            for fila in filas:
+                registro = self.filas[fila]
+                for fuente in registro.get("fuentes", [registro["factura"]]):
+                    fuente.eliminada = True
+                self._ultimo_borrado.append({
+                    "registro": registro, "tipo": registro.tipo, "posicion": fila})
+                self.tabla.removeRow(fila)
+                self.filas.pop(fila)
+        finally:
+            self.tabla.blockSignals(False)
+        fila_ahora, columna_ahora = self._fila_actual()
+        if fila_ahora is not fila_antes or columna_ahora != columna_antes:
+            self._senalar_celda(self.tabla.currentRow(), columna_ahora)
+        self._mostrar_miniatura()
         self._ultimo_borrado.reverse()
         self.btn_deshacer_borrado.setEnabled(True)
         self.btn_deshacer_borrado.setVisible(True)
@@ -3190,6 +3202,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             f"{len(filas)} línea(s) eliminada(s). Puede deshacer la operación.")
         self._avisar(f"{len(filas)} línea(s) eliminada(s) del lote.", INFO,
                      deshacer=self._deshacer_borrado)
+
+    def _fila_actual(self):
+        """La línea (y la columna) en la que está la tabla, o None."""
+        r = self.tabla.currentRow()
+        return (self.filas[r] if 0 <= r < len(self.filas) else None,
+                self.tabla.currentColumn())
 
     def _deshacer_borrado(self) -> None:
         if not self._ultimo_borrado:

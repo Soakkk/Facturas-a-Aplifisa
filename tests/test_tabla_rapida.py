@@ -126,6 +126,16 @@ def _lecturas(hojas, semilla=7):
     return salida[:hojas]
 
 
+def _jpeg(numero):
+    """La imagen de una hoja (pequeña, distinta en cada una)."""
+    import io
+    from PIL import Image
+    imagen = Image.new("RGB", (60, 80), (255, (numero * 7) % 256, (numero * 13) % 256))
+    salida = io.BytesIO()
+    imagen.save(salida, format="JPEG", quality=70)
+    return salida.getvalue()
+
+
 def _bloques(tmp_path, hojas, por_bloque=25):
     """Los bloques de la cola: [(procesadas, crudos)] como los da la lectura."""
     from facturas_excel.doble_lectura import combinar
@@ -134,7 +144,7 @@ def _bloques(tmp_path, hojas, por_bloque=25):
     ruta = str(tmp_path / "taco.pdf")
     bloques = []
     for desde in range(0, len(lecturas), por_bloque):
-        crudos = [(f"hoja {desde + i}".encode(), ruta, desde + i,
+        crudos = [(_jpeg(desde + i), ruta, desde + i,
                    combinar(d1, d2, "modelo-1", "modelo-2"))
                   for i, (d1, d2) in enumerate(lecturas[desde:desde + por_bloque], 1)]
         bloques.append(crudos)
@@ -468,3 +478,38 @@ def test_marcar_revisada_todo_busca_las_lineas_de_cada_factura_de_una_pasada(
     monkeypatch.undo()
     assert sorted(r for r in range(n) if v.filas[r].factura.revision_confirmada
                   and v.filas[r].estado == REVISAR) == esperadas
+
+
+# ------------------------------------- eliminar varias de una vez, sin parpadeo
+def _seleccionar(v, filas):
+    from PySide6.QtCore import QItemSelection, QItemSelectionModel
+    seleccion = QItemSelection()
+    modelo = v.tabla.model()
+    for r in filas:
+        seleccion.select(modelo.index(r, 0), modelo.index(r, modelo.columnCount() - 1))
+    v.tabla.selectionModel().select(
+        seleccion, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+
+
+def test_eliminar_varias_carga_la_hoja_y_la_ficha_una_vez(tmp_path, monkeypatch):
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.tabla_facturas import C_NIF
+    miniaturas = _contar(monkeypatch, VentanaPrincipal, "_mostrar_miniatura")
+    senaladas = _contar(monkeypatch, VentanaPrincipal, "_senalar_celda")
+    v = _ventana_con_lote(tmp_path, 60)
+    n = len(v.filas)
+    v.tabla.setCurrentCell(4, C_NIF)
+    _seleccionar(v, range(4, 16))
+    quitadas = [v.filas[r] for r in range(4, 16)]
+    del miniaturas[:], senaladas[:]
+    v._eliminar_seleccion()
+    assert len(v.filas) == n - 12 and not any(f in quitadas for f in v.filas)
+    assert len(miniaturas) <= 2 and len(senaladas) <= 2      # antes, una por fila
+    # Se queda en una fila de las que siguen, con su hoja y su ficha.
+    r = v.tabla.currentRow()
+    assert 0 <= r < len(v.filas)
+    assert v.lbl_pagina.text() == f"Pág. {v.filas[r].factura.pagina_origen}"
+    assert v._columna_senalada == v.tabla.currentColumn() or v._columna_senalada is None
+    # Y se puede deshacer como siempre.
+    v._deshacer_borrado()
+    assert len(v.filas) == n and v.filas[4:16] == quitadas
