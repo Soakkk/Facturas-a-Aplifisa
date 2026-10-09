@@ -17,6 +17,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from .extraccion import MAX_TOKENS_SALIDA
+
 # Dato de la Factura -> nombre que se le da a Gemini.
 CAMPOS = {
     "nif": "nif", "nombre": "nombre", "num_factura": "num_factura",
@@ -71,6 +73,8 @@ def _texto(valor) -> str:
 def _comparable(valor) -> str:
     """Para emparejar un valor con lo que devolvió Gemini (sin puntos ni €)."""
     from .tabla_facturas import parse_numero
+    if isinstance(valor, int) and abs(valor) > 10 ** 15:
+        return ""      # un entero desbocado: ni float() ni str() (> 4300 cifras)
     numero = parse_numero(valor) if not isinstance(valor, (int, float)) else float(valor)
     if numero is not None and any(c.isdigit() for c in str(valor)) and not any(
             c.isalpha() for c in str(valor)):
@@ -154,6 +158,7 @@ def pedir(api_key: str, modelo: str, img: bytes,
         timeout=TIEMPO_LIMITE * 1000))
     config = types.GenerateContentConfig(
         response_mime_type="application/json", response_json_schema=_ESQUEMA,
+        max_output_tokens=MAX_TOKENS_SALIDA,
         thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW))
     mime = "image/png" if (img or b"").startswith(b"\x89PNG") else "image/jpeg"
     resp = cliente.models.generate_content(

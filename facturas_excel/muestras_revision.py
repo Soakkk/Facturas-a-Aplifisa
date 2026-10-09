@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 from dataclasses import asdict, is_dataclass
@@ -249,3 +250,42 @@ def exportar_zip(destino: str) -> str:
             if temporal is not None:
                 temporal.unlink(missing_ok=True)
         return str(salida)
+
+
+# ------------------------------------------------ lecturas desbocadas (1.26)
+def _admite_cualquier_lectura(volcar):
+    """`_json`, pero una lectura desbocada no deja sin guardar la muestra.
+
+    Un NaN, un infinito o un entero de miles de cifras no son JSON, y una
+    mitad suelta de surrogate («\\ud800», que llega con un escape JSON válido)
+    no se puede escribir en UTF-8: la muestra no se guardaba y salía el aviso
+    una y otra vez (100 avisos en 85 casos del fuzzing, 09/10/2026). Ahora lo
+    imposible va como null y la mitad suelta, escrita como «\\ud800». Lo
+    normal no pasa por aquí: solo cuando `volcar` falla.
+    """
+    def envoltorio(valor) -> bytes:
+        try:
+            return volcar(valor)
+        except ValueError:              # UnicodeEncodeError incluido
+            return volcar(_solo_json(valor))
+    return envoltorio
+
+
+def _solo_json(valor):
+    """El mismo valor con lo que no se puede escribir en JSON y UTF-8 cambiado."""
+    if isinstance(valor, float):
+        return valor if math.isfinite(valor) else None
+    if isinstance(valor, int) and not isinstance(valor, bool):
+        return valor if valor.bit_length() <= 64 else None
+    if isinstance(valor, str):
+        return valor.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(valor, dict):
+        return {(_solo_json(k) if isinstance(k, str) else k): _solo_json(v)
+                for k, v in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_solo_json(v) for v in valor]
+    return valor
+
+
+# Envuelve a _json sin tocarlo por dentro: todas las muestras pasan por él.
+_json = _admite_cualquier_lectura(_json)

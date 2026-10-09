@@ -31,6 +31,45 @@ from facturas_excel.ventana_comun import EXT_FACTURA
 from facturas_excel.hilos import Worker
 
 
+def _sin_parar_la_cola(metodo):
+    """Si poner en la tabla un bloque ya leído falla, la cola sigue igual.
+
+    Un fallo a medias (un importe imposible al pintar el resumen…) dejaba la
+    cola parada para siempre, Exportar apagado y el guardado automático sin
+    armar: el resto del PDF no se leía y un corte de luz perdía el lote. Ahora
+    se apunta en errores.log, se avisa sin bloquear y se sigue con el
+    siguiente bloque. Envuelve a _on_terminado sin tocarlo por dentro.
+    """
+    import functools
+
+    @functools.wraps(metodo)
+    def envoltorio(self, *args, **kwargs):
+        completados = self._cola_completados
+        elemento = self._elemento_cola_actual or {}
+        try:
+            return metodo(self, *args, **kwargs)
+        except Exception:
+            import traceback
+            from facturas_excel import errores
+            errores.apuntar("Un bloque leído no se pudo poner entero en la "
+                            "tabla; la cola sigue:\n" + traceback.format_exc())
+            # Lo que hace _on_terminado al acabar, por si no llegó.
+            self._timer_muestras.start()
+            self._timer_sesion.start()
+            hay_datos = self.tabla.rowCount() > 0
+            self.btn_gastos.setEnabled(hay_datos)
+            self.btn_registro.setEnabled(hay_datos)
+            self._avisar("Una parte de este bloque no se ha podido poner en la "
+                         "tabla (el detalle queda en errores.log). La lectura "
+                         "sigue: revise las facturas de este bloque.", AVISO)
+            if self._cola_completados == completados:
+                # No llegó a pasar al bloque siguiente: se pasa aquí.
+                self._limpiar_parte_interna(elemento)
+                self._cola_completados += 1
+                self._iniciar_siguiente_cola()
+    return envoltorio
+
+
 class LecturaMixin:
     def _cargar(self):
         rutas, _ = QFileDialog.getOpenFileNames(
@@ -206,6 +245,7 @@ class LecturaMixin:
             f"Este bloque no se pudo procesar, pero la cola continuará:\n\n{msg}")
         self._iniciar_siguiente_cola()
 
+    @_sin_parar_la_cola
     def _on_terminado(self, procesadas, nombre, nif, crudos=None):
         elemento = self._elemento_cola_actual or {}
         # Antes de nada: el original puede moverse ahora mismo al archivo del

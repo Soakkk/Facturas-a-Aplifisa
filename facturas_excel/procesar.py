@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +27,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
+from .sanear_lectura import aviso_saneado
 from .validacion import fecha_de, normalizar_fecha, validar_nif
 from .texto import limpiar, reparar, tiene_invisibles, visible
 
@@ -33,11 +35,14 @@ from .texto import limpiar, reparar, tiene_invisibles, visible
 def normaliza_nif(nif) -> str:
     if not nif:
         return ""
-    return str(nif).strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+    # NFKC: las cifras y letras «de ancho completo» (１２３４５６７８Ｚ, de un PDF
+    # asiático o una lectura rara) pasan a las normales. Si no, el DNI pasaba
+    # el control de la letra y llegaba así al Excel, en verde.
+    nif = unicodedata.normalize("NFKC", str(nif))
+    return nif.strip().upper().replace(".", "").replace(" ", "").replace("-", "")
 
 
 def _tokens_nombre(nombre) -> set:
-    import unicodedata
     if not nombre:
         return set()
     t = "".join(c for c in unicodedata.normalize("NFD", str(nombre))
@@ -122,6 +127,8 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     # bloque, y más cuantos más clientes y proveedores hubiera guardados).
     directorio = clientes.Directorio()
     for d in lista_datos:
+        # Solo los NIF y nombres que son texto (ver _partes_de).
+        d = _partes_de(d)
         for campo_nif, campo_nom, papel in (
                 ("emisor_nif", "emisor_nombre", "e"),
                 ("receptor_nif", "receptor_nombre", "r")):
@@ -180,6 +187,18 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
                     homonimo=homonimo, empate=empate)
 
 
+def _partes_de(datos) -> dict:
+    """Los NIF y nombres de una hoja, solo si son texto: una lista, un número
+    o un dict (lectura rara de una sesión vieja) no cuentan para decidir el
+    cliente. Una lista rompía después el recuento de nombres y se perdía el
+    bloque entero."""
+    if not isinstance(datos, dict):
+        return {}
+    return {campo: datos[campo] for campo in (
+        "emisor_nif", "emisor_nombre", "receptor_nif", "receptor_nombre")
+        if isinstance(datos.get(campo), str)}
+
+
 def _nombre_leido_de(nif: str, lista: list) -> tuple:
     """(nombre, roto) de una parte del lote: el más leído de las lecturas
     buenas; si todas traen un carácter invisible, el recuperado con lo que ya
@@ -205,8 +224,23 @@ def _nifs_de_proveedores() -> set:
 
 def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
     """(nombre, nif) del cliente del lote. Compatible con lo de siempre."""
-    mejor = analizar_cliente(lista_datos).mejor
+    try:
+        mejor = analizar_cliente(lista_datos).mejor
+    except Exception:
+        # Una hoja rara no tira el bloque (25 hojas ya pagadas): se busca
+        # el cliente con las hojas que se pueden analizar, una a una.
+        _apuntar_hoja_rara("buscar el cliente del bloque")
+        mejor = analizar_cliente(
+            [d for d in lista_datos if _se_puede_analizar(d)]).mejor
     return (mejor.nombre, mejor.nif) if mejor else ("", "")
+
+
+def _se_puede_analizar(datos) -> bool:
+    try:
+        analizar_cliente([datos])
+        return True
+    except Exception:
+        return False
 
 
 @dataclass
@@ -465,6 +499,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    aviso = f"{aviso} {aviso_saneado(datos)}".strip()
     if datos.get("_error"):
         aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
                 "esta hoja; no se ha rellenado ningún dato.".strip()
@@ -962,6 +997,30 @@ def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
     return completados
 
 
+def _apuntar_hoja_rara(que: str) -> None:
+    import traceback
+    from . import errores
+    errores.apuntar(f"Lectura rara al {que}; las demás hojas siguen:\n"
+                    + traceback.format_exc())
+
+
+def _construir_sin_tumbar(datos, cliente_nif, cliente_nombre, origen, pagina):
+    """construir(), pero una hoja rara no se lleva el bloque entero.
+
+    Una lista donde va un nombre o un texto donde van las líneas de IVA (lo
+    que trae una lectura sin esquema o desbocada) lanzaba aquí y se perdían
+    las 25 hojas del bloque, ya pagadas. Ahora esa hoja queda en rojo con su
+    motivo, como una hoja que no se pudo leer, y las demás siguen.
+    """
+    try:
+        return construir(datos, cliente_nif, cliente_nombre, origen, pagina)
+    except Exception as error:
+        _apuntar_hoja_rara(f"construir la hoja {pagina}")
+        motivo = f"lectura que no se pudo interpretar ({type(error).__name__})"
+        return construir({"emisor_nombre": None, "lineas_iva": [{}], "_error": motivo},
+                         cliente_nif, cliente_nombre, origen, pagina)
+
+
 def preparar_lote(registros: List[tuple], cliente_nombre: str,
                   cliente_nif: str) -> List[tuple]:
     """De lo leido por Gemini a las facturas listas para la tabla.
@@ -975,8 +1034,14 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     # ambas acababan como apuntes incompletos distintos. Se juntan primero los
     # fragmentos consecutivos de la misma factura y despues se construye el
     # unico apunte, con todas sus lineas de IVA y recargo.
-    consolidados = consolidar_paginas_factura(registros)
-    procesadas = [(img, construir(datos, cliente_nif, cliente_nombre, origen, pag))
+    try:
+        consolidados = consolidar_paginas_factura(registros)
+    except Exception:
+        # Una lectura que no deja ni comparar las hojas: cada una por su lado.
+        _apuntar_hoja_rara("unir las hojas del bloque")
+        consolidados = list(registros)
+    procesadas = [(img, _construir_sin_tumbar(datos, cliente_nif, cliente_nombre,
+                                              origen, pag))
                   for img, origen, pag, datos in consolidados]
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote

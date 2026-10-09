@@ -111,7 +111,9 @@ def _iguales(campo: str, a, b) -> bool:
 def _lineas(datos: dict) -> list:
     """Lineas de IVA comparables: (tipo, base, cuota, recargo) por tipo."""
     salida = []
-    for linea in datos.get("lineas_iva") or []:
+    lineas = datos.get("lineas_iva")
+    # Un número o un texto en lugar de la lista (lectura rara): sin desglose.
+    for linea in lineas if isinstance(lineas, list) else []:
         if not isinstance(linea, dict):
             continue
         valores = tuple(_numero(linea.get(c)) for c in
@@ -211,13 +213,33 @@ def es_dudosa(datos: dict) -> bool:
     return abs(round(suma, 2) - total) > 0.02
 
 
+def lo_distinto(principal: dict, segunda: dict) -> dict:
+    """De la segunda lectura, solo lo que no dice igual que la principal.
+
+    Entera, cada lectura se guardaba dos veces (en la sesión y en las
+    muestras): con una respuesta desbocada, cientos de KB por hoja. Lo que
+    no está aquí, la segunda lo leyó igual."""
+    claves = [k for k in dict.fromkeys([*principal, *segunda])
+              if not str(k).startswith("_")]
+    return {k: segunda.get(k) for k in claves
+            if principal.get(k) != segunda.get(k)}
+
+
 def combinar(principal: dict, segunda: Optional[dict], modelo_1: str,
              modelo_2: str, error_2: str = "") -> dict:
     """La lectura que va a la tabla, con el resultado de la comparacion.
 
     Los datos que se usan son SIEMPRE los del modelo principal; la segunda
-    lectura solo confirma o señala. Se guardan las dos para poder elegir.
+    lectura solo confirma o señala. Las dos entran saneadas (sanear_lectura):
+    un dato con otra forma no tumba nada más adelante.
     """
+    from .sanear_lectura import sanear
+    principal = sanear(principal)
+    if segunda is not None:
+        # Lo raro de la segunda ya sale como diferencia con la principal, y
+        # sus claves internas no pintan nada.
+        segunda = sanear(segunda, internas=False)
+        segunda.pop("_saneado", None)
     datos = dict(principal)
     datos["_modelo_1"] = modelo_1
     if segunda is None:
@@ -226,7 +248,7 @@ def combinar(principal: dict, segunda: Optional[dict], modelo_1: str,
             datos["_error_2"] = error_2
         return datos
     datos["_modelo_2"] = modelo_2
-    datos["_lectura_2"] = segunda
+    datos["_lectura_2"] = lo_distinto(principal, segunda)
     datos["_discrepancias"] = comparar(principal, segunda)
     datos["_verificacion"] = "doble"
     return datos

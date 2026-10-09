@@ -20,6 +20,10 @@ from PySide6.QtWidgets import (
 from .estilo import ACCENT, BORDER, DANGER, INK, MUTED, SUCCESS, WARNING
 
 VERDE, AMBAR, ROJO = SUCCESS, WARNING, DANGER
+# Con muchas líneas (una lectura de antes de la 1.26 que copió los artículos
+# como líneas de IVA) cada clic maquetaba cientos de etiquetas: 15 s con 300.
+# Se enseñan las primeras y el resto, resumido en una.
+LINEAS_A_LA_VISTA = 12
 
 
 def _eur(valor) -> str:
@@ -119,6 +123,18 @@ class PanelFicha(QScrollArea):
             self._capa.addWidget(self._etiqueta(
                 texto, f"color: {color}; padding-left: 20px; font-size: 11px;"))
 
+    def _resto_de_lineas(self, resto: list) -> None:
+        """Las líneas que no se pintan, en una sola: cuántas, su base y sus
+        avisos (cada uno una vez)."""
+        if not resto:
+            return
+        base = sum(linea["base"] or 0 for linea in resto
+                   if isinstance(linea.get("base"), (int, float)))
+        marcas = list(dict.fromkeys(
+            marca for linea in resto for marca in linea["marcas"]))
+        self._dato("Más", f"y {len(resto)} líneas más (base {_eur(base)})",
+                   marcas[:3])
+
     # --------------------------------------------------------------- mostrar
     def vacio(self, texto: str = "Seleccione una factura para ver su ficha.") -> None:
         self._limpiar()
@@ -200,7 +216,7 @@ class PanelFicha(QScrollArea):
         self._dato("Fecha", d["fecha"], marcas.get("fecha", []))
 
         self._seccion("Importes")
-        for linea in d["lineas"]:
+        for linea in d["lineas"][:LINEAS_A_LA_VISTA]:
             partes = f"Base {_eur(linea['base'])} al {_pct(linea['pct'])} → " \
                      f"IVA {_eur(linea['cuota'])}"
             if linea.get("cuota_re") is not None:
@@ -208,6 +224,7 @@ class PanelFicha(QScrollArea):
             if linea.get("suplido"):
                 partes = f"Suplido {_eur(linea['base'])} (sin IVA)"
             self._dato("Línea", partes, linea["marcas"])
+        self._resto_de_lineas(d["lineas"][LINEAS_A_LA_VISTA:])
         if d.get("irpf") is not None:
             # Resta del total; en un abono ya viene en negativo.
             irpf = d["irpf"]

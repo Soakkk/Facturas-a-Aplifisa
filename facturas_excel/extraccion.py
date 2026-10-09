@@ -10,6 +10,7 @@ procesar.py, una vez detectado el cliente.
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import threading
@@ -19,6 +20,8 @@ from typing import List, Optional
 
 from google import genai
 from google.genai import types
+
+from .validacion import importe_posible
 
 # Modelos de lectura (septiembre de 2026).
 #
@@ -64,6 +67,14 @@ def modo_doble_lectura() -> str:
 # se queda colgada bloquea el hilo PARA SIEMPRE: con 70 paginas el lote se
 # quedaba en "69/70" y no terminaba nunca (04/09/2026).
 TIEMPO_LIMITE = 90       # segundos
+
+# Tope de lo que puede contestar Gemini por hoja (tokens de salida, que
+# incluyen lo que «piensa»). El JSON del esquema ocupa unos 500 tokens y con
+# 12 líneas de IVA no llega a 1.500; con el pensamiento en LOW sobra. Sin
+# tope, una respuesta desbocada (cifras o artículos repetidos) podía llegar a
+# 65.000 tokens pagados y a cientos de KB por hoja en la sesión y las
+# muestras. Sin esquema el modelo piensa lo que quiere: el doble de margen.
+MAX_TOKENS_SALIDA = 8192
 
 
 class SinCredito(Exception):
@@ -458,10 +469,12 @@ class Extractor:
     def _config(self):
         if not self._con_esquema:
             return types.GenerateContentConfig(
-                response_mime_type="application/json")
+                response_mime_type="application/json",
+                max_output_tokens=2 * MAX_TOKENS_SALIDA)
         return types.GenerateContentConfig(
             response_mime_type="application/json",
             response_json_schema=ESQUEMA,
+            max_output_tokens=MAX_TOKENS_SALIDA,
             # LOW: estos modelos no admiten MINIMAL y la temperatura se
             # ignora. Pensar poco basta para copiar datos y va mas rapido.
             thinking_config=types.ThinkingConfig(
@@ -588,9 +601,11 @@ class Extractor:
                     except ModeloNoDisponible as e:
                         self._retirados.add(modelo)
                         resultados.append((None, modelo, str(e)))
-                    except ErrorLectura as e:
-                        consumos.extend(e.consumos)
-                        resultados.append((None, modelo, str(e)))
+                    except Exception as e:
+                        # ErrorLectura… o cualquier rareza de ESTA lectura:
+                        # la del otro modelo puede ser buena y no se tira.
+                        consumos.extend(getattr(e, "consumos", None) or [])
+                        resultados.append((None, modelo, str(e)[:300]))
             (d1, m1, e1), (d2, m2, e2) = resultados
             if d1 is None and d2 is None:
                 raise ErrorLectura(e1 or e2, consumos)
@@ -604,7 +619,9 @@ class Extractor:
             d1, m1, gastado = self._leer_uno(img, pagina)
             consumos.extend(gastado)
             crudo = combinar(d1, None, m1, "")
-            if modo == DOBLE_DUDOSAS and es_dudosa(d1):
+            # Lo combinado, no lo leído tal cual: ya viene saneado («false»
+            # escrito como texto no es «hay importes a mano»).
+            if modo == DOBLE_DUDOSAS and es_dudosa(crudo):
                 otro = next((m for m in self._disponibles() if m != self._base(m1)), None)
                 if otro:
                     try:
@@ -613,9 +630,11 @@ class Extractor:
                         crudo = combinar(d1, d2, m1, m2)
                     except SinCredito:
                         raise
-                    except (ErrorLectura, ModeloNoDisponible) as e:
-                        consumos.extend(getattr(e, "consumos", []))
-                        crudo = combinar(d1, None, m1, "", error_2=str(e))
+                    except Exception as e:
+                        # ErrorLectura… o cualquier rareza de la segunda: la
+                        # primera ya está leída (y pagada) y no se tira.
+                        consumos.extend(getattr(e, "consumos", None) or [])
+                        crudo = combinar(d1, None, m1, "", error_2=str(e)[:300])
 
         return DatosFactura(
             crudo=crudo, origen=origen, pagina=pagina,
@@ -649,13 +668,39 @@ def _consumo(resp):
     return modelo, _n("prompt_token_count"),         _n("candidates_token_count") + _n("thoughts_token_count")
 
 
+def _entero_json(cifras: str):
+    # Un entero de más de 15 cifras no es un importe, y con más de 4300
+    # json.loads lanzaba ValueError, que no es un JSON roto: se saltaba los
+    # reintentos y tiraba también la otra lectura, que era buena. Se queda
+    # como texto: puede ser un nº de factura sin comillas (los de las
+    # eléctricas tienen 16-20 cifras); donde va un importe, el saneado lo
+    # deja en blanco y avisa.
+    return int(cifras) if len(cifras.lstrip("-")) <= 15 else cifras
+
+
+def _decimal_json(texto: str):
+    numero = float(texto)          # «1e999» o 400 cifras: infinito
+    return numero if math.isfinite(numero) else None
+
+
+def _cargar_json(texto: str):
+    """json.loads sin NaN, Infinity, 1e999 ni enteros enormes: quedan en null."""
+    return json.loads(texto, parse_constant=lambda _literal: None,
+                      parse_int=_entero_json, parse_float=_decimal_json)
+
+
 def _parse_json_tolerante(texto: str):
-    """Intenta parsear el JSON de Gemini, tolerando fallos habituales."""
+    """Intenta parsear el JSON de Gemini, tolerando fallos habituales.
+
+    Nunca lanza: lo que no se entiende es None y la hoja se vuelve a pedir
+    (un JSON con miles de niveles anidados daba RecursionError)."""
     if not texto:
         return None
     try:
-        return json.loads(texto)
-    except json.JSONDecodeError:
+        return _cargar_json(texto)
+    except RecursionError:
+        return None
+    except ValueError:             # JSONDecodeError incluido
         pass
     t = texto.strip()
     t = re.sub(r"^```(?:json)?", "", t).strip()
@@ -665,18 +710,28 @@ def _parse_json_tolerante(texto: str):
         t = t[ini:fin + 1]
     t = re.sub(r",\s*([}\]])", r"\1", t)
     try:
-        return json.loads(t)
-    except json.JSONDecodeError:
+        return _cargar_json(t)
+    except (ValueError, RecursionError):
         return None
 
 
 def _num(v):
+    """El número leído, o None si no lo es o no puede ser un importe (NaN,
+    infinito, 1e999, 10**400 o más de mil millones: ver importe_posible)."""
+    n = _num_leido(v)
+    return n if n is not None and importe_posible(n) else None
+
+
+def _num_leido(v):
     if v is None or v == "":
         return None
     if isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
-        return float(v)
+        try:
+            return float(v)
+        except OverflowError:       # un entero de cientos de cifras
+            return None
     t = str(v).strip().replace("€", "").replace(" ", "")
     # Signo DETRAS del numero: Coca-Cola imprime asi los abonos ("15,51-" son
     # MENOS 15,51). Sin esto float() petaba y el importe se perdia entero.
