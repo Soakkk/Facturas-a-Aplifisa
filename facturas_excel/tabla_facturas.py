@@ -465,12 +465,15 @@ class TablaFacturas(QTableWidget):
             fuente = item.font()
             fuente.setBold(False)
             item.setFont(fuente)
-            # Ayudas permanentes: cuenta, GXX y suplido.
+            # Ayudas permanentes: GXX y suplido. Las demás, desde cero en cada
+            # pintado (la cuenta se dejaba como estaba y cada revisión le
+            # volvía a añadir su aviso: salía repetido y no se iba al
+            # corregirla).
             if columna == C_GXX:
                 item.setToolTip(AYUDA_GXX)
             elif columna == C_BASE and getattr(fila.factura, "es_suplido", False):
                 item.setToolTip(AYUDA_SUPLIDO)
-            elif columna != C_CUENTA:
+            else:
                 item.setToolTip("")
 
         por_columna = {}
