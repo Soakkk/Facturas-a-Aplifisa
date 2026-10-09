@@ -9,7 +9,8 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QApplication, QComboBox, QHeaderView, QTableWidget,
+    QTableWidgetItem,
 )
 
 from .conceptos import SUBCLAVES_628
@@ -416,6 +417,7 @@ class TablaFacturas(QTableWidget):
                 self.setRowCount(0)
             self.selectionModel().clear()
             hechas = min(self.rowCount(), len(filas))
+            self._soltar_desplegables(hechas)
             self.setRowCount(len(filas))
             for r in range(hechas):
                 self.pintar(r, filas[r])
@@ -425,6 +427,26 @@ class TablaFacturas(QTableWidget):
         finally:
             self.setUpdatesEnabled(repintar)
             self.blockSignals(bloqueadas)
+
+    def _soltar_desplegables(self, hasta: int) -> None:
+        """Un desplegable Gasto/Ingreso abierto, o con el foco, es de la línea
+        que había en su fila. Al rehacer la tabla ese desplegable desaparecía
+        y lo que se eligiera o se tecleara en él ya no cambiaba nada. Ahora
+        la fila se aprovecha para otra línea (otro bloque leído con la tabla
+        ordenada, ordenar…): se cierra y suelta el foco, para que no cambie
+        en silencio el tipo de la factura que ocupa ahora esa fila."""
+        foco = QApplication.focusWidget()
+        if QApplication.activePopupWidget() is None \
+                and not isinstance(foco, ComboSinRueda):
+            return
+        for r in range(hasta):
+            combo = self.cellWidget(r, C_TIPO)
+            if combo is None:
+                continue
+            if combo.view().isVisible():
+                combo.hidePopup()
+            if combo is foco:
+                combo.clearFocus()
 
     def _llenar_fila(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
         """Las celdas y el desplegable de una fila ya creada (vacía)."""
