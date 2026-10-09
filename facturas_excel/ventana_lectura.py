@@ -41,6 +41,7 @@ class LecturaMixin:
 
     def procesar_rutas(self, rutas, desde_escaner: bool = False):
         """Añade documentos a la cola, dividiendo los PDF largos en bloques."""
+        self._esperar_archivo()      # antes, lo que se esté archivando
         rutas = [os.path.abspath(r) for r in rutas
                  if os.path.isfile(r) and os.path.splitext(r)[1].lower() in EXT_FACTURA]
         if not rutas:

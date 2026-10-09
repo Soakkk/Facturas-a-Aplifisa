@@ -33,6 +33,7 @@ from facturas_excel.resumen import eur
 from facturas_excel.rutas import ruta_config
 from facturas_excel.tabla_facturas import C_ESTADO
 from facturas_excel.validacion import ERROR, REVISAR, fecha_de
+from facturas_excel.ventana_archivo import texto_fallo_archivo
 
 from facturas_excel.rutas import escritorio
 
@@ -63,6 +64,7 @@ class AplifisaMixin:
         apunte a apunte con el lote. Es la unica forma de ver si algo se quedo
         sin importar o entro con otro importe.
         """
+        self._esperar_archivo()      # antes, lo que se esté archivando
         if not self.tabla.rowCount():
             QMessageBox.information(
                 self, "Contrastar con Aplifisa",
@@ -112,6 +114,7 @@ class AplifisaMixin:
         """El listado de Aplifisa del periodo que se quiera frente a todo lo
         que el programa tiene guardado en PDF del cliente (y el lote)."""
         from facturas_excel.dialogo_cuadre import DialogoCuadre
+        self._esperar_archivo()      # antes, lo que se esté archivando
         # Las copias repetidas del lote no cuentan (sumarían dos veces).
         repetidas = set(getattr(self, "_duplicados", {}) or {})
         lote = [(self._leer_fila(r), self._tipo_fila(r), r)
@@ -168,6 +171,7 @@ class AplifisaMixin:
         self.combo_filtro_registro.blockSignals(False)
 
     def _olvidar_exportacion(self) -> None:
+        self._esperar_archivo()      # el registro, de uno en uno
         filas = [f for f in self._filas_seleccionadas()
                  if self.filas[f].get("ya_exportada")]
         if not filas:
@@ -182,6 +186,7 @@ class AplifisaMixin:
         self._revalidar_todo()
 
         def deshacer():
+            self._esperar_archivo()
             try:
                 historial.registrar(cliente, por_tipo, {}, nombre)
             except historial.NoApuntado as error:
@@ -391,6 +396,9 @@ class AplifisaMixin:
 
     def _exportar_todo(self):
         """Genera en una sola operación los Excel de gastos e ingresos."""
+        # Si aún se está guardando el archivo de la exportación anterior, se
+        # espera: las dos tocan el registro y los PDF del cliente.
+        self._esperar_archivo()
         self._revalidar_todo()
         self._guardar_muestra_revision()
         clientes = {b.get("nif") or b.get("cliente") for b in self._bloques
@@ -521,22 +529,16 @@ class AplifisaMixin:
         # avisar si vuelve a aparecer) y se aprenden sus NIF, ya revisados.
         exportadas = {t: por_tipo[t] for t in tipos_exportados}
         sin_apuntar = self._apuntar_exportadas(exportadas, rutas_por_tipo)
-        # A partir de aquí el Excel ya es bueno y está apuntado: un fallo al
-        # archivar no puede esconder el aviso final con su nombre (si no,
-        # parece que no se exportó y se exporta otra vez).
+        # A partir de aquí el Excel ya es bueno y está apuntado: un fallo no
+        # puede esconder el aviso final con su nombre (si no, parece que no
+        # se exportó y se exporta otra vez).
         try:
-            # Los duplicados no van al Excel ni tienen PDF propio: su original sí.
-            texto_expediente = self._archivar_exportacion(
-                exportadas, rutas_por_tipo)
             aprender_nifs_exportados(
                 [f for t in tipos_exportados for f in por_tipo[t]])
+            fallo = ""
         except Exception as error:
             registro_errores.apuntar(traceback.format_exc())
-            texto_expediente = (
-                f"\nOJO: el Excel está bien, pero no se pudo poner al día el "
-                f"archivo del cliente ({error}). El detalle queda en "
-                f"{registro_errores.FICHERO}.")
-        texto_expediente = sin_apuntar + texto_expediente
+            fallo = texto_fallo_archivo(error)
         self._perfil_columnas = (None,)      # el registro ha cambiado
         self._revalidar_todo()
         detalle = "\n".join(
@@ -548,7 +550,7 @@ class AplifisaMixin:
             f"  · {carpeta}" for carpeta in sorted({
                 os.path.dirname(ruta) for ruta, _lineas, _totales in resumen_archivos
             }))
-        self._avisar(
+        aviso = (
             f"Exportación terminada y comprobada. Excel consolidados preparados para Aplifisa:\n\n{detalle}\n\n"
             f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
@@ -563,8 +565,35 @@ class AplifisaMixin:
                if temporales_eliminados else "")
             + "Comprobado: lo escrito en los archivos coincide con lo que ve "
               "en pantalla, línea por línea. No se han creado Excel parciales."
-            + texto_expediente,
-            EXITO, segundos=0)
+            + sin_apuntar + fallo)
+        # El Excel está listo: se dice ya. El archivo del cliente (un PDF por
+        # factura, la copia del Excel y el expediente) se pone al día después,
+        # en un hilo aparte, y al acabar este mismo aviso se completa con lo
+        # archivado (como cuando se hacía todo seguido).
+        self._avisar(aviso, EXITO, segundos=0)
+
+        def al_terminar(texto_archivo: str, problemas: bool) -> None:
+            self._avisar_archivo(aviso, texto_archivo, problemas)
+        try:
+            # Los duplicados no van al Excel ni tienen PDF propio: su original sí.
+            self._archivar_exportacion(exportadas, rutas_por_tipo,
+                                       al_terminar=al_terminar)
+        except Exception as error:
+            registro_errores.apuntar(traceback.format_exc())
+            self._avisar(aviso + texto_fallo_archivo(error), EXITO, segundos=0)
+
+    def _avisar_archivo(self, aviso: str, texto_archivo: str, problemas: bool) -> None:
+        """Lo archivado, al final del aviso de la exportación (como cuando se
+        hacía todo seguido). Si mientras tanto se ha avisado de otra cosa (que
+        puede tener su «Deshacer»), no se tapa: lo archivado va a la barra de
+        estado. Lo que no ha salido bien se avisa siempre en la banda."""
+        if not texto_archivo:
+            return
+        historial = getattr(getattr(self, "banda", None), "historial", [])
+        if problemas or (historial and historial[-1] is aviso):
+            self._avisar(aviso + texto_archivo, EXITO, segundos=0)
+        else:
+            self.lbl_estado.setText(" ".join(texto_archivo.split("\n")).strip())
 
     def _apuntar_exportadas(self, exportadas, rutas_por_tipo) -> str:
         """Apunta en el registro lo que acaba de salir en el Excel.

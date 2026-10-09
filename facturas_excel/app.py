@@ -1410,6 +1410,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def esperar_hilos(self):
         """Espera a que terminen los hilos vivos (evita abortar al salir)."""
+        # El archivo del cliente, entero: cortarlo a medias dejaría facturas
+        # sin su PDF o el expediente sin poner al día.
+        self._esperar_archivo()
         for hilo in (
             getattr(self, "_hilo_update", None),
             getattr(self, "_hilo_descarga_update", None),

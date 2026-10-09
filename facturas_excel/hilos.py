@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import traceback
+
 from PySide6.QtCore import QObject, QThread, Signal
 
 from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
@@ -151,6 +153,38 @@ class HiloEscaneo(QThread):
             self.terminado.emit(ruta)
         except Exception as e:
             self.fallo.emit(str(e))
+
+
+# Los hilos del archivo que siguen vivos. Un QThread que Python suelta
+# mientras trabaja tumba el programa («Destroyed while thread is still
+# running»): aquí se guardan hasta que la ventana los da por terminados.
+VIVOS: set = set()
+
+
+def soltar_hilo(hilo) -> None:
+    VIVOS.discard(hilo)
+
+
+class HiloArchivo(QThread):
+    """El archivo del cliente tras exportar (un PDF por factura, la copia del
+    Excel y el expediente), sin parar la ventana: con 800 líneas eran 19 s
+    sin responder. `trabajo` es un ventana_archivo.ArchivoExportacion: lo que
+    haya que contar, y el fallo si lo hay, quedan en él para avisarlo."""
+    progreso = Signal(str)        # cómo va, para la barra de estado
+    hecho = Signal(object)        # este mismo hilo, al acabar
+
+    def __init__(self, trabajo):
+        super().__init__()
+        self.trabajo = trabajo
+        VIVOS.add(self)
+
+    def run(self):
+        try:
+            self.trabajo.hacer(self.progreso.emit)
+        except Exception as error:  # noqa: se apunta y se avisa al terminar
+            self.trabajo.error = error
+            self.trabajo.detalle = traceback.format_exc()
+        self.hecho.emit(self)
 
 
 class HiloActualizacion(QThread):
