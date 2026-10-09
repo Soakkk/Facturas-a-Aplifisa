@@ -2384,14 +2384,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         bloque.
 
         Tal cual quiere decir que rehaciéndola saldría lo mismo: cada línea
-        con la misma factura (el mismo objeto, no una copia), la misma hoja, el
-        mismo tipo, aviso (sin lo que ya calcula cada revisión) y bloque y las
-        mismas líneas originales. Si no, se
-        rehace entera como siempre: un cambio de cliente vuelve a montar las
-        facturas, «por el total» las vuelve a resumir, una unión de hojas
-        entre bloques cambia la última del bloque anterior, una decisión
-        sobre un NIF cambia los avisos, la tabla está ordenada por una
-        columna, se quitó un bloque o una línea…"""
+        con la misma factura (el mismo objeto, no una copia), la misma hoja,
+        el mismo tipo, aviso (sin lo que ya calcula cada revisión) y bloque y
+        las mismas líneas originales. Si no, se rehace entera como siempre:
+        un cambio de cliente vuelve a montar las facturas, «por el total»
+        las vuelve a resumir, una unión de hojas entre bloques cambia la
+        última del bloque anterior, una decisión sobre un NIF cambia los
+        avisos, la tabla está ordenada por una columna, se quitó un bloque…"""
         viejas = self.filas
         if not viejas or len(filas) < len(viejas) \
                 or self.tabla.rowCount() != len(viejas):
@@ -3205,7 +3204,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # y volvía a cargar la hoja y la ficha (64 filas, más de un segundo).
         # Se hace una vez al final, con la fila en la que se queda.
         fila_antes, columna_antes = self._fila_actual()
-        self.tabla.blockSignals(True)
+        bloqueadas = self.tabla.blockSignals(True)
         try:
             for fila in filas:
                 registro = self.filas[fila]
@@ -3216,7 +3215,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self.tabla.removeRow(fila)
                 self.filas.pop(fila)
         finally:
-            self.tabla.blockSignals(False)
+            self.tabla.blockSignals(bloqueadas)
         fila_ahora, columna_ahora = self._fila_actual()
         if fila_ahora is not fila_antes or columna_ahora != columna_antes:
             self._senalar_celda(self.tabla.currentRow(), columna_ahora)
