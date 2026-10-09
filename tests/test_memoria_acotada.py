@@ -91,6 +91,38 @@ def test_vaciar_la_cache_desde_fuera_no_espera_a_la_lectura(monkeypatch):
     assert not pdf.CERROJO.locked()
 
 
+def test_las_hojas_que_separar_dibuja_para_comparar_no_se_quedan_en_la_cache(
+        tmp_path, monkeypatch):
+    """Al exportar, si ya hay un PDF con el nombre de la factura y sin
+    dibujar no se sabe si es el mismo, se comparan sus hojas dibujadas. Eso
+    va en el hilo del archivo con el cerrojo de MuPDF cogido: lo dibujado
+    tampoco se queda en la caché."""
+    from facturas_excel import archivo, separar
+    from facturas_excel.modelo import Factura
+    cliente, nif = "TALLERES PRUEBA SL", "B12345674"
+    base = str(tmp_path / "archivo")
+    carpeta = archivo.carpeta_tipo_cliente(cliente, 2026, "gastos", base, nif=nif)
+    os.makedirs(carpeta, exist_ok=True)
+    taco = _pdf(Path(carpeta) / "taco.pdf", 2)
+
+    def tique(origen, pagina, documento):
+        # Dos tiques sin número de la misma gasolinera y día: mismo nombre.
+        return Factura(num_factura="", nombre="GASOLINERA", fecha="12/02/2026",
+                       nif="12345678Z", base_iva=100, pct_iva=21, cuota_iva=21,
+                       total_impreso=121, origen_imagen=origen, pagina_origen=pagina,
+                       ultima_pagina_origen=pagina, documento_id=documento)
+
+    vaciados = _apuntar_vaciados(monkeypatch)
+    primera = separar.separar({"gasto": [tique(taco, 1, "t1")]}, base, cliente, nif)
+    assert len(primera["creados"]) == 1 and vaciados == []    # nada que comparar
+    segunda = separar.separar({"gasto": [tique(primera["tacos"][taco], 2, "t2")]},
+                              base, cliente, nif)
+    [creado] = segunda["creados"]
+    assert creado.endswith(" (2).pdf")       # otra hoja: lo de siempre
+    # La hoja del PDF que ya estaba y la nueva, cada una con el cerrojo.
+    assert vaciados == [(100, True)] * 2
+
+
 # ------------------------------------------- el original en las muestras (P2)
 def test_la_huella_y_la_copia_del_original_no_lo_cargan_en_memoria(tmp_path):
     import hashlib

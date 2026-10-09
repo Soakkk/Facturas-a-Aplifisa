@@ -28,7 +28,7 @@ from typing import Dict, Iterable, List, Tuple
 from . import archivo
 from .control_facturas import clave_documento
 from .escaner import sanear
-from .pdf import CERROJO
+from .pdf import CERROJO, soltar_cache
 from .validacion import fecha_de
 
 TACOS = "Tacos escaneados"
@@ -69,9 +69,17 @@ def _documentos(facturas_por_tipo: Dict[str, Iterable]) -> "OrderedDict":
 
 
 def _huella(doc) -> tuple:
-    """Cómo son sus hojas (vistas en pequeño): igual huella, mismas hojas."""
-    return tuple(hashlib.sha1(pagina.get_pixmap(dpi=24).samples).hexdigest()
-                 for pagina in doc)
+    """Cómo son sus hojas (vistas en pequeño): igual huella, mismas hojas.
+
+    Solo con el CERROJO cogido (separar lo coge factura a factura): cada hoja
+    dibujada deja en la caché de MuPDF su foto descomprimida, que no se
+    vuelve a usar; se vacía tras cada una, como en la lectura y el visor
+    (ver pdf.soltar_cache)."""
+    huellas = []
+    for pagina in doc:
+        huellas.append(hashlib.sha1(pagina.get_pixmap(dpi=24).samples).hexdigest())
+        soltar_cache()
+    return tuple(huellas)
 
 
 # Fotos que el PDF guarda tal cual (JPEG, fax, JBIG2): sus bytes son la foto.
