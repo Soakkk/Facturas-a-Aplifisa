@@ -1859,13 +1859,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 for x in (fila["factura"], *(fila.get("fuentes") or ())):
                     if tiene_invisibles(x.nombre):
                         x.revision_confirmada = False
-            self.tabla.setRowCount(0)
-            self.filas = []
-            for fila in datos.get("filas", []):
-                self._anadir_fila(
+            # Todas las líneas de una vez (de una en una, abrir con 800
+            # líneas tardaba más de 5 segundos).
+            self._poner_filas([
+                self._fila_guardada(
                     fila["png"], fila["factura"], fila["tipo"],
                     fila["cuenta"], fila["gxx"], fila.get("aviso", ""),
                     fila.get("bloque", ""), fila.get("fuentes"))
+                for fila in datos.get("filas", [])])
             if self._por_el_total() != antes_por_el_total:
                 self._rellenar_tabla()
             self._pintar_cliente()
@@ -2387,12 +2388,17 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 guardados.pop(k, None)
 
     def _poner_filas(self, filas) -> None:
-        """Sustituye las filas del lote y las pinta de nuevo."""
+        """Sustituye las filas del lote y las pinta de nuevo.
+
+        Todas de una vez y las columnas de recargo y retenciones una sola
+        vez al final: antes, por cada fila, se insertaba una fila más en la
+        tabla y se volvía a recorrer el lote entero para decidir las
+        columnas (con 800 líneas, más de 4 segundos)."""
         self.tabla.blockSignals(True)
-        self.tabla.setRowCount(0)
-        self.filas = []
-        for fila in filas:
-            self._insertar_fila(fila)
+        self.filas = list(filas)
+        self.tabla.poner_filas(self.filas, self._on_tipo_cambiado)
+        if self.filas:
+            self._actualizar_columnas()
         self.tabla.blockSignals(False)
 
     def _insertar_fila(self, fila: Fila, posicion: int | None = None) -> None:
@@ -2513,11 +2519,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
                      fuentes=None):
-        """Añade una línea al final (sesiones guardadas, deshacer, pruebas)."""
+        """Añade una línea al final (deshacer, pruebas)."""
+        self._insertar_fila(self._fila_guardada(png, f, tipo, cuenta, gxx, aviso,
+                                                bloque, fuentes))
+
+    @staticmethod
+    def _fila_guardada(png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
+                       fuentes=None) -> Fila:
+        """La línea de una sesión guardada (o de una prueba), con su cuenta."""
         f.concepto = cuenta if cuenta not in ("", None) else None
         f.subclave = gxx or None
-        self._insertar_fila(Fila(png, f, f.tipo_revision or tipo, aviso or "",
-                                 bloque or "", list(fuentes or [f])))
+        return Fila(png, f, f.tipo_revision or tipo, aviso or "",
+                    bloque or "", list(fuentes or [f]))
 
     # ---------- edicion / validacion ----------
     def _invalidar_revision_documento(self, fila):

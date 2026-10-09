@@ -375,6 +375,38 @@ class TablaFacturas(QTableWidget):
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         self.insertRow(r)
+        self._llenar_fila(r, fila, al_cambiar_tipo)
+        self.blockSignals(bloqueadas)
+
+    def poner_filas(self, filas, al_cambiar_tipo) -> None:
+        """Sustituye todas las filas de la tabla por estas, de una vez.
+
+        Antes se insertaban de una en una: cada inserción recorre lo que ya
+        hay (con un desplegable por fila), y con 800 líneas rehacer la tabla
+        tardaba más de 4 segundos."""
+        self._con_filas_nuevas(0, filas, al_cambiar_tipo)
+
+    def anadir_filas(self, filas, al_cambiar_tipo) -> None:
+        """Añade estas filas al final, de una vez (las de antes no se tocan)."""
+        self._con_filas_nuevas(self.rowCount(), filas, al_cambiar_tipo)
+
+    def _con_filas_nuevas(self, desde: int, filas, al_cambiar_tipo) -> None:
+        bloqueadas = self.signalsBlocked()
+        self.blockSignals(True)
+        # Sin repintar mientras se llenan: se pinta una vez, al final.
+        repintar = self.updatesEnabled()
+        self.setUpdatesEnabled(False)
+        try:
+            self.setRowCount(desde)
+            self.setRowCount(desde + len(filas))
+            for r, fila in enumerate(filas, desde):
+                self._llenar_fila(r, fila, al_cambiar_tipo)
+        finally:
+            self.setUpdatesEnabled(repintar)
+            self.blockSignals(bloqueadas)
+
+    def _llenar_fila(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
+        """Las celdas y el desplegable de una fila ya creada (vacía)."""
         est = QTableWidgetItem("")
         est.setFlags(Qt.ItemIsEnabled)
         est.setTextAlignment(Qt.AlignCenter)
@@ -399,7 +431,6 @@ class TablaFacturas(QTableWidget):
             self.setItem(r, columna, item)
         self.setRowHeight(r, 34)
         self.pintar(r, fila)
-        self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
     def pintar(self, r: int, fila: Fila, columnas=None) -> None:
