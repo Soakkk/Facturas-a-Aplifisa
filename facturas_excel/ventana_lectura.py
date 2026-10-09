@@ -330,7 +330,8 @@ class LecturaMixin:
         self.btn_cliente.setEnabled(bool(self._bloques))
         if hay_datos and len(self._bloques) == 1:
             self.tabla.selectRow(0)
-        self._guardar_muestra_revision()
+        # La muestra de revisión, con la de cada poco (la revisión del lote
+        # ya la ha pedido): no una foto entera del lote por cada bloque.
         self._avisar_paginas_no_leidas()
         self._limpiar_parte_interna(elemento)
         self._cola_completados += 1

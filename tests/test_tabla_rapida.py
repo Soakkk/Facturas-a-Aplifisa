@@ -609,3 +609,52 @@ def test_analizar_el_lote_lee_los_clientes_y_proveedores_una_vez(monkeypatch):
     ahora = procesar.analizar_cliente(lecturas)
     assert len(leidas_clientes) == 1 and len(leidas_proveedores) == 1   # antes, cientos
     assert ahora == antes
+
+
+# ------------------------------------------ muestras de revisión, sin agobiar
+def test_la_muestra_automatica_va_como_mucho_una_por_minuto(tmp_path, monkeypatch):
+    from facturas_excel import app, muestras_revision
+    from facturas_excel.tabla_facturas import C_BASE
+    reloj = [1000.0]
+    monkeypatch.setattr(app.time, "monotonic", lambda: reloj[0])
+    fotos = _contar(monkeypatch, muestras_revision, "guardar_revision")
+    v = _ventana_con_lote(tmp_path, 60)
+    # Leer los bloques ya no hace una foto entera del lote por cada uno.
+    assert fotos == []
+    v._guardar_muestra_revision_automatica()            # la primera, al momento
+    assert len(fotos) == 1
+    for segundos in (5, 20, 40):
+        reloj[0] = 1000.0 + segundos
+        v.tabla.item(segundos, C_BASE).setText("12,34")
+        v._guardar_muestra_revision_automatica()
+    assert len(fotos) == 1
+    # Queda pendiente para cuando se cumpla el minuto (desde el primer
+    # cambio: no se aplaza con los siguientes), con lo último.
+    assert v._timer_muestra_minuto.isActive()
+    assert 50_000 <= v._timer_muestra_minuto.remainingTime() <= 55_001
+    reloj[0] = 1061.0
+    v._timer_muestra_minuto.stop()
+    v._guardar_muestra_revision_automatica()
+    assert len(fotos) == 2
+    assert v.filas[40].factura.base_iva == 12.34
+    assert any(f["factura"].base_iva == 12.34 for f in fotos[-1][0])
+    # Antes de algo que no se puede deshacer, al momento aunque no haya
+    # pasado el minuto.
+    reloj[0] = 1062.0
+    v._guardar_muestra_revision()
+    assert len(fotos) == 3
+
+
+def test_la_muestra_se_guarda_en_json_compacto(tmp_path):
+    import json
+    from facturas_excel import muestras_revision
+    v = _ventana_con_lote(tmp_path, 30)
+    v._guardar_muestra_revision()
+    fotos = list((muestras_revision.carpeta() / "revisiones").glob("*.json"))
+    assert len(fotos) == 1
+    texto = fotos[0].read_text(encoding="utf-8")
+    assert "\n" not in texto and ", " not in texto.split('"filas"')[0]
+    assert len(json.loads(texto)["filas"]) == len(v.filas)
+    # La misma foto otra vez no se repite.
+    v._guardar_muestra_revision()
+    assert len(list((muestras_revision.carpeta() / "revisiones").glob("*.json"))) == 1

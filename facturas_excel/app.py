@@ -11,6 +11,7 @@ import argparse
 import gc
 import os
 import sys
+import time
 import traceback
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QThread, QTimer
@@ -107,6 +108,10 @@ from facturas_excel.ventana_lectura import LecturaMixin
 from facturas_excel.ventana_validacion import ValidacionMixin
 
 
+# Como mucho, una muestra de revisión automática por minuto (segundos).
+MUESTRA_CADA_S = 60
+
+
 class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixin,
                         FichaMixin, QMainWindow):
     def __init__(self, comprobar_updates: bool = True,
@@ -153,7 +158,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._timer_muestras = QTimer(self)
         self._timer_muestras.setSingleShot(True)
         self._timer_muestras.setInterval(800)
-        self._timer_muestras.timeout.connect(self._guardar_muestra_revision)
+        self._timer_muestras.timeout.connect(self._guardar_muestra_revision_automatica)
+        # La muestra de revisión que se guarda sola tras cada cambio, como
+        # mucho una por minuto (ver _guardar_muestra_revision_automatica).
+        self._ultima_muestra = float("-inf")
+        self._timer_muestra_minuto = QTimer(self)
+        self._timer_muestra_minuto.setSingleShot(True)
+        self._timer_muestra_minuto.timeout.connect(
+            self._guardar_muestra_revision_automatica)
         # El lote se guarda solo poco después de cada cambio (no solo al
         # cerrar): un apagón no se lleva la revisión ni lecturas ya pagadas.
         self._timer_sesion = QTimer(self)
@@ -1694,8 +1706,25 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._avisar_error_muestras(error)
             return None
 
+    def _guardar_muestra_revision_automatica(self) -> None:
+        """La muestra de revisión de después de cada cambio, como mucho una
+        por minuto: con un lote grande es una foto de todas las líneas (unos
+        MB) y se hacía en la ventana 0,8 s después de cada corrección y de
+        cada bloque leído. Lo que se cambie mientras tanto entra en la del
+        minuto siguiente. Antes de vaciar, eliminar, unir hojas o exportar,
+        y al cerrar, se sigue guardando en el momento."""
+        falta = self._ultima_muestra + MUESTRA_CADA_S - time.monotonic()
+        if falta > 0:
+            # No se reinicia con cada cambio: así llega aunque no se pare.
+            if not self._timer_muestra_minuto.isActive():
+                self._timer_muestra_minuto.start(int(falta * 1000) + 1)
+            return
+        self._guardar_muestra_revision()
+
     def _guardar_muestra_revision(self):
         self._timer_muestras.stop()
+        self._timer_muestra_minuto.stop()
+        self._ultima_muestra = time.monotonic()
         try:
             filas = [{**registro, "factura": self._leer_fila(i),
                       "tipo": self._tipo_fila(i)}

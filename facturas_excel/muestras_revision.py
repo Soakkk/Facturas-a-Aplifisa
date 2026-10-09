@@ -48,8 +48,10 @@ def _hash_fichero(ruta: Path) -> str:
 
 
 def _json(valor) -> bytes:
-    return json.dumps(valor, ensure_ascii=False, sort_keys=True, indent=2,
-                      allow_nan=False).encode("utf-8")
+    # Compacto: la foto de un lote de 800 líneas pasaba de 3 MB con sangría
+    # (un tercio, espacios) y tardaba casi el triple en escribirse.
+    return json.dumps(valor, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def _atomico(destino: Path, contenido: bytes) -> None:
