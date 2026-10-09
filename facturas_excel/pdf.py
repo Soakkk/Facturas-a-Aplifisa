@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import math
 import os
 import re
 import threading
@@ -27,6 +28,12 @@ MIME = "image/jpeg"
 # con su propia huella.
 CALIDAD = 90
 MAX_LADO = 2000  # px; redimensiona si la imagen es mayor (suficiente para OCR)
+# Tope de píxeles de una hoja de PDF dibujada para leer. Un A4 a 300 ppp son
+# 8,7 Mpx y no cambia; lo que lo pasa es una foto de móvil metida a 72 ppp (se
+# dibujaba a 6300×8400: 540 MB por hoja) o una hoja de 100 pulgadas (más de
+# 2 GB; con 200, MuPDF ni la dibujaba y se perdía el bloque entero). Esas se
+# dibujan enteras con menos ppp, lo justo para no pasar del tope.
+MAX_PIXELES = 9_000_000
 PAGINAS_POR_BLOQUE = 25
 # Las partes de la cola más nuevas que esto no se tocan al arrancar: pueden
 # ser de otra copia del programa abierta que aún las está leyendo.
@@ -111,10 +118,35 @@ def tam_lectura(hoja, dpi: int) -> Tuple[int, int]:
     """Ancho y alto en píxeles de la hoja dibujada a `dpi`, ya girada.
 
     Son los de `get_pixmap(dpi=dpi)` (los mismos redondeos de MuPDF), sin
-    dibujarla. Solo con el CERROJO cogido."""
-    zoom = dpi / 72
+    dibujarla, y con el mismo tope de píxeles que `_dibujar`. Solo con el
+    CERROJO cogido."""
+    zoom = _zoom(hoja, dpi)
     marco = (hoja.rect * fitz.Matrix(zoom, zoom)).round()
     return marco.width, marco.height
+
+
+def _zoom(hoja, dpi: int) -> float:
+    """La escala a la que se dibuja la hoja: la de `dpi`, salvo que pase de
+    MAX_PIXELES."""
+    zoom = dpi / 72
+    ancho, alto = abs(hoja.rect.width), abs(hoja.rect.height)   # en puntos
+    area = ancho * alto
+    if area * zoom * zoom > MAX_PIXELES:
+        # MuPDF redondea cada lado hacia arriba (hasta un píxel más): la
+        # escala con la que (ancho·z + 1)·(alto·z + 1) queda en el tope.
+        suma = ancho + alto
+        zoom = (math.sqrt(suma * suma + 4 * area * (MAX_PIXELES - 1)) - suma) / (2 * area)
+    return zoom
+
+
+def pixmap_lectura(hoja, dpi: int):
+    """La hoja dibujada por MuPDF a `dpi`, con el tope de píxeles."""
+    zoom = _zoom(hoja, dpi)
+    if zoom < dpi / 72:
+        return hoja.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+    # Lo normal, igual que siempre (los ppp van dentro del JPEG, y de sus
+    # bytes sale la huella con la que se guardan los ejemplos).
+    return hoja.get_pixmap(dpi=dpi)
 
 
 # Órdenes que solo fijan un color, con cuántos números llevan.
@@ -241,7 +273,7 @@ def _reducir_foto(jpeg: bytes, modo: str, ancho_foto: int, alto_foto: int,
 
 def _dibujar(hoja, dpi: int) -> bytes:
     """La hoja dibujada por MuPDF. Solo con el CERROJO cogido."""
-    pix = hoja.get_pixmap(dpi=dpi)
+    pix = pixmap_lectura(hoja, dpi)
     try:
         return pix.pil_tobytes(format="JPEG", quality=CALIDAD)
     finally:
