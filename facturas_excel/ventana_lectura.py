@@ -11,7 +11,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from facturas_excel import almacen, archivo, costes, muestras_revision
+from facturas_excel import almacen, archivo, costes, imagen_hoja, muestras_revision
 from facturas_excel.banda_avisos import AVISO, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_cliente import DialogoCliente
@@ -205,6 +205,13 @@ class LecturaMixin:
         # Antes de nada: el original puede moverse ahora mismo al archivo del
         # cliente, y su copia en las muestras tiene que estar ya terminada.
         self._muestra_capturada(elemento)
+        # El lote guarda el asa de la imagen de cada hoja, no sus bytes (ver
+        # imagen_hoja). La lectura ya las deja así; lo que aún llegue con
+        # los bytes (no se pudo escribir) se intenta aquí otra vez.
+        convertir = imagen_hoja.Conversor()
+        procesadas = convertir.procesadas(procesadas)
+        if crudos:
+            crudos = convertir.registros(crudos)
         rutas_parte = list(self._rutas_actuales)
         if (elemento.get("parte", 1) > 1 and self._bloques
                 and self._bloques[-1].get("original") == elemento.get("original")

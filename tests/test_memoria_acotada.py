@@ -183,3 +183,219 @@ def test_si_la_copia_aparte_del_original_falla_se_avisa_y_se_sigue(
                     [(b"hoja", str(ruta), 1, datos)])
     assert "disco lleno" in avisos
     assert v.tabla.rowCount() == 1
+
+
+# ------------------------------------- la imagen de cada hoja en disco (P4)
+def _jpeg(texto="hoja 1", ancho=600, alto=800):
+    """Una imagen de lectura como las de Gemini (JPEG), distinta por texto."""
+    import io
+    from PIL import Image, ImageDraw
+    imagen = Image.new("RGB", (ancho, alto), "white")
+    ImageDraw.Draw(imagen).text((40, 40), texto, fill="black")
+    salida = io.BytesIO()
+    imagen.save(salida, format="JPEG", quality=80)
+    return salida.getvalue()
+
+
+def _datos(numero="F-1", total=121):
+    return dict(num_factura=numero, fecha="01/09/2026", emisor_nombre="PROVEEDOR PRUEBA",
+                emisor_nif="B12345674", receptor_nombre="CLIENTE PRUEBA",
+                receptor_nif="12345678Z", cuenta_gasto="622", subclave_gxx="G13",
+                total=total, lineas_iva=[dict(base=100, tipo_iva=21, cuota_iva=21)])
+
+
+def _ventana_con_hojas(tmp_path, hojas=2):
+    """Un bloque leído como lo entrega la lectura, con la imagen en bytes."""
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.clientes import marcar_cliente
+    from facturas_excel.procesar import preparar_lote
+
+    marcar_cliente("12345678Z", "CLIENTE PRUEBA")
+    ruta = tmp_path / "taco.pdf"
+    _pdf(ruta, hojas)
+    imagenes = [_jpeg(f"hoja {n}") for n in range(1, hojas + 1)]
+    crudos = [(imagenes[n], str(ruta), n + 1, _datos(f"F-{n + 1}"))
+              for n in range(hojas)]
+    procesadas = preparar_lote(crudos, "CLIENTE PRUEBA", "12345678Z")
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._rutas_actuales = [str(ruta)]
+    v._on_terminado(procesadas, "CLIENTE PRUEBA", "12345678Z", crudos)
+    return v, imagenes
+
+
+def _sesion_en_claro(ruta):
+    import gzip
+    with gzip.open(ruta, "rb") as fichero:
+        return fichero.read()
+
+
+def test_el_lote_guarda_un_asa_de_cada_imagen_y_no_sus_bytes(tmp_path):
+    from facturas_excel.imagen_hoja import ImagenHoja
+
+    v, imagenes = _ventana_con_hojas(tmp_path)
+    asas = [fila.png for fila in v.filas]
+    assert all(isinstance(asa, ImagenHoja) for asa in asas)
+    # La misma hoja es el mismo objeto en lo leído, lo procesado y la fila.
+    bloque = v._bloques[0]
+    assert bloque["crudos"][0][0] is asas[0] and bloque["procesadas"][0][0] is asas[0]
+    # Se compara y se lee como antes: es la misma imagen, ya en las muestras.
+    assert asas[0] == imagenes[0] and asas[0] != imagenes[1]
+    assert bytes(asas[1]) == imagenes[1] and asas[1].existe()
+    # Y el visor la enseña.
+    v.tabla.selectRow(1)
+    v._mostrar_miniatura()
+    assert not v._pixmap_documento.isNull()
+
+
+def test_la_sesion_nueva_no_guarda_las_imagenes(tmp_path, monkeypatch):
+    from facturas_excel import sesion
+
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    v, imagenes = _ventana_con_hojas(tmp_path, 3)
+    v._guardar_sesion()
+    en_claro = _sesion_en_claro(ruta)
+    assert not any(imagen[:4000] in en_claro for imagen in imagenes)
+    assert len(en_claro) < 60_000
+    # Se vuelve a abrir igual, con sus imágenes.
+    from facturas_excel.app import VentanaPrincipal
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert otra.tabla.rowCount() == 3
+    assert [bytes(fila.png) for fila in otra.filas] == imagenes
+
+
+def test_una_sesion_de_antes_con_las_imagenes_se_abre_y_se_convierte(
+        tmp_path, monkeypatch):
+    """Lo que guardaba la 1.25: los bytes de cada imagen en el lote y en las
+    filas, y los recuadros por el SHA1 de esos bytes."""
+    import hashlib
+    from facturas_excel import localizar, muestras_revision, sesion
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.clientes import marcar_cliente
+    from facturas_excel.imagen_hoja import ImagenHoja
+    from facturas_excel.procesar import preparar_lote
+
+    ruta = tmp_path / "sesion.pkl.gz"
+    monkeypatch.setattr(sesion, "_ruta", lambda: str(ruta))
+    marcar_cliente("12345678Z", "CLIENTE PRUEBA")
+    imagen = _jpeg("hoja de una sesión vieja")
+    crudos = [(imagen, str(tmp_path / "taco.pdf"), 1, _datos("F-9"))]
+    procesadas = preparar_lote(crudos, "CLIENTE PRUEBA", "12345678Z")
+    pr = procesadas[0][1]
+    f = pr.facturas[0]
+    caja = localizar.Caja("total_impreso", "121,00", 0.85, 0.7, 0.88, 0.9)
+    sesion.guardar({
+        "bloques": [{"nombre": "Taco 1", "procesadas": procesadas, "crudos": crudos,
+                     "nif": "12345678Z", "cliente": "CLIENTE PRUEBA"}],
+        "filas": [{"png": imagen, "factura": f, "aviso": pr.aviso, "bloque": "Taco 1",
+                   "fuentes": [f], "tipo": "gasto", "cuenta": f.concepto or "",
+                   "gxx": f.subclave or ""}],
+        "cliente_nif": "12345678Z", "cliente_nombre": "CLIENTE PRUEBA",
+        "hay_recargo": False, "regimen_recargo": None, "periodo_modo": "auto",
+        "localizaciones": {hashlib.sha1(imagen).hexdigest():
+                           localizar.a_guardar([caja])},
+        "su_suma": None})
+    assert imagen[:4000] in _sesion_en_claro(ruta)
+
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert v.tabla.rowCount() == 1
+    fila = v.filas[0]
+    assert isinstance(fila.png, ImagenHoja) and bytes(fila.png) == imagen
+    assert v._bloques[0]["crudos"][0][0] is fila.png
+    assert (muestras_revision.carpeta() / "imagenes" / (fila.png.sha + ".jpg")).is_file()
+    # Los recuadros de antes se siguen encontrando.
+    assert v._localizaciones.get(localizar.clave_imagen(fila.png)) == [caja]
+    v.tabla.selectRow(0)
+    v._mostrar_miniatura()
+    assert not v._pixmap_documento.isNull()
+    # El siguiente guardado ya va sin la imagen.
+    v._guardar_sesion()
+    assert imagen[:4000] not in _sesion_en_claro(ruta)
+
+
+def test_sin_la_carpeta_de_imagenes_nada_se_rompe(tmp_path, monkeypatch):
+    import shutil
+    from PySide6.QtCore import QCoreApplication
+    from facturas_excel import claves, localizar, muestras_revision
+
+    pedidas = []
+    monkeypatch.setattr(localizar, "pedir", lambda *a: pedidas.append(a) or ([], []))
+    monkeypatch.setattr(claves, "leer_api_key", lambda: "clave-de-prueba")
+    v, _imagenes = _ventana_con_hojas(tmp_path)
+    shutil.rmtree(muestras_revision.carpeta() / "imagenes")
+    # La miniatura sale vacía, como una imagen que no se puede abrir.
+    v.tabla.selectRow(1)
+    v._mostrar_miniatura()
+    assert v._pixmap_documento.isNull()
+    assert "no disponible" in v.lbl_img.text()
+    # «¿De dónde sale?» no manda una imagen vacía a Gemini: avisa y ya.
+    v._localizar_actual()
+    v._hilo_localizar.wait(5000)
+    QCoreApplication.processEvents()
+    assert pedidas == []
+    assert "No se ha podido señalar" in v.banda.historial[-1]
+    # Y el lote se sigue guardando y exportando como siempre.
+    v._guardar_sesion()
+    assert v._clasificar_exportacion()[0]["gasto"]
+
+
+def test_la_lectura_deja_cada_imagen_en_disco_fuera_de_la_ventana(monkeypatch):
+    from facturas_excel import hilos
+    from facturas_excel.extraccion import DatosFactura
+    from facturas_excel.imagen_hoja import ImagenHoja
+
+    imagenes = [_jpeg("hoja 1"), _jpeg("hoja 2")]
+
+    class ExtractorFalso:
+        def __init__(self, api_key):
+            pass
+
+        def extraer(self, img, origen, pagina):
+            assert img == imagenes[pagina - 1]     # Gemini recibe los bytes
+            return DatosFactura(crudo=_datos(f"F-{pagina}"), pagina=pagina,
+                                consumos=[("gemini-falso", 1, 1)])
+    monkeypatch.setattr(hilos, "Extractor", ExtractorFalso)
+    monkeypatch.setattr(hilos, "cargar_imagenes", lambda rutas, dpi: [
+        ("a.pdf", n, imagenes[n - 1]) for n in (1, 2)])
+    monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
+    w = hilos.Worker(["a.pdf"], "clave")
+    entregado = []
+    w.terminado.connect(lambda *args: entregado.append(args))
+    w.run()
+    [(procesadas, _nombre, _nif, registros)] = entregado
+    assert [type(r[0]) for r in registros] == [ImagenHoja, ImagenHoja]
+    assert [bytes(r[0]) for r in registros] == imagenes
+    assert procesadas[0][0] is registros[0][0]
+
+
+def test_senalar_en_el_documento_lee_la_imagen_del_disco(tmp_path, monkeypatch):
+    from facturas_excel import hilos, imagen_hoja
+
+    asa = imagen_hoja.a_disco(_jpeg("hoja dudosa"))
+    recibidas = []
+    monkeypatch.setattr(hilos.costes, "registrar", lambda *a, **k: 0.0)
+
+    def pedir(api_key, modelo, img, lista):
+        recibidas.append(img)
+        return [], [("modelo", 1, 1)]
+    monkeypatch.setattr("facturas_excel.localizar.pedir", pedir)
+    hilo = hilos.HiloLocalizar("clave", "modelo", [(asa.clave, asa, [("total", "1")])])
+    hilo.run()
+    assert recibidas == [bytes(asa)] and isinstance(recibidas[0], bytes)
+    assert hilo.trabajos == []            # no se queda con lo pedido
+
+
+def test_el_asa_se_compara_y_se_guarda_como_la_imagen():
+    import pickle
+    from facturas_excel import imagen_hoja, localizar
+
+    imagen = _jpeg("hoja")
+    asa = imagen_hoja.a_disco(imagen)
+    assert asa == imagen and imagen == asa and asa == imagen_hoja.a_disco(imagen)
+    assert asa != _jpeg("otra hoja") and asa != b"" and bool(asa)
+    assert localizar.clave_imagen(asa) == localizar.clave_imagen(imagen)
+    copia = pickle.loads(pickle.dumps(asa))
+    assert copia == asa and bytes(copia) == imagen
+    assert len(pickle.dumps(asa)) < 250
+    assert imagen_hoja.como_bytes(asa) == imagen_hoja.como_bytes(imagen) == imagen
+    assert imagen_hoja.como_bytes(None) == b""

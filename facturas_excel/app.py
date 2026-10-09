@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
-    __version__, ajustes, archivo, copias, costes, errores, escaner, notas_version,
-    pendientes, proveedores, revision_gemini, sesion, updater,
+    __version__, ajustes, archivo, copias, costes, errores, escaner, imagen_hoja,
+    notas_version, pendientes, proveedores, revision_gemini, sesion, updater,
     muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
@@ -116,7 +116,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.resize(1420, 820)
         self.setMinimumSize(1024, 640)
         self.setAcceptDrops(True)
-        self.filas = []  # por fila: dict(png, factura, aviso, bloque)
+        # Por fila: Fila(png, factura, aviso, bloque…). `png` es el asa de la
+        # imagen de la hoja (imagen_hoja), que vive en disco.
+        self.filas = []
         # Un bloque = un escaneo/carga. Se acumulan para poder meter en un solo
         # Excel varios PDF (un requerimiento no cabe en un escaneo de 25 hojas).
         # Cada uno: dict(nombre, procesadas, cliente, nif)
@@ -1807,6 +1809,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             return
         try:
             self._bloques = datos["bloques"]
+            # Las sesiones de versiones anteriores traen la imagen de cada
+            # hoja en bytes: se pasan a disco (una sola vez; el próximo
+            # guardado ya va sin ellas) y el lote se queda con su asa.
+            convertir = imagen_hoja.Conversor()
+            convertir.bloques(self._bloques)
+            for fila in datos.get("filas", []):
+                fila["png"] = convertir(fila.get("png"))
             self._cliente_nif = datos.get("cliente_nif", "")
             self._cliente_nombre = datos.get("cliente_nombre", "")
             self._periodo_manual_valor = datos.get("periodo_modo", "auto")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from facturas_excel import ajustes, costes, escaner, updater
+from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
 from facturas_excel.extraccion import Extractor, SinCredito
 from facturas_excel.pdf import cargar_imagenes
 from facturas_excel.procesar import detectar_cliente, preparar_lote
@@ -107,6 +107,10 @@ class Worker(QThread):
                 self.sin_credito = sin_credito[0]
                 if not leidas:
                     raise SinCredito(sin_credito[0])
+            # La imagen de cada hoja se guarda ya en las muestras y el lote se
+            # queda solo con su asa (ver imagen_hoja), aquí, fuera de la
+            # ventana. La que no se pueda escribir sigue con sus bytes.
+            registros = imagen_hoja.Conversor().registros(registros)
             nombre, nif = detectar_cliente([d for *_, d in registros])
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)
@@ -223,6 +227,11 @@ class HiloLocalizar(QObject):
             if self.cancelado:
                 raise RuntimeError("cancelado")
             clave, img, lista = trabajo
+            # La imagen se lee del disco aquí, fuera de la ventana. Si ya no
+            # está (se borraron los ejemplos), esa hoja no se puede señalar.
+            img = imagen_hoja.como_bytes(img)
+            if not img:
+                raise FileNotFoundError("la imagen de la hoja ya no está")
             return clave, localizar.pedir(self.api_key, self.modelo, img, lista)
 
         ex = ThreadPoolExecutor(max_workers=min(4, hilos_lectura()))
@@ -239,6 +248,8 @@ class HiloLocalizar(QObject):
                     self.hecho.emit(clave, cajas)
         finally:
             ex.shutdown(wait=not self.cancelado, cancel_futures=True)
+            # Lo pedido ya no hace falta: no se queda retenido con el hilo.
+            self.trabajos = []
         coste = sum(costes.registrar(m, e, s, facturas=0) for m, e, s in consumo)
         if self.cancelado:
             return

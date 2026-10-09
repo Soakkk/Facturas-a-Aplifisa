@@ -51,7 +51,12 @@ _ESQUEMA = {
 }
 
 
-def clave_imagen(png: bytes) -> str:
+def clave_imagen(png) -> str:
+    """La clave de una hoja: el SHA1 de su imagen. La imagen puede venir
+    como asa (imagen_hoja), que ya trae su clave sin leerla del disco."""
+    clave = getattr(png, "clave", None)
+    if clave:
+        return clave
     return hashlib.sha1(png or b"").hexdigest()
 
 
@@ -140,9 +145,11 @@ def pedir(api_key: str, modelo: str, img: bytes,
     from google import genai
     from google.genai import types
     from .extraccion import TIEMPO_LIMITE, _consumo, _parse_json_tolerante
+    from .imagen_hoja import como_bytes
 
     if not lista:
         return [], []
+    img = como_bytes(img)      # la imagen puede venir como asa (en disco)
     cliente = genai.Client(api_key=api_key, http_options=types.HttpOptions(
         timeout=TIEMPO_LIMITE * 1000))
     config = types.GenerateContentConfig(

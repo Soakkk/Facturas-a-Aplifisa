@@ -12,7 +12,7 @@ import os
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QImage, QPixmap
 
-from facturas_excel import ajustes, imagen_visor, localizar
+from facturas_excel import ajustes, imagen_hoja, imagen_visor, localizar
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.conceptos import descripcion_de
 from facturas_excel.control_facturas import clave_documento
@@ -298,7 +298,9 @@ class FichaMixin:
                   if factura.origen_imagen else None)
         if png is not getattr(self, "_png_visor", None) or self._pixmap_documento.isNull():
             pix = QPixmap()
-            pix.loadFromData(png)
+            # La imagen se lee del disco (el lote solo guarda su asa). Si ya
+            # no está, queda vacía: «Vista previa no disponible».
+            pix.loadFromData(imagen_hoja.como_bytes(png))
             if pix.isNull():
                 self._limpiar_visor()
                 self.lbl_origen.setText(origen or "Documento cargado")

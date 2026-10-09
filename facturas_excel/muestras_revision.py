@@ -135,6 +135,32 @@ def _original(ruta: str) -> str | None:
     return None
 
 
+def _sufijo_imagen(imagen: bytes) -> str:
+    return (".png" if imagen.startswith(b"\x89PNG")
+            else ".jpg" if imagen.startswith(b"\xff\xd8") else ".bin")
+
+
+def guardar_imagen(imagen: bytes) -> tuple[str, str]:
+    """Guarda la imagen de una hoja, una sola vez por contenido.
+
+    Devuelve (SHA256, extensión). Va sin el cerrojo: la escribe la lectura en
+    su hilo mientras la ventana guarda revisiones, y la escritura es atómica
+    con la huella por nombre (dos a la vez dejan lo mismo).
+    """
+    imagen_id = _hash(imagen)
+    sufijo = _sufijo_imagen(imagen)
+    destino = carpeta() / "imagenes" / (imagen_id + sufijo)
+    if not destino.exists():
+        try:
+            _atomico(destino, imagen)
+        except OSError:
+            # Otro hilo la acaba de escribir (en Windows no se sustituye un
+            # fichero abierto): vale la que ya hay, que es igual.
+            if not destino.exists():
+                raise
+    return imagen_id, sufijo
+
+
 def guardar_lecturas(registros: list, originales: dict[str, str] | None = None) -> None:
     """Guarda cada página y cada lectura distinta, sin sustituir tandas previas.
 
@@ -143,7 +169,10 @@ def guardar_lecturas(registros: list, originales: dict[str, str] | None = None) 
     Llame a guardar_original antes de IA si vuelve a usar una misma ruta
     para otro documento; así su alias apunta al nuevo contenido.
     Si no se dispone del documento completo, se conserva la imagen de página.
+    La imagen puede venir ya guardada (un asa de imagen_hoja): no se repite.
     """
+    from .imagen_hoja import ImagenHoja
+
     with _CERROJO:
         resueltos = {}
         for imagen, origen, pagina, datos in registros:
@@ -153,12 +182,10 @@ def guardar_lecturas(registros: list, originales: dict[str, str] | None = None) 
                     _atomico(_alias(origen), _json({"original_id": resueltos[origen]}))
             original_id = resueltos[origen]
             imagen_id = None
-            if imagen:
-                imagen_id = _hash(imagen)
-                sufijo = ".png" if imagen.startswith(b"\x89PNG") else ".jpg" if imagen.startswith(b"\xff\xd8") else ".bin"
-                destino = carpeta() / "imagenes" / (imagen_id + sufijo)
-                if not destino.exists():
-                    _atomico(destino, imagen)
+            if isinstance(imagen, ImagenHoja):
+                imagen_id = imagen.sha       # ya está en el disco
+            elif imagen:
+                imagen_id, _sufijo = guardar_imagen(imagen)
             _snapshot("lecturas", {"original_id": original_id, "origen": origen,
                                     "pagina": pagina, "imagen_id": imagen_id, "datos": datos})
 
