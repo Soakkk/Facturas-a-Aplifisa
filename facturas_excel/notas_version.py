@@ -12,14 +12,21 @@ NOTAS = {
 <ul>
   <li><b>Exportar ya no falla por un nombre con un carácter raro.</b> Algunos
       nombres traían un carácter invisible en lugar de una letra con tilde
-      («JOS?» por «JOSÉ») y Excel no lo admitía: la exportación entera se
-      paraba. Ahora se quita al escribir el Excel y la línea sale en ámbar
-      para que escriba bien el nombre (se recuerda para las próximas).</li>
+      («JOS?» por «JOSÉ»), copiado de un PDF, y Excel no lo admitía: la
+      exportación entera se paraba. Ahora la letra se recupera con los
+      nombres que ya conoce el programa de ese NIF; si no se puede, la línea
+      sale en ámbar para que lo escriba bien (y se recuerda). Un nombre roto
+      ya no se guarda ni se extiende a otras facturas.</li>
   <li><b>El programa ya no se queda sin memoria al leer un paquete.</b> Si una
       factura traía un número muy largo o mal leído, el control de «falta la
       factura nº…» intentaba repasar miles de millones de números: se comía
       la memoria y salía «Algo ha fallado». Ahora no pasa de lo necesario.</li>
   <li>La ventana «Algo ha fallado» ya no sale en blanco: dice qué ha pasado.</li>
+  <li><b>Campos con un tope.</b> Lo leído se queda en lo que identifica la
+      factura: el número hasta 60 caracteres (más, se abrevia con «...» y
+      sale en ámbar) y el nombre hasta 120 (Aplifisa ya lo recorta a 40).</li>
+  <li>La cuenta que pone a un proveedor se recuerda también después de
+      corregirle el nombre.</li>
 </ul>
 <p><b>Novedades</b></p>
 <ul>

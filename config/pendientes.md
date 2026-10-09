@@ -8,9 +8,11 @@ veas y lo leo en la siguiente sesión de trabajo.
 ### Lo nuevo de la 1.25: memoria y lectura
 
 **Arreglos de lo que salió en tu errores.log:** exportar ya no se para por un
-nombre con un carácter invisible en lugar de una tilde (sale en ámbar para
+nombre con un carácter invisible en lugar de una tilde (la letra se recupera
+con los nombres que ya conoce el programa; si no, sale en ámbar para
 escribirlo bien), y leer un paquete ya no se come la memoria cuando una
-factura trae un número muy largo («Algo ha fallado» con MemoryError).
+factura trae un número muy largo («Algo ha fallado» con MemoryError). Los
+campos leídos tienen un tope: número hasta 60 caracteres, nombre hasta 120.
 
 La cuenta que pones a un proveedor se recuerda **por cliente** (en otro
 cliente se propone en ámbar). El NIF puesto de memoria solo va en silencio si
