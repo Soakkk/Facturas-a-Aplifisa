@@ -2920,7 +2920,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                         "sin_registrar", "distinta", "dudosa"}
                 elif estado_registro != filtro_registro:
                     visible = False
-            self.tabla.setRowHidden(fila, not visible)
+            # Solo si cambia: cada revisión del lote vuelve a filtrar y casi
+            # nunca cambia nada.
+            if self.tabla.isRowHidden(fila) == visible:
+                self.tabla.setRowHidden(fila, not visible)
         visibles = [self.filas[r]["factura"] for r in range(self.tabla.rowCount())
                     if not self.tabla.isRowHidden(r)]
         self.lbl_resultados.setText(

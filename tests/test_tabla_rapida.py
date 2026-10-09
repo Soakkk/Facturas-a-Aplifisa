@@ -369,3 +369,16 @@ def test_lo_que_cambia_se_pinta_igual_que_en_una_tabla_recien_hecha(tmp_path, mo
     v._poner_filas(list(v.filas))
     v._revalidar_todo()
     assert _huella(v)[:3] == pintado
+
+
+def test_filtrar_solo_oculta_o_ensena_las_filas_que_cambian(tmp_path, monkeypatch):
+    v = _ventana_con_lote(tmp_path, 60)
+    v.combo_filtro_estado.setCurrentIndex(1)            # las de revisar
+    ocultas = [r for r in range(v.tabla.rowCount()) if v.tabla.isRowHidden(r)]
+    assert ocultas
+    cambios = _contar(monkeypatch, v.tabla, "setRowHidden")
+    v._aplicar_filtro()
+    assert cambios == []
+    v.combo_filtro_estado.setCurrentIndex(0)            # todas otra vez
+    assert sorted(r for r, _oculta in cambios) == ocultas
+    assert not any(v.tabla.isRowHidden(r) for r in range(v.tabla.rowCount()))
