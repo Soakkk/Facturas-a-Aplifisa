@@ -363,3 +363,65 @@ def test_las_imagenes_de_lecturas_de_antes_se_siguen_encontrando(tmp_path):
     assert ahora != asa                         # otra imagen, con otra huella
     assert asa.existe() and bytes(asa) == de_antes
     assert localizar.clave_imagen(asa) == localizar.clave_imagen(de_antes)
+
+
+def _pdf_como_hp_scan(ruta, ancho=1654, alto=2338):
+    """Una hoja como las que guarda HP Scan: la foto JPEG en color colocada
+    con «cm», un «1 g» antes del «Do» y el filtro escrito como lista."""
+    import io as _io
+    from PIL import Image as _Image, ImageDraw as _Draw
+    foto = _Image.new("RGB", (ancho, alto), "white")
+    dibujo = _Draw.Draw(foto)
+    for y in range(100, alto - 100, 60):
+        dibujo.rectangle((120, y, ancho - 120, y + 18), fill=(40, 40, 40))
+    buf = _io.BytesIO()
+    foto.save(buf, "JPEG", quality=85)
+    jpeg = buf.getvalue()
+    contenido = b"q 595.44 0 0 841.68 0.00 0.00 cm 1 g /Im1 Do Q\r"
+    objetos = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 596 842]"
+        b"/Resources<</ProcSet[/PDF/ImageC/ImageB/ImageI]/XObject<</Im1 5 0 R>>>>"
+        b"/Contents 4 0 R>>",
+        b"<</Length %d>>stream\n" % len(contenido) + contenido + b"\nendstream",
+        b"<</Type/XObject/Subtype/Image/Name/Im1/Width %d/Height %d"
+        b"/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter[/DCTDecode]"
+        b"/Length %d>>stream\n" % (ancho, alto, len(jpeg)) + jpeg + b"\nendstream",
+    ]
+    salida = bytearray(b"%PDF-1.4\n")
+    posiciones = []
+    for i, obj in enumerate(objetos, 1):
+        posiciones.append(len(salida))
+        salida += b"%d 0 obj\n" % i + obj + b"\nendobj\n"
+    xref = len(salida)
+    salida += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objetos) + 1)
+    for pos in posiciones:
+        salida += b"%010d 00000 n \n" % pos
+    salida += b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objetos) + 1, xref)
+    with open(ruta, "wb") as fh:
+        fh.write(bytes(salida))
+    return ruta
+
+
+def test_una_hoja_como_las_de_hp_scan_va_por_el_camino_rapido(tmp_path):
+    import fitz as _fitz
+    from facturas_excel import pdf as _pdf
+    ruta = _pdf_como_hp_scan(str(tmp_path / "hp.pdf"))
+    with _pdf.CERROJO, _fitz.open(ruta) as doc:
+        assert _pdf._foto_del_escaneo(doc, doc[0], 150) is not None
+    # Y sale del mismo tamaño que la dibujaría MuPDF.
+    [jpg] = _pdf.paginas_pdf_a_jpg(ruta, 150)
+    from PIL import Image as _Image
+    import io as _io
+    with _fitz.open(ruta) as doc:
+        esperado = _pdf.tam_lectura(doc[0], 150)
+    assert _Image.open(_io.BytesIO(jpg)).size == tuple(int(x) for x in esperado)
+
+
+def test_un_color_con_operandos_raros_sigue_por_mupdf():
+    from facturas_excel import pdf as _pdf
+    assert not _pdf._solo_una_foto(b"q 1 0 0 1 0 0 cm 1 2 g /Im1 Do Q", "Im1")
+    assert not _pdf._solo_una_foto(b"q 1 0 0 1 0 0 cm /X g /Im1 Do Q", "Im1")
+    assert _pdf._solo_una_foto(b"q 1 0 0 1 0 0 cm 0 0 0 rg /Im1 Do Q", "Im1")

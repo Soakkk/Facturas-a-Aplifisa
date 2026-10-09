@@ -117,6 +117,10 @@ def tam_lectura(hoja, dpi: int) -> Tuple[int, int]:
     return marco.width, marco.height
 
 
+# Órdenes que solo fijan un color, con cuántos números llevan.
+_SOLO_COLOR = {b"g": 1, b"G": 1, b"rg": 3, b"RG": 3, b"k": 4, b"K": 4}
+
+
 def _solo_una_foto(contenido: bytes, nombre: str) -> bool:
     """Si lo que dibuja la hoja es solo la foto `nombre`, colocada con `cm`.
 
@@ -138,6 +142,12 @@ def _solo_una_foto(contenido: bytes, nombre: str) -> bool:
         elif ficha == b"Do":
             fotos += 1
             valido = operandos == [b"/" + nombre.encode("latin-1")]
+        elif ficha in _SOLO_COLOR:
+            # Fijar el color de relleno o de trazo no cambia una foto (solo a
+            # las máscaras, que no van por aquí). HP Scan pone «1 g» antes de
+            # la foto: sin esto, ninguna de sus hojas iba por el camino rápido.
+            valido = (len(operandos) == _SOLO_COLOR[ficha]
+                      and all(_NUMERO.match(o) for o in operandos))
         else:
             valido = False
         if not valido:
