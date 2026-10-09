@@ -133,6 +133,34 @@ def _con():
     return almacen.conexion(carpeta)
 
 
+# Lo exportado de cada cliente, recordado: cada revisión del lote (cada
+# corrección, cada «Marcar revisada») lo vuelve a preguntar, y no cambia
+# hasta que se apunta algo. Se olvida con cada apunte de este programa
+# (exportar, archivar, olvidar, mover un documento) y si la base cambia por
+# fuera (otra copia del programa, restaurar una copia de seguridad): entonces
+# su fichero o su diario ya no son los mismos.
+_apuntes = 0
+_exportadas: Dict[tuple, tuple] = {}
+
+
+def _apuntado() -> None:
+    global _apuntes
+    _apuntes += 1
+    _exportadas.clear()
+
+
+def _firma_base(carpeta: str) -> tuple:
+    firma = [_apuntes]
+    destino = almacen.ruta(carpeta)
+    for sufijo in ("", "-wal"):
+        try:
+            datos = os.stat(destino + sufijo)
+            firma.append((datos.st_mtime_ns, datos.st_size))
+        except OSError:
+            firma.append(None)
+    return tuple(firma)
+
+
 _migrados: set = set()
 _claves_migradas: set = set()
 
@@ -334,7 +362,10 @@ def _apuntar(cliente_nif: str, cliente_nombre: str,
                     lectura = (leidas_en or {}).get(id(f)) or lectura
                 ficha["leida_en"] = lectura or momento
             filas.append(tuple(_sin_rotos(ficha.get(c)) for c in _COLUMNAS))
-        con.executemany(_INSERTAR, filas)
+        try:
+            con.executemany(_INSERTAR, filas)
+        finally:
+            _apuntado()
     return anteriores, agrupadas
 
 
@@ -415,6 +446,8 @@ def olvidar(cliente_nif: str, facturas_por_tipo: Dict[str, Iterable],
                 quitadas += 1
     except sqlite3.Error:
         return 0
+    finally:
+        _apuntado()
     return quitadas
 
 
@@ -463,8 +496,14 @@ def pdf_de(cliente_nif: str, f, tipo: str, cliente_nombre: str = "") -> str:
 
 
 def exportadas_de(cliente_nif: str, cliente_nombre: str = "") -> Dict[str, dict]:
-    """{clave: ficha} de todo lo exportado de un cliente (una sola consulta)."""
+    """{clave: ficha} de todo lo exportado de un cliente (una sola consulta,
+    y ninguna si no se ha apuntado nada desde la anterior)."""
     cliente = cliente_de(cliente_nif, cliente_nombre)
+    carpeta = _carpeta()
+    firma = _firma_base(carpeta)          # antes de leer: lo que cambie luego, se vuelve a leer
+    recordado = _exportadas.get((carpeta, cliente))
+    if recordado is not None and recordado[0] == firma:
+        return _copia(recordado[1])
     try:
         with _con() as con:
             filas = con.execute(
@@ -473,7 +512,15 @@ def exportadas_de(cliente_nif: str, cliente_nombre: str = "") -> Dict[str, dict]
     except sqlite3.Error:
         return {}
     prefijo = f"{cliente}#"
-    return {fila["id"][len(prefijo):]: _info(fila) for fila in filas}
+    resultado = {fila["id"][len(prefijo):]: _info(fila) for fila in filas}
+    _exportadas[(carpeta, cliente)] = (firma, resultado)
+    return _copia(resultado)
+
+
+def _copia(exportadas: Dict[str, dict]) -> Dict[str, dict]:
+    """Cada vez, fichas nuevas: lo que haga con ellas quien pregunta no
+    cambia lo recordado."""
+    return {k: dict(ficha) for k, ficha in exportadas.items()}
 
 
 def del_ejercicio(cliente_nif: str, ejercicio: int, cliente_nombre: str = "",
@@ -624,6 +671,8 @@ def cambiar_ruta(vieja: str, nueva: str) -> None:
                         "WHERE id = ?", (*cambios.values(), fila["id"]))
     except sqlite3.Error:
         pass
+    finally:
+        _apuntado()
 
 
 def usa_retenciones(cliente_nif: str, cliente_nombre: str = "") -> bool:

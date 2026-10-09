@@ -406,3 +406,38 @@ def test_una_fecha_ya_entendida_no_se_vuelve_a_descifrar(monkeypatch):
     # Lo raro (que no se puede recordar) se entiende igual que siempre.
     assert validacion.fecha_de(["19/07/2031"]) is None
     assert validacion.fecha_de(None) is None and validacion.fecha_de("") is None
+
+
+# ------------------------------------------- lo exportado, una vez por cliente
+def _factura_exportada(numero):
+    return Factura(num_factura=numero, fecha="10/03/2025", nombre="PROVEEDOR PRUEBA SL",
+                   nif="B12345674", base_iva=100.0, pct_iva=21.0, cuota_iva=21.0,
+                   total_impreso=121.0)
+
+
+def test_lo_exportado_se_pregunta_una_vez_hasta_que_se_apunta_algo(monkeypatch):
+    from facturas_excel import almacen, historial, registro_facturas
+    from facturas_excel.rutas import dir_datos
+    historial.registrar("12345678Z", {"gasto": [_factura_exportada("F-1")]}, {})
+    consultas = _contar(monkeypatch, registro_facturas, "_con")
+    primera = historial.exportadas_de("12345678Z")
+    assert len(primera) == 1 and len(consultas) == 1
+    for _ in range(3):
+        assert historial.exportadas_de("12345678Z") == primera
+    assert len(consultas) == 1
+    # Lo que haga quien pregunta con la respuesta no cambia lo recordado.
+    next(iter(primera.values()))["nif"] = "OTRO"
+    assert historial.exportadas_de("12345678Z") != primera
+    # Exportar algo más se ve en la siguiente pregunta...
+    historial.registrar("12345678Z", {"gasto": [_factura_exportada("F-2")]}, {})
+    assert len(historial.exportadas_de("12345678Z")) == 2
+    # ...y olvidarlo (Aplifisa rechazó el Excel), también.
+    historial.olvidar("12345678Z", {"gasto": [_factura_exportada("F-2")]})
+    assert len(historial.exportadas_de("12345678Z")) == 1
+    # Lo que cambie la base por fuera (otra copia del programa, restaurar
+    # una copia de seguridad) también.
+    antes = len(consultas)
+    with almacen.conexion(dir_datos()) as con:
+        con.execute("UPDATE facturas SET exportada_en = NULL")
+    assert historial.exportadas_de("12345678Z") == {}
+    assert len(consultas) == antes + 1
