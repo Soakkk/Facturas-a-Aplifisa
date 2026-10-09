@@ -238,6 +238,19 @@ def _pdf_desde_html(contenido: str, destino: str) -> None:
     os.replace(temporal, destino)
 
 
+# Los PDF son fotos JPEG (y lo demás ya va comprimido dentro del PDF) y un
+# .xlsx es ya un ZIP: comprimirlos otra vez no ahorra casi nada y era lo más
+# lento del expediente (9 de 14 s con un taco de 450 hojas, con la ventana
+# parada). Entran en el ZIP tal cual.
+YA_COMPRIMIDOS = (".pdf", ".xlsx")
+
+
+def _compresion_zip(nombre: str) -> int:
+    if nombre.lower().endswith(YA_COMPRIMIDOS):
+        return zipfile.ZIP_STORED
+    return zipfile.ZIP_DEFLATED
+
+
 def crear(base: str, e: Ejercicio, con_zip: bool = True) -> dict:
     """Genera (o rehace) el expediente. Devuelve rutas y recuentos."""
     origen = os.path.join(base, e.carpeta_cliente, str(e.ejercicio))
@@ -292,7 +305,8 @@ def crear(base: str, e: Ejercicio, con_zip: bool = True) -> dict:
             for raiz, _carpetas, archivos in os.walk(destino):
                 for nombre in sorted(archivos):
                     ruta = os.path.join(raiz, nombre)
-                    z.write(ruta, os.path.relpath(ruta, os.path.dirname(destino)))
+                    z.write(ruta, os.path.relpath(ruta, os.path.dirname(destino)),
+                            compress_type=_compresion_zip(nombre))
         os.replace(temporal, zip_ruta)
     return {"carpeta": destino, "zip": zip_ruta, "documentos": documentos,
             "facturas": sum(1 for f in facturas if f.get("exportada_en"))}
