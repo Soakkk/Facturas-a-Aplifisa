@@ -370,6 +370,42 @@ def test_una_lectura_desbocada_no_tira_la_otra(monkeypatch, desbocada):
     assert len(leido.consumos) == 4
 
 
+class RespuestaRota:
+    """Una respuesta de la que ni se puede sacar el texto (un fallo que no se
+    ha previsto en el SDK o en la respuesta)."""
+    model_version = "modelo-roto"
+    usage_metadata = None
+
+    @property
+    def text(self):
+        raise RuntimeError("respuesta sin texto que leer")
+
+
+@pytest.mark.parametrize("modo,rota,buena", [
+    ("siempre", "modelo-a", "modelo-b"),
+    ("siempre", "modelo-b", "modelo-a"),
+    ("dudosas", "modelo-b", "modelo-a"),
+], ids=["siempre_la_primera", "siempre_la_segunda", "dudosas_la_segunda"])
+def test_un_fallo_raro_de_una_lectura_no_tira_la_otra(monkeypatch, modo, rota, buena):
+    # Confianza media: en «dudosas» también se pide la segunda.
+    ex = extractor(monkeypatch, {buena: json.dumps(lectura(0, confianza="media"))},
+                   modo=modo)
+    generar = ex.client._generar
+
+    def generar_o_romper(model, contents, config):
+        if model == rota:
+            ex.client.llamadas.append(model)
+            return RespuestaRota()
+        return generar(model, contents, config)
+    ex.client.models.generate_content = generar_o_romper
+
+    leido = ex.extraer(b"img", "taco.pdf", 1)
+
+    assert leido.crudo["num_factura"] == "F26/00100"       # la buena se queda
+    assert "respuesta sin texto" in leido.crudo["_error_2"]  # y se dice qué pasó
+    assert rota in ex.client.llamadas
+
+
 def test_una_lectura_con_un_entero_enorme_se_queda(monkeypatch):
     rara = json.dumps(lectura(0))[:-1] + ', "suplidos": ' + "9" * 5000 + "}"
     ex = extractor(monkeypatch, {"modelo-a": rara, "modelo-b": rara}, modo="no")
@@ -387,6 +423,8 @@ RARAS = {
     "ultima_pagina_texto": dict(_ultima_pagina_consolidada="abc"),
     "union_manual_rara": dict(_paginas_union_manual=[[1, 2, 3]]),
     "anidado_900": dict(concepto_texto=anidado(900)),
+    "nombre_lista": dict(emisor_nombre=["PROVEEDOR", "UNO"]),
+    "nombre_dict": dict(emisor_nombre={"nombre": "X"}),
 }
 
 

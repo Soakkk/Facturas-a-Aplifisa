@@ -630,9 +630,11 @@ class Extractor:
                         crudo = combinar(d1, d2, m1, m2)
                     except SinCredito:
                         raise
-                    except (ErrorLectura, ModeloNoDisponible) as e:
-                        consumos.extend(getattr(e, "consumos", []))
-                        crudo = combinar(d1, None, m1, "", error_2=str(e))
+                    except Exception as e:
+                        # ErrorLectura… o cualquier rareza de la segunda: la
+                        # primera ya está leída (y pagada) y no se tira.
+                        consumos.extend(getattr(e, "consumos", None) or [])
+                        crudo = combinar(d1, None, m1, "", error_2=str(e)[:300])
 
         return DatosFactura(
             crudo=crudo, origen=origen, pagina=pagina,
