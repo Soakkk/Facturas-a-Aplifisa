@@ -281,9 +281,11 @@ def validar(f: Factura) -> Resultado:
     elif tiene_invisibles(f.nombre):
         # Suele ser una letra con tilde que llegó mal («JOS?» por «JOSÉ»): al
         # exportar se quita el carácter y el nombre quedaría sin esa letra.
-        marcar_revisar("El nombre trae un carácter que no se ve, casi siempre "
-                       "una letra con tilde mal leída. Escríbalo bien: el "
-                       "programa lo recordará para las próximas.", "nombre")
+        from .texto import visible
+        marcar_revisar(f"El nombre «{visible(f.nombre)}» trae un carácter que "
+                       "no se ve (·), casi siempre una letra con tilde mal "
+                       "leída. Escríbalo bien: el programa lo recordará para "
+                       "las próximas.", "nombre")
     if not f.concepto:
         marcar_error("Falta el concepto (obligatorio)", "concepto")
     else:
@@ -520,10 +522,10 @@ def encontrar_duplicados(facturas: List[Factura]) -> Dict[int, int]:
 # cambia entre ellas: ese es el contador.
 MINIMO_SERIE = 3        # con menos de 3 no hay serie que valga
 MAXIMO_HUECO = 12       # un salto enorme suele ser otra serie, no una perdida
-# Un contador de verdad no pasa de 9 cifras: más es una referencia larga o una
-# lectura mala, y no cuenta para la serie (int() de miles de cifras incluso
-# falla en Python 3.11+).
-MAX_CIFRAS_CONTADOR = 9
+# Más cifras que esto no es un contador (int() de miles de cifras incluso
+# falla en Python 3.11+). Ojo: «2026000123» (año + contador) tiene 10 y es
+# una serie de verdad; un número desbocado lo aparta _tramo_mayor.
+MAX_CIFRAS_CONTADOR = 30
 
 
 def _faltan(vistos: set, menor: int, mayor: int):
@@ -537,6 +539,21 @@ def _faltan(vistos: set, menor: int, mayor: int):
     if (mayor - menor + 1) - dentro > MAXIMO_HUECO:
         return None
     return [n for n in range(menor, mayor) if n not in vistos]
+
+
+def _tramo_mayor(numeros: set) -> set:
+    """Los números del tramo seguido (saltos de hasta MAXIMO_HUECO) con más
+    facturas: un número mal leído o de otra serie queda fuera sin apartar
+    los buenos por tener muchas cifras."""
+    tramos, actual = [], []
+    for n in sorted(numeros):
+        if actual and n - actual[-1] > MAXIMO_HUECO + 1:
+            tramos.append(actual)
+            actual = []
+        actual.append(n)
+    if actual:
+        tramos.append(actual)
+    return set(max(tramos, key=len)) if tramos else set()
 
 
 def _trozos(num_factura: str):
@@ -599,8 +616,8 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
         if len(cambian) != 1:
             continue
         col = cambian[0]
-        vistos = {int(numeros[col]) for numeros, _ in entradas
-                  if len(numeros[col]) <= MAX_CIFRAS_CONTADOR}
+        vistos = _tramo_mayor({int(numeros[col]) for numeros, _ in entradas
+                               if len(numeros[col]) <= MAX_CIFRAS_CONTADOR})
         if len(vistos) < MINIMO_SERIE:
             continue
         if identidad == "__SERIE_INGRESOS__":
@@ -631,7 +648,8 @@ def huecos_de_numeracion(facturas: List[Factura], tipos: List[str] | None = None
         if not faltan:
             continue
         modelo, quien = next(e for e in entradas
-                             if len(e[0][col]) <= MAX_CIFRAS_CONTADOR)
+                             if len(e[0][col]) <= MAX_CIFRAS_CONTADOR
+                             and int(e[0][col]) in vistos)
         ancho = len(modelo[col])
 
         def escribir(n):

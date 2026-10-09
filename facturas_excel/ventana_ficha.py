@@ -19,6 +19,7 @@ from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
 from facturas_excel.procesar import normaliza_nif
 from facturas_excel.resumen import eur
+from facturas_excel.texto import limpiar
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
 from facturas_excel.estilo import ACCENT, DANGER, MUTED, WARNING
 from facturas_excel.tabla_facturas import (
@@ -589,7 +590,7 @@ class FichaMixin:
                 valor = (None if valor in (None, "")
                          else normalizar_fecha(str(valor)))
             else:
-                valor = None if valor in (None, "") else str(valor)
+                valor = None if valor in (None, "") else limpiar(str(valor))[0]
             valor = round(valor, 2) if isinstance(valor, float) else valor
             valor = self._con_signo_del_documento(campo, valor, filas_doc)
             distintas = [r for r in filas_doc
@@ -628,7 +629,8 @@ class FichaMixin:
                     valor = (None if valor in (None, "")
                              else normalizar_fecha(str(valor)))
                 else:
-                    valor = None if valor in (None, "") else str(valor)
+                    valor = (None if valor in (None, "")
+                             else limpiar(str(valor))[0])
                 cambios = [(r, campo, valor) for r in destino]
             for r, campo, valor in cambios:
                 valor = round(valor, 2) if isinstance(valor, float) else valor

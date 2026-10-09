@@ -55,11 +55,12 @@ from facturas_excel.panel_ficha import PanelFicha
 from facturas_excel import distribucion
 from facturas_excel.su_suma import ALTO_FILA_COLUMNA, TablaSuSuma, TablaTotales
 from facturas_excel.modelo import Factura
+from facturas_excel.texto import tiene_invisibles
 from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, nombre_preferido,
     nombres_guardados, normaliza_nif,
-    ficha_de_cuenta, quitar_aviso_cuenta, recordar_cuenta_proveedor,
-    recordar_nif,
+    ficha_de_cuenta, nombre_sin_letra, quitar_aviso_cuenta,
+    recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
 from facturas_excel.lote import (
@@ -1836,6 +1837,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 + [f for bloque in self._bloques
                    for _, pr in bloque.get("procesadas", []) for f in pr.facturas],
                 nombres_guardados(solo_a_mano=True))
+            # Lotes de la 1.24.0: una línea «revisada» con un nombre que trae
+            # un carácter invisible se revisó sin el aviso del nombre (no
+            # existía) y saldría a Aplifisa sin esa letra: vuelve a pendiente.
+            for fila in datos.get("filas", []):
+                for x in (fila["factura"], *(fila.get("fuentes") or ())):
+                    if tiene_invisibles(x.nombre):
+                        x.revision_confirmada = False
             self.tabla.setRowCount(0)
             self.filas = []
             for fila in datos.get("filas", []):
@@ -2605,7 +2613,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             return ""
         if not recordar_cuenta_proveedor(normaliza_nif(f.nif), f.nombre,
                                          cuenta, gxx,
-                                         getattr(self, "_cliente_nif", "")):
+                                         getattr(self, "_cliente_nif", ""),
+                                         guardar_nombre=not nombre_sin_letra(f)):
             return ""
         return (f"Guardado: las facturas de {f.nombre} irán a "
                 f"{cuenta}{f' ({gxx})' if gxx else ''} "
@@ -2679,7 +2688,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         nif = normaliza_nif(f.nif)
         if not f.nombre or not validar_nif(nif):
             return ""                  # a medio escribir o ilegible: no guardar
-        if not recordar_nif(f.nombre, nif, manual=True):
+        if not recordar_nif(f.nombre, nif, manual=True,
+                            guardar_nombre=not nombre_sin_letra(f)):
             return ""
         clave = clave_proveedor(f.nombre)
         aplicadas = []

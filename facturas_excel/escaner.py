@@ -96,7 +96,7 @@ def sanear(texto: str) -> str:
     """Nombre de archivo/carpeta valido en Windows a partir de lo que sea."""
     texto = unicodedata.normalize("NFKD", str(texto or ""))
     texto = "".join(c for c in texto if not unicodedata.combining(c))
-    texto = re.sub(r'[<>:"/\\|?*]', " ", texto)
+    texto = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", texto)
     texto = re.sub(r"\s+", " ", texto).strip(" .")
     return texto[:60] or "Sin nombre"
 

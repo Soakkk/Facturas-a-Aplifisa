@@ -27,6 +27,7 @@ from .conceptos import (
 from .extraccion import _num
 from .modelo import Factura
 from .validacion import fecha_de, normalizar_fecha, validar_nif
+from .texto import limpiar, reparar, tiene_invisibles, visible
 
 
 def normaliza_nif(nif) -> str:
@@ -68,6 +69,9 @@ class Candidato:
     como_receptor: int = 0
     cliente_confirmado: bool = False   # una persona dijo que es cliente
     proveedor_conocido: bool = False   # ya se le ha comprado otras veces
+    # Todas sus lecturas traían un carácter invisible y no se pudo recuperar
+    # la letra: el nombre (limpio) no se guarda ni se comparte con la suite.
+    nombre_roto: bool = False
 
     @property
     def puntos(self) -> int:
@@ -118,7 +122,12 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
                 ("emisor_nif", "emisor_nombre", "e"),
                 ("receptor_nif", "receptor_nombre", "r")):
             leido = normaliza_nif(d.get(campo_nif))
-            conocido = clientes.buscar_confirmado_por_nombre(d.get(campo_nom, ""))
+            nombre_leido, roto = limpiar(d.get(campo_nom))
+            nombre_leido = nombre_leido or ""
+            # Para elegir el nombre, el roto tal cual: así gana una lectura
+            # buena y, si no la hay, se intenta recuperar la letra.
+            para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
+            conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
             if conocido and validar_nif(leido) and leido != conocido[0]:
                 # El nombre de un cliente confirmado con OTRO NIF válido: o es
                 # su NIF mal leído, o es otra persona que se llama igual (un
@@ -131,7 +140,7 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
                     otro.como_emisor += 1
                 else:
                     otro.como_receptor += 1
-                nombres[leido].append(d.get(campo_nom) or "")
+                nombres[leido].append(para_elegir)
             nif = conocido[0] if conocido else leido
             if not nif:
                 continue
@@ -143,16 +152,17 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
                 c.como_receptor += 1
             if conocido and conocido[1]:
                 nombres[nif].append(conocido[1])
-            elif d.get(campo_nom):
-                nombres[nif].append(d[campo_nom])
+            elif nombre_leido:
+                nombres[nif].append(para_elegir)
 
     for nif, c in cuenta.items():
-        lista = nombres.get(nif, [])
-        c.nombre = Counter(lista).most_common(1)[0][0] if lista else ""
+        c.nombre, c.nombre_roto = _nombre_leido_de(nif, nombres.get(nif, []))
         c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
         # El nombre con el que ya se le conoce (aqui o en la suite) manda
         # sobre las variantes leidas en las facturas.
-        c.nombre = clientes.nombre_confirmado(nif) or c.nombre
+        confirmado = clientes.nombre_confirmado(nif)
+        if confirmado:
+            c.nombre, c.nombre_roto = confirmado, False
         c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
 
     # Con empate se propone al que RECIBE las facturas: un taco de facturas
@@ -163,6 +173,20 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     empate = len(orden) > 1 and orden[0].puntos == orden[1].puntos
     return Analisis(candidatos=orden, dudoso=homonimo or empate,
                     homonimo=homonimo, empate=empate)
+
+
+def _nombre_leido_de(nif: str, lista: list) -> tuple:
+    """(nombre, roto) de una parte del lote: el más leído de las lecturas
+    buenas; si todas traen un carácter invisible, el recuperado con lo que ya
+    se conoce de ese NIF o, si no se puede, el limpio marcado como roto."""
+    buenos = [n for n in lista if not tiene_invisibles(n)]
+    if buenos:
+        return Counter(buenos).most_common(1)[0][0], False
+    if not lista:
+        return "", False
+    roto = Counter(lista).most_common(1)[0][0]
+    recuperado = reparar(roto, _nombres_conocidos(nif))
+    return (recuperado, False) if recuperado else (limpiar(roto)[0], True)
 
 
 def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
@@ -319,20 +343,70 @@ def _opcion(valor) -> Optional[str]:
 # Lo justo para identificar la factura (criterio del usuario, 09/10/2026): un
 # número o un nombre larguísimo casi siempre es una lectura desbocada, y no
 # hace falta entero para el registro. Topes generosos: una factura de verdad
-# no llega (Aplifisa ya recorta el nombre a 40 al exportar).
-MAX_NUMERO = 30
-MAX_NOMBRE_LEIDO = 60
+# no llega (Aplifisa ya recorta el nombre a 40 al exportar). El nombre es la
+# clave de la memoria de proveedores: a 60 dejaban de encontrarse los nombres
+# largos guardados enteros (comunidades de propietarios…).
+# El número, hasta 60: lo que admite el SII (NumSerieFacturaEmisor). Con
+# menos se recortaba uno de verdad, que ya no casaba con el exportado entero
+# por la 1.24.0 (ni «ya exportada» ni el cuadre).
+MAX_NUMERO = 60
+MAX_NOMBRE_LEIDO = 120
 MAX_NIF = 20
+
+
+def _nombres_conocidos(nif) -> list:
+    """Los nombres que ya se conocen de este NIF (memoria y clientes)."""
+    nif = normaliza_nif(nif)
+    if not nif:
+        return []
+    nombres = [f.get("nombre") for f in proveedores.leer_todo().values()
+               if isinstance(f, dict) and normaliza_nif(f.get("nif")) == nif]
+    try:
+        nombres.append(clientes.nombre_confirmado(nif))
+        nombres.append(clientes.nombre_guardado(nif))
+    except Exception:       # el directorio de la suite puede no estar
+        pass
+    return [n for n in nombres if n]
+
+
+def _claves_de_la_124() -> dict:
+    """{clave de hoy: ficha} de los NIF que la 1.24.0 guardó con una clave
+    que hoy ya no sale al leer (nombre roto en la clave, o nombre más largo
+    que MAX_NOMBRE_LEIDO). Si dos NIF distintos dan la misma clave, ninguno."""
+    salida, dudosas = {}, set()
+    for k, ficha in proveedores.leer_todo().items():
+        if not ficha.get("nif"):
+            continue
+        nombre = str(ficha.get("nombre") or "")
+        claves = {clave_proveedor(limpiar(k)[0])} if tiene_invisibles(k) else set()
+        if clave_proveedor(nombre) == k:
+            claves.add(clave_proveedor(acotar_nombre(limpiar(nombre)[0])))
+        for otra in claves - {k, ""}:
+            previa = salida.setdefault(otra, ficha)
+            if normaliza_nif(previa.get("nif")) != normaliza_nif(ficha.get("nif")):
+                dudosas.add(otra)
+    return {k: v for k, v in salida.items() if k not in dudosas}
 
 
 def acotar_numero(valor) -> str:
     """El número de factura con lo que la identifica: si es demasiado largo,
-    se queda el FINAL (ahí va el contador; el principio suele ser texto como
-    «FACTURA Nº» o la serie)."""
-    texto = " ".join(str(valor or "").split())
+    el principio (el nº o la serie) y el final (el contador), con «...» en
+    medio. Quedarse solo con el final juntaba facturas distintas («0007/2026
+    MANTENIMIENTO…» y «0008/2026 MANTENIMIENTO…») en el mismo nº."""
+    texto = " ".join(limpiar(str(valor or ""))[0].split())
     if len(texto) <= MAX_NUMERO:
         return texto
-    return texto[-MAX_NUMERO:].lstrip(" -/.:")
+    cabeza = (MAX_NUMERO - 3) // 2
+    return (f"{texto[:cabeza].rstrip()}..."
+            f"{texto[cabeza + 3 - MAX_NUMERO:].lstrip()}")
+
+
+def _es_el_cliente(nombre_leido, cliente_nombre) -> bool:
+    """Si el nombre leído es el del cliente, aunque traiga una letra rota: el
+    del lote ya llega limpio (o reparado) y el leído no."""
+    limpio, roto = limpiar(nombre_leido)
+    return _mismo_nombre(limpio, cliente_nombre) or bool(
+        roto and cliente_nombre and reparar(nombre_leido, [cliente_nombre]))
 
 
 def acotar_nombre(valor) -> str:
@@ -365,8 +439,8 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         tipo, nombre, nif = "gasto", e_nom, datos.get("emisor_nif")
     else:
         # Sin NIF decisivo -> comparar nombres
-        es_emisor = _mismo_nombre(e_nom, cliente_nombre)
-        es_receptor = _mismo_nombre(r_nom, cliente_nombre)
+        es_emisor = _es_el_cliente(e_nom, cliente_nombre)
+        es_receptor = _es_el_cliente(r_nom, cliente_nombre)
         if es_emisor and not es_receptor:
             tipo, nombre, nif = "venta", r_nom, datos.get("receptor_nif")
             if not e_nif:
@@ -381,7 +455,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
     # Un nombre coincidente no confirma un NIF explícito de otra persona.
     for rol, nom, leido in (("emisor", e_nom, e_nif),
                             ("destinatario", r_nom, r_nif)):
-        if (_mismo_nombre(nom, cliente_nombre) and leido != cliente_nif
+        if (_es_el_cliente(nom, cliente_nombre) and leido != cliente_nif
                 and validar_nif(leido)):
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
@@ -404,6 +478,27 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         cuenta, gxx, aviso_cuenta = "200", "200", ""
     if aviso_cuenta:
         aviso = f"{aviso} {aviso_cuenta}".strip()
+
+    # Un nombre con un carácter invisible (una tilde mal copiada de un PDF):
+    # se recupera con los nombres ya conocidos de ese NIF; si no se puede, se
+    # quita el carácter y se avisa para escribirlo bien.
+    nombre_limpio, roto = limpiar(nombre)
+    sin_letra = False
+    if roto:
+        recuperado = reparar(nombre, _nombres_conocidos(nif))
+        if recuperado:
+            nombre_limpio = recuperado
+        else:
+            sin_letra = True
+            aviso = (f"{aviso} El nombre «{visible(nombre)}» traía un carácter "
+                     "que no se ve (una letra con tilde mal leída): escríbalo "
+                     "bien y se recordará.").strip()
+    nombre = nombre_limpio
+    num_leido = " ".join(limpiar(str(datos.get("num_factura") or ""))[0].split())
+    if len(num_leido) > MAX_NUMERO:
+        aviso = (f"{aviso} El nº de factura leído es muy largo («{num_leido[:60]}"
+                 f"{'…' if len(num_leido) > 60 else ''}»): se ha acortado. "
+                 "Compruébelo.").strip()
 
     # Construir Factura (una por linea de IVA)
     lineas = datos.get("lineas_iva") or [{}]
@@ -436,6 +531,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         sin_nif_destinatario=(tipo == "gasto" and not r_nif
                               and not datos.get("_error")),
         rectifica_a=acotar_numero(datos.get("sustituye_a")),
+        nombre_sin_letra=(acotar_nombre(nombre) if sin_letra else ""),
     )
     facturas = []
     for i, linea in enumerate(lineas):
@@ -616,14 +712,24 @@ def clave_proveedor(nombre) -> str:
     return " ".join(sorted(_tokens_nombre(nombre)))
 
 
-def recordar_nif(nombre, nif, manual: bool = False) -> bool:
+def recordar_nif(nombre, nif, manual: bool = False,
+                 guardar_nombre: bool = True) -> bool:
     """Guarda el NIF de un proveedor para los proximos lotes (y otros clientes).
     Solo se recuerdan NIF que pasan el digito de control."""
     nif = normaliza_nif(nif)
     clave = clave_proveedor(nombre)
     if not clave or not validar_nif(nif):
         return False
-    return proveedores.guardar(clave, nif, str(nombre or "").strip(), manual)
+    return proveedores.guardar(
+        clave, nif, str(nombre or "").strip() if guardar_nombre else "", manual)
+
+
+def nombre_sin_letra(f) -> bool:
+    """El nombre de la fila es el que se quedó sin una letra (carácter
+    invisible sin recuperar) y nadie lo ha corregido: no se aprende, o se
+    impondría a las lecturas buenas de ese NIF."""
+    sin_letra = getattr(f, "nombre_sin_letra", "")
+    return bool(sin_letra) and f.nombre == sin_letra
 
 
 def aprender_nifs(procesadas: List[FacturaProcesada]) -> int:
@@ -647,6 +753,8 @@ def aprender_nifs_exportados(facturas) -> int:
     """
     n, vistos = 0, set()
     for f in facturas:
+        if nombre_sin_letra(f):
+            continue    # le falta una letra y nadie lo corrigió: no se aprende
         clave = (clave_proveedor(f.nombre), normaliza_nif(f.nif))
         if clave in vistos:
             continue
@@ -709,11 +817,17 @@ def completar_desde_memoria(procesadas: List[FacturaProcesada],
     """
     completados = 0
     conocidos = None            # los NIF del cliente, solo si hacen falta
+    de_antes = None             # las claves de la 1.24.0, solo si hacen falta
     for pr in procesadas:
         if not pr.facturas:
             continue
         f = pr.facturas[0]
-        ficha = proveedores.leer(clave_proveedor(f.nombre))
+        clave = clave_proveedor(f.nombre)
+        ficha = proveedores.leer(clave)
+        if not ficha and clave:
+            if de_antes is None:
+                de_antes = _claves_de_la_124()
+            ficha = de_antes.get(clave)
         if not ficha:
             continue
         actual = normaliza_nif(f.nif)
@@ -1178,8 +1292,8 @@ def nombres_guardados(solo_a_mano: bool = False) -> Dict[str, str]:
         if solo_a_mano and not ficha.get("nombre_manual"):
             continue
         nif = normaliza_nif(ficha.get("nif"))
-        if not nif or not ficha.get("nombre"):
-            continue
+        if not nif or not ficha.get("nombre") or tiene_invisibles(ficha["nombre"]):
+            continue        # un nombre roto guardado no se impone a nadie
         # El corregido a mano manda: se ponga antes o despues en el fichero.
         if ficha.get("nombre_manual") or nif not in por_nif:
             por_nif[nif] = ficha["nombre"]
@@ -1324,9 +1438,8 @@ def recordar_nombre_proveedor(nif, nombre) -> bool:
     nif, nombre = normaliza_nif(nif), str(nombre or "").strip()
     if not nombre:
         return False
-    ficha = proveedores.buscar_por_nif(nif) if nif else None
-    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
-        else clave_proveedor(nombre)
+    clave, ficha = proveedores.buscar_clave_por_nif(nif) if nif else (None, None)
+    clave = clave or clave_proveedor(nombre)
     guardado = proveedores.guardar_campos(clave, nif=nif or None, nombre=nombre,
                                           nombre_manual=True)
     if nif:
@@ -1336,13 +1449,17 @@ def recordar_nombre_proveedor(nif, nombre) -> bool:
         for otra, datos in proveedores.leer_todo().items():
             if (otra != clave and normaliza_nif(datos.get("nif")) == nif
                     and datos.get("nombre_manual")):
-                proveedores.guardar_campos(otra, nombre=nombre)
+                proveedores.guardar_campos(otra, nombre=nombre,
+                                           nombre_manual=True)
     return guardado
 
 
 # La cuenta de antes de la 1.25 (no se sabe de qué cliente era): se conserva
 # con esta clave y se sigue poniendo como hasta ahora.
 CUENTA_DE_ANTES = "*"
+# La que se puso en un lote cuyo cliente no tiene NIF (cuando ya hay cuentas
+# por cliente): solo vale para otro lote sin NIF; en los demás, «otro cliente».
+CUENTA_SIN_NIF = "~"
 
 
 def _cuentas_por_cliente(ficha) -> dict:
@@ -1356,7 +1473,8 @@ def _cuentas_por_cliente(ficha) -> dict:
 
 
 def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
-                              cliente_nif: str = "") -> bool:
+                              cliente_nif: str = "",
+                              guardar_nombre: bool = True) -> bool:
     """La cuenta contable que el usuario le pone a este proveedor.
 
     Es lo mismo que hace Aplifisa: la primera vez se dice, y las siguientes
@@ -1367,9 +1485,8 @@ def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
     if not cuenta or not es_valido(cuenta, gxx):
         return False
     nif = normaliza_nif(nif)
-    ficha = proveedores.buscar_por_nif(nif) if nif else None
-    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
-        else clave_proveedor(nombre)
+    clave, ficha = proveedores.buscar_clave_por_nif(nif) if nif else (None, None)
+    clave = clave or clave_proveedor(nombre)
     anterior = ficha or proveedores.leer_todo().get(clave) or {}
     por_cliente = _cuentas_por_cliente(anterior)
     cliente = normaliza_nif(cliente_nif)
@@ -1380,12 +1497,18 @@ def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
             por_cliente[CUENTA_DE_ANTES] = [anterior.get("cuenta"),
                                             anterior.get("gxx")]
         por_cliente[cliente] = [cuenta, gxx or None]
+    elif any(k not in (CUENTA_DE_ANTES, CUENTA_SIN_NIF) for k in por_cliente):
+        # Un cliente sin NIF no se puede distinguir, y ya hay cuentas por
+        # cliente: la suya vale para los lotes sin NIF; para un cliente con
+        # NIF es «de otro cliente» (en ámbar), no la de siempre en verde.
+        por_cliente[CUENTA_SIN_NIF] = [cuenta, gxx or None]
     else:
-        # Un cliente sin NIF no se puede distinguir: lo que pone vale como
-        # la cuenta de siempre (si no, la de antes ganaba para siempre).
+        # Sin cuentas por cliente todavía: lo que pone vale como la cuenta de
+        # siempre (si no, la de antes ganaba para siempre).
         por_cliente[CUENTA_DE_ANTES] = [cuenta, gxx or None]
     return proveedores.guardar_campos(clave, nif=nif or None,
-                                      nombre=str(nombre or "").strip() or None,
+                                      nombre=(str(nombre or "").strip() or None)
+                                      if guardar_nombre else None,
                                       cuenta=cuenta, gxx=(gxx or None),
                                       cuenta_manual=True,
                                       cuentas_cliente=por_cliente or None)
@@ -1395,9 +1518,8 @@ def ficha_de_cuenta(nif, nombre) -> tuple:
     """(clave, ficha tal cual) del proveedor cuya cuenta se va a recordar,
     para poder dejarla como estaba si se deshace."""
     nif = normaliza_nif(nif)
-    ficha = proveedores.buscar_por_nif(nif) if nif else None
-    clave = clave_proveedor(ficha["nombre"]) if ficha and ficha.get("nombre") \
-        else clave_proveedor(nombre)
+    clave, ficha = proveedores.buscar_clave_por_nif(nif) if nif else (None, None)
+    clave = clave or clave_proveedor(nombre)
     antes = proveedores.leer_todo().get(clave)
     return clave, (dict(antes) if isinstance(antes, dict) else None)
 
@@ -1425,7 +1547,8 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
             # el tratamiento pasa a «Factura con suplido», pero sigue en 200).
             continue
         por_cliente = _cuentas_por_cliente(ficha)
-        propia = por_cliente.get(cliente) if cliente else None
+        propia = por_cliente.get(cliente) if cliente \
+            else por_cliente.get(CUENTA_SIN_NIF)
         de_antes = por_cliente.get(CUENTA_DE_ANTES)
         # De otro cliente: solo si este cliente tiene NIF y no hay ni la suya
         # ni una de antes (que se pone como siempre).

@@ -97,6 +97,9 @@ class Factura:
     no_deducible: bool = False
     # Nº de la factura que esta rectifica o sustituye, si lo dice.
     rectifica_a: str = ""
+    # El nombre llegó con un carácter invisible y no se pudo recuperar la
+    # letra: el que quedó sin ella. Si nadie lo corrige, no se aprende.
+    nombre_sin_letra: str = ""
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -111,7 +114,8 @@ class Factura:
                      "tipo_revision", "verificacion", "discrepancias",
                      "paginas_documento", "tipo_documento", "moneda",
                      "mencion_iva", "posible_no_deducible",
-                     "sin_nif_destinatario", "no_deducible", "rectifica_a"}
+                     "sin_nif_destinatario", "no_deducible", "rectifica_a",
+                     "nombre_sin_letra"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 
