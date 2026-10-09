@@ -143,11 +143,20 @@ def _misma_que(ruta: str, hojas: "_Hojas") -> bool:
         with fitz.open(ruta) as existente:
             if existente.page_count != hojas.doc.page_count:
                 return False
-            rapida = hojas.rapida()
-            if rapida is not None and _huella_rapida(existente) == rapida:
+            if _iguales_sin_dibujar(existente, hojas):
                 return True
             return _huella(existente) == hojas.dibujada()
     except Exception:          # dañado o ilegible: no es «la misma»
+        return False
+
+
+def _iguales_sin_dibujar(existente, hojas: "_Hojas") -> bool:
+    """Solo dice «iguales» si lo son seguro; si no lo sabe (una letra que no
+    se puede sacar…), se comparan dibujadas, como antes."""
+    try:
+        rapida = hojas.rapida()
+        return rapida is not None and _huella_rapida(existente) == rapida
+    except Exception:
         return False
 
 

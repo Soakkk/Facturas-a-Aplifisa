@@ -118,6 +118,7 @@ class ArchivoMixin:
 
     def _deshacer_recogida(self) -> None:
         from facturas_excel import recoger
+        self._esperar_archivo()      # antes, lo que se esté archivando
         try:
             vueltos = recoger.deshacer_ultima(archivo.carpeta_escaneos())
         except (OSError, ValueError) as error:
@@ -206,6 +207,9 @@ class ArchivoMixin:
         lo averigua, el PDF se queda en «Sin identificar» y se puede colocar a
         mano desde «Escaneos guardados».
         """
+        # La lectura puede acabar mientras se archiva otra exportación: el
+        # PDF no se mueve al archivo hasta que eso termine.
+        self._esperar_archivo()
         if (not copiar and not self._escaneo_reciente
                 and not self._escaneo_sin_identificar) \
                 or len(self._rutas_actuales) != 1:

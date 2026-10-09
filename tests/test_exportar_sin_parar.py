@@ -9,6 +9,7 @@ import os
 import zipfile
 
 import fitz
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from facturas_excel import archivo, expediente
@@ -151,6 +152,25 @@ def test_el_mismo_pdf_guardado_de_otra_manera_sigue_siendo_el_mismo(tmp_path):
     assert sorted(os.listdir(os.path.dirname(ruta))) == [os.path.basename(ruta)]
 
 
+def test_si_no_se_sabe_sin_dibujar_se_comparan_dibujadas(tmp_path, monkeypatch):
+    """Si la comparación rápida no se puede hacer (una letra que PyMuPDF no
+    saca…), no se da por «distinto»: se dibujan, como antes, y no sale un
+    «(2)» de un PDF que ya estaba."""
+    from facturas_excel import separar
+    base = str(tmp_path / "archivo")
+    taco = _taco_escaneado(base, 1)
+    f = _f("G-1", "PROVEEDOR", "12/02/2026", taco, 1)
+    [ruta] = separar.separar({"gasto": [f]}, base, *CLIENTE)["creados"]
+
+    def rota(_doc):
+        raise RuntimeError("letra ilegible")
+    monkeypatch.setattr(separar, "_huella_rapida", rota)
+    f.origen_imagen = os.path.join(os.path.dirname(os.path.dirname(ruta)),
+                                   separar.TACOS, "taco.pdf")
+    r = separar.separar({"gasto": [f]}, base, *CLIENTE)
+    assert (r["creados"], r["ya_estaban"]) == ([], 1)
+
+
 def test_otra_hoja_escaneada_con_el_mismo_nombre_tiene_su_pdf(tmp_path):
     """Dos tiques sin número del mismo proveedor y día, en dos exportaciones:
     son fotos distintas, así que el segundo lleva « (2)» y no se pisa."""
@@ -253,7 +273,6 @@ def test_si_se_toca_el_expediente_a_mano_se_rehace_entero(tmp_path, monkeypatch)
 
 
 def test_si_falla_al_rehacerlo_el_expediente_de_antes_queda_entero(tmp_path, monkeypatch):
-    import pytest
     base = str(tmp_path / "archivo")
     e = _archivo_con_facturas(base)
     primero = expediente.crear(base, e)
@@ -429,3 +448,33 @@ def test_si_mientras_se_archiva_se_avisa_de_otra_cosa_no_se_tapa(monkeypatch):
     v._esperar_archivo()
     assert v.banda.historial[-1] == "1 línea(s) eliminada(s)."
     assert "2 factura(s) guardadas en su propio PDF" in v.lbl_estado.text()
+
+
+
+@pytest.mark.parametrize("accion", [
+    lambda v: v.procesar_rutas([]),
+    lambda v: v._recolocar_escaneo("", []),
+    lambda v: v._deshacer_recogida(),
+    lambda v: v._olvidar_exportacion(),
+    lambda v: v.esperar_hilos(),
+], ids=["cargar", "recolocar_escaneo", "deshacer_recogida", "olvidar_exportacion",
+        "cerrar"])
+def test_lo_que_toca_el_archivo_espera_a_que_acabe(monkeypatch, accion):
+    """Nada que mueva PDF del archivo, use PyMuPDF o apunte en el registro va
+    a la vez que el archivo de la exportación (como cuando la ventana se
+    quedaba parada hasta acabar)."""
+    import threading
+    from PySide6.QtWidgets import QMessageBox
+    v, _gastos = _ventana_con_taco(monkeypatch)
+    _ventana_de_la_prueba[0] = v
+    seguir, _visto = _separar_que_espera(monkeypatch)
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    v._exportar_todo()
+    assert v.archivando()
+    threading.Timer(0.3, seguir.set).start()
+
+    accion(v)
+
+    # Ya ha acabado (y se ha contado) cuando la acción se pone a lo suyo.
+    assert not v.archivando()
+    assert any("2 factura(s) guardadas en su propio PDF" in t for t in v.banda.historial)
