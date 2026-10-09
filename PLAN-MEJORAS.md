@@ -106,6 +106,56 @@ un subagente.
 - **Funcionamiento** (`funcionamiento.md`): casi todo hecho en la 1.24 y la
   1.25; repasar lo que quede.
 
+### Escáner: cuello de botella y nitidez (consulta del 09/10/2026)
+
+Informes verificados en `docs/revisiones/`: `escaneo-programa.md`,
+`escaner-compra.md` y `factura-electronica.md`.
+
+**Qué pasa hoy.** Cada hoja pierde calidad tres veces:
+1. se escanea a 200 ppp;
+2. NAPS2 la guarda en JPEG de calidad 75 (con `--noprofile`);
+3. antes de mandarla a Gemini se vuelve a pasar a imagen a 150 ppp, en JPEG
+   de calidad 80.
+
+Además, la HP M148:
+- no hace las dos caras por el alimentador;
+- no detecta dos hojas pegadas;
+- no admite tiques por el alimentador (el mínimo es 148×210 mm).
+
+**El usuario piensa comprar un escáner de documentos** (unos 200 €, en
+Amazon). Le recomendé el Canon DR-C230 (unos 300 €) o el Ricoh SP-1120N
+(235–255 €). Hay que preguntarle cuál compra.
+
+**Para la 1.26.** Medir antes de cambiar.
+1. **Apuntar tiempos.** Por taco: escaneo, páginas y lectura.
+2. **Nitidez:**
+   - escanear a 300 ppp en grises;
+   - subir la calidad del JPEG con un perfil de NAPS2 en vez de
+     `--noprofile`;
+   - no reducir la imagen antes de mandarla a Gemini.
+
+   Con Gemini 3 los tokens de una imagen tienen un tope fijo: medir el coste
+   y la lectura con el registro de costes.
+3. **Escáner nuevo:**
+   - elegir controlador TWAIN/WIA/eSCL (hoy `--driver wia` está fijo y los
+     escáneres solo se listan por WIA);
+   - dos caras y quitar las hojas en blanco;
+   - sin cristal.
+4. **Entre tacos:**
+   - «Escanear otro igual», recordar el tipo y quitar el campo Cliente, que
+     no sirve;
+   - que el tipo vaya con cada escaneo (punto 20 de `aplicacion.md`);
+   - avisos sin ventana al acabar cada bloque.
+5. **NAPS2:** que un cuelgue no bloquee (tiempo máximo, matar el proceso) y
+   un botón «Cancelar escaneo».
+6. **Más adelante:**
+   - carpeta vigilada;
+   - aceptar fotos HEIC y TIFF de varias páginas;
+   - bandeja por cliente y hojas separadoras;
+   - importar facturas electrónicas en UBL. El RD 238/2026 y la Orden
+     HAC/1028/2026 ya están publicados; calendario aún sin confirmar:
+     octubre de 2027 para más de 8 M€ y octubre de 2028 para el resto.
+
 ### Preguntas al usuario sin contestar (`config/pendientes.md`, 4–7)
 
 - Formato de Aplifisa para la ISP, el tipo de factura y la clave de régimen.
