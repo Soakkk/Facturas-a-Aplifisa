@@ -156,6 +156,17 @@ Amazon). Le recomendé el Canon DR-C230 (unos 300 €) o el Ricoh SP-1120N
      HAC/1028/2026 ya están publicados; calendario aún sin confirmar:
      octubre de 2027 para más de 8 M€ y octubre de 2028 para el resto.
 
+### El equipo del usuario (09/10/2026)
+
+PC nuevo:
+- 16 GB de RAM;
+- SSD de 1 TB, con ~85 % libre;
+- pantalla 2K.
+
+Con la 1.25, un PDF de 200 MB sube el programa a ~1 GB: le sobra. La 1.26
+apunta a menos de 500 MB. La limpieza de copias en disco no corre prisa,
+pero sigue en el plan.
+
 ### Preguntas al usuario sin contestar (`config/pendientes.md`, 4–7)
 
 - Formato de Aplifisa para la ISP, el tipo de factura y la clave de régimen.
