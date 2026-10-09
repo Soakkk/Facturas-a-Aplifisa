@@ -17,6 +17,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from .extraccion import MAX_TOKENS_SALIDA
+
 # Dato de la Factura -> nombre que se le da a Gemini.
 CAMPOS = {
     "nif": "nif", "nombre": "nombre", "num_factura": "num_factura",
@@ -141,8 +143,7 @@ def pedir(api_key: str, modelo: str, img: bytes,
     """Pregunta a Gemini y devuelve (cajas, consumos)."""
     from google import genai
     from google.genai import types
-    from .extraccion import (MAX_TOKENS_SALIDA, TIEMPO_LIMITE, _consumo,
-                             _parse_json_tolerante)
+    from .extraccion import TIEMPO_LIMITE, _consumo, _parse_json_tolerante
 
     if not lista:
         return [], []

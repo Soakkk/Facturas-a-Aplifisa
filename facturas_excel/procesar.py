@@ -123,10 +123,44 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     nombres: Dict[str, list] = defaultdict(list)
     homonimo = False
     for d in lista_datos:
-        try:
-            homonimo = _contar_partes(_partes_de(d), cuenta, nombres) or homonimo
-        except Exception:
-            _apuntar_hoja_rara("buscar el cliente del bloque")
+        # Solo los NIF y nombres que son texto (ver _partes_de).
+        d = _partes_de(d)
+        for campo_nif, campo_nom, papel in (
+                ("emisor_nif", "emisor_nombre", "e"),
+                ("receptor_nif", "receptor_nombre", "r")):
+            leido = normaliza_nif(d.get(campo_nif))
+            nombre_leido, roto = limpiar(d.get(campo_nom))
+            nombre_leido = nombre_leido or ""
+            # Para elegir el nombre, el roto tal cual: así gana una lectura
+            # buena y, si no la hay, se intenta recuperar la letra.
+            para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
+            conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
+            if conocido and validar_nif(leido) and leido != conocido[0]:
+                # El nombre de un cliente confirmado con OTRO NIF válido: o es
+                # su NIF mal leído, o es otra persona que se llama igual (un
+                # homónimo). No se decide en silencio: los dos son candidatos
+                # y se pregunta (si no, el lote entero se iba a otro cliente).
+                homonimo = True
+                otro = cuenta.setdefault(leido, Candidato(nif=leido, nombre=""))
+                otro.veces += 1
+                if papel == "e":
+                    otro.como_emisor += 1
+                else:
+                    otro.como_receptor += 1
+                nombres[leido].append(para_elegir)
+            nif = conocido[0] if conocido else leido
+            if not nif:
+                continue
+            c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
+            c.veces += 1
+            if papel == "e":
+                c.como_emisor += 1
+            else:
+                c.como_receptor += 1
+            if conocido and conocido[1]:
+                nombres[nif].append(conocido[1])
+            elif nombre_leido:
+                nombres[nif].append(para_elegir)
 
     for nif, c in cuenta.items():
         c.nombre, c.nombre_roto = _nombre_leido_de(nif, nombres.get(nif, []))
@@ -150,57 +184,14 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
 
 def _partes_de(datos) -> dict:
     """Los NIF y nombres de una hoja, solo si son texto: una lista, un número
-    o un dict (lectura rara) no cuentan para decidir el cliente (una lista
-    rompía después el recuento de nombres y se perdía el bloque)."""
+    o un dict (lectura rara de una sesión vieja) no cuentan para decidir el
+    cliente. Una lista rompía después el recuento de nombres y se perdía el
+    bloque entero."""
     if not isinstance(datos, dict):
         return {}
     return {campo: datos[campo] for campo in (
         "emisor_nif", "emisor_nombre", "receptor_nif", "receptor_nombre")
         if isinstance(datos.get(campo), str)}
-
-
-def _contar_partes(d: dict, cuenta: Dict[str, Candidato],
-                   nombres: Dict[str, list]) -> bool:
-    """Suma las dos partes de una hoja a los candidatos del cliente; True si
-    una es un homónimo de un cliente confirmado."""
-    homonimo = False
-    for campo_nif, campo_nom, papel in (
-            ("emisor_nif", "emisor_nombre", "e"),
-            ("receptor_nif", "receptor_nombre", "r")):
-        leido = normaliza_nif(d.get(campo_nif))
-        nombre_leido, roto = limpiar(d.get(campo_nom))
-        nombre_leido = nombre_leido or ""
-        # Para elegir el nombre, el roto tal cual: así gana una lectura
-        # buena y, si no la hay, se intenta recuperar la letra.
-        para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
-        conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
-        if conocido and validar_nif(leido) and leido != conocido[0]:
-            # El nombre de un cliente confirmado con OTRO NIF válido: o es
-            # su NIF mal leído, o es otra persona que se llama igual (un
-            # homónimo). No se decide en silencio: los dos son candidatos
-            # y se pregunta (si no, el lote entero se iba a otro cliente).
-            homonimo = True
-            otro = cuenta.setdefault(leido, Candidato(nif=leido, nombre=""))
-            otro.veces += 1
-            if papel == "e":
-                otro.como_emisor += 1
-            else:
-                otro.como_receptor += 1
-            nombres[leido].append(para_elegir)
-        nif = conocido[0] if conocido else leido
-        if not nif:
-            continue
-        c = cuenta.setdefault(nif, Candidato(nif=nif, nombre=""))
-        c.veces += 1
-        if papel == "e":
-            c.como_emisor += 1
-        else:
-            c.como_receptor += 1
-        if conocido and conocido[1]:
-            nombres[nif].append(conocido[1])
-        elif nombre_leido:
-            nombres[nif].append(para_elegir)
-    return homonimo
 
 
 def _nombre_leido_de(nif: str, lista: list) -> tuple:
@@ -228,8 +219,23 @@ def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
 
 def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
     """(nombre, nif) del cliente del lote. Compatible con lo de siempre."""
-    mejor = analizar_cliente(lista_datos).mejor
+    try:
+        mejor = analizar_cliente(lista_datos).mejor
+    except Exception:
+        # Una hoja rara no tira el bloque (25 hojas ya pagadas): se busca
+        # el cliente con las hojas que se pueden analizar, una a una.
+        _apuntar_hoja_rara("buscar el cliente del bloque")
+        mejor = analizar_cliente(
+            [d for d in lista_datos if _se_puede_analizar(d)]).mejor
     return (mejor.nombre, mejor.nif) if mejor else ("", "")
+
+
+def _se_puede_analizar(datos) -> bool:
+    try:
+        analizar_cliente([datos])
+        return True
+    except Exception:
+        return False
 
 
 @dataclass

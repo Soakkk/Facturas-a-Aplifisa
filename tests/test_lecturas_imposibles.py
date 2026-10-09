@@ -414,6 +414,23 @@ def test_un_nombre_raro_no_impide_saber_el_cliente(nombre):
     lecturas[6] = lectura(6, emisor_nombre=nombre)
     lecturas[7] = lectura(7, receptor_nombre=nombre, receptor_nif=["12345678Z"])
     assert procesar.detectar_cliente(lecturas) == CLIENTE
+    # También la ventana, que analiza el lote entero tras cada bloque.
+    assert procesar.analizar_cliente(lecturas).mejor.nif == CLIENTE[1]
+
+
+def test_si_una_hoja_hace_fallar_la_busqueda_del_cliente_se_sigue_sin_ella(
+        monkeypatch):
+    # Un fallo que no se ha previsto (aquí, inventado) en una sola hoja.
+    limpiar = procesar.limpiar
+
+    def limpiar_que_falla(texto):
+        if texto == "NOMBRE QUE FALLA":
+            raise RuntimeError("fallo inventado")
+        return limpiar(texto)
+    monkeypatch.setattr(procesar, "limpiar", limpiar_que_falla)
+    lecturas = [lectura(i) for i in range(25)]
+    lecturas[6] = lectura(6, emisor_nombre="NOMBRE QUE FALLA")
+    assert procesar.detectar_cliente(lecturas) == CLIENTE
 
 
 @pytest.mark.parametrize("lineas", ["21%", 5, {"base": 10}, None],
