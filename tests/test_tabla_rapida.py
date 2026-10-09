@@ -382,3 +382,27 @@ def test_filtrar_solo_oculta_o_ensena_las_filas_que_cambian(tmp_path, monkeypatc
     v.combo_filtro_estado.setCurrentIndex(0)            # todas otra vez
     assert sorted(r for r, _oculta in cambios) == ocultas
     assert not any(v.tabla.isRowHidden(r) for r in range(v.tabla.rowCount()))
+
+
+# ------------------------------------------------------- fechas recordadas
+def test_una_fecha_ya_entendida_no_se_vuelve_a_descifrar(monkeypatch):
+    from datetime import date, datetime
+    from facturas_excel import validacion
+
+    class Contada(datetime):
+        veces = 0
+
+        @classmethod
+        def strptime(cls, texto, formato):
+            cls.veces += 1
+            return datetime.strptime(texto, formato)
+    monkeypatch.setattr(validacion, "datetime", Contada)
+    assert validacion.fecha_de("2031-07-19") == date(2031, 7, 19)
+    veces = Contada.veces
+    assert veces >= 1
+    for _ in range(5):
+        assert validacion.fecha_de("2031-07-19") == date(2031, 7, 19)
+    assert Contada.veces == veces
+    # Lo raro (que no se puede recordar) se entiende igual que siempre.
+    assert validacion.fecha_de(["19/07/2031"]) is None
+    assert validacion.fecha_de(None) is None and validacion.fecha_de("") is None

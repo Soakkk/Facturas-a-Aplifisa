@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Dict, List, Optional
 
 from .modelo import Factura
@@ -93,6 +94,13 @@ def fecha_de(fecha: str) -> Optional[date]:
     La validación básica solo comprueba que la fecha exista. El periodo fiscal
     esperado del lote se controla aparte en la interfaz.
     """
+    try:
+        return _fecha_recordada(fecha)
+    except TypeError:                     # algo que no se puede recordar
+        return _fecha_de(fecha)
+
+
+def _fecha_de(fecha) -> Optional[date]:
     if not fecha:
         return None
     texto = str(fecha).strip()
@@ -102,6 +110,11 @@ def fecha_de(fecha: str) -> Optional[date]:
         except ValueError:
             continue
     return None
+
+
+# Cada revisión del lote pregunta la fecha de cada línea unas diez veces, y
+# con 800 líneas se notaba: lo que ya se entendió no se vuelve a descifrar.
+_fecha_recordada = lru_cache(maxsize=8192)(_fecha_de)
 
 
 def normalizar_fecha(fecha):
