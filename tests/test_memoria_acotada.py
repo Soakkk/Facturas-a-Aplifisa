@@ -399,3 +399,92 @@ def test_el_asa_se_compara_y_se_guarda_como_la_imagen():
     assert len(pickle.dumps(asa)) < 250
     assert imagen_hoja.como_bytes(asa) == imagen_hoja.como_bytes(imagen) == imagen
     assert imagen_hoja.como_bytes(None) == b""
+
+
+# ------------------------------------------ «Vaciar todo» suelta el lote (P8)
+def _datos_ambar(numero):
+    """Una factura en ámbar: cuenta puesta por descarte (se puede revisar)."""
+    datos = _datos(numero)
+    datos.pop("cuenta_gasto")
+    datos.pop("subclave_gxx")
+    return datos
+
+
+def _ventana_ambar(tmp_path, cuantas=3):
+    from facturas_excel.app import VentanaPrincipal
+    from facturas_excel.clientes import marcar_cliente
+    from facturas_excel.procesar import preparar_lote
+
+    marcar_cliente("12345678Z", "CLIENTE PRUEBA")
+    ruta = str(tmp_path / "taco.pdf")
+    crudos = [(_jpeg(f"hoja {n}"), ruta, n, _datos_ambar(f"F-{n}"))
+              for n in range(1, cuantas + 1)]
+    v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._rutas_actuales = [ruta]
+    v._on_terminado(preparar_lote(crudos, "CLIENTE PRUEBA", "12345678Z"),
+                    "CLIENTE PRUEBA", "12345678Z", crudos)
+    assert [f.estado for f in v.filas] == ["revisar"] * cuantas
+    return v
+
+
+def test_vaciar_todo_suelta_las_filas_aunque_se_pudiera_deshacer(
+        tmp_path, monkeypatch):
+    import gc
+    import weakref
+    from PySide6.QtWidgets import QMessageBox
+
+    v = _ventana_ambar(tmp_path)
+    assert v._marcar_revisada([0, 1, 2]) is not None   # banda con «Deshacer»
+    assert v.banda.isVisibleTo(v)
+    vivas = [weakref.ref(fila) for fila in v.filas]
+    vaciados = _apuntar_vaciados(monkeypatch)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    v._vaciar_todo()
+    gc.collect()
+    assert [r() for r in vivas] == [None, None, None]
+    # El «Deshacer» de un lote que ya no está se va con él; y la caché de
+    # MuPDF también se vacía.
+    assert not v.banda.isVisibleTo(v)
+    assert vaciados == [(100, True)]
+
+
+def test_vaciar_todo_suelta_el_ultimo_senalar_en_el_documento(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from facturas_excel import claves, localizar
+
+    monkeypatch.setattr(localizar, "pedir", lambda *a: ([], [("modelo", 1, 1)]))
+    monkeypatch.setattr(claves, "leer_api_key", lambda: "clave-de-prueba")
+    v = _ventana_ambar(tmp_path, 2)
+    v._localizar_dudosas()
+    v._hilo_localizar.wait(5000)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    v._vaciar_todo()
+    assert v._hilo_localizar is None
+
+
+def test_deshacer_marcar_revisada_solo_guarda_las_filas_que_cambian(tmp_path):
+    import gc
+    import weakref
+
+    v = _ventana_ambar(tmp_path)
+    deshacer = v._marcar_revisada([0])
+    assert deshacer is not None
+    otras = [weakref.ref(fila) for fila in v.filas[1:]]
+    # El lote cambia (otro bloque, «Vaciar todo»…) mientras la banda aún
+    # ofrece deshacer: las líneas que no se marcaron no se quedan retenidas.
+    v._bloques = []
+    v._rellenar_tabla()
+    gc.collect()
+    assert [r() for r in otras] == [None, None]
+
+
+def test_deshacer_marcar_revisada_sigue_devolviendo_el_aviso(tmp_path):
+    v = _ventana_ambar(tmp_path)
+    avisos = [fila.aviso for fila in v.filas]
+    deshacer = v._marcar_revisada([1])
+    assert v.filas[1].factura.revision_confirmada
+    deshacer()
+    assert [fila.aviso for fila in v.filas] == avisos
+    assert not any(fila.factura.revision_confirmada for fila in v.filas)

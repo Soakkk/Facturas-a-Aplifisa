@@ -81,6 +81,12 @@ class BandaAvisos(QFrame):
         self._accion_deshacer = None
         self.hide()
 
+    def olvidar_deshacer(self) -> None:
+        """El «Deshacer» del aviso ya no vale (se ha vaciado el lote): se
+        quita ese aviso, que además retenía todo lo que deshacía."""
+        if self._accion_deshacer is not None:
+            self.ocultar()
+
     def _deshacer(self) -> None:
         accion = self._accion_deshacer
         self.ocultar()

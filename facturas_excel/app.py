@@ -8,6 +8,7 @@ plano -> autodetecta el cliente -> tabla de revision con miniatura y semaforo
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import sys
 import traceback
@@ -27,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from facturas_excel import (
     __version__, ajustes, archivo, copias, costes, errores, escaner, imagen_hoja,
-    notas_version, pendientes, proveedores, revision_gemini, sesion, updater,
+    notas_version, pdf, pendientes, proveedores, revision_gemini, sesion, updater,
     muestras_revision,
 )
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, BandaAvisos
@@ -2281,6 +2282,23 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._poner_cliente("Pendiente de detectar")
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
         sesion.borrar()
+        self._soltar_lote_vaciado()
+
+    def _soltar_lote_vaciado(self) -> None:
+        """Que «Vaciar todo» devuelva de verdad la memoria del lote.
+
+        Antes se quedaba casi toda: el «Deshacer» de la banda de avisos
+        retenía todas las filas, el último «¿De dónde sale?» sus hojas, y la
+        caché de MuPDF lo que se hubiera dibujado (con 337 líneas, de 670 MB
+        solo se soltaban 9)."""
+        if hasattr(self, "banda"):
+            # Deshacer algo del lote vaciado ya no tiene sentido.
+            self.banda.olvidar_deshacer()
+        hilo = getattr(self, "_hilo_localizar", None)
+        if hilo is not None and not hilo.isRunning():
+            self._hilo_localizar = None
+        pdf.vaciar_cache()
+        gc.collect()
 
     def _por_el_total(self) -> bool:
         """El cliente registra sus compras por el total factura: minorista en
@@ -2985,7 +3003,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # Revisar una cuenta que venía de otro cliente es decir que en este
         # también va ahí: se recuerda para este cliente y no vuelve a salir.
         # Lo de antes se guarda por si se deshace (el aviso y la ficha).
-        avisos_antes = [(registro, registro["aviso"]) for registro in self.filas]
+        # Solo las de estas facturas (las únicas que cambian aquí): el
+        # «Deshacer» de la banda no se queda con el lote entero.
+        avisos_antes = [(self.filas[fila], self.filas[fila]["aviso"])
+                        for fila in filas]
         fichas_antes = {}
         for fila in filas:
             if "en otro cliente" in (self.filas[fila]["aviso"] or ""):
