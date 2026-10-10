@@ -176,6 +176,7 @@ class LecturaMixin:
         if not en_curso and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
+            self._procesados_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         # Lo que queda por leer va con la sesión ya: el guardado solo se
@@ -230,8 +231,12 @@ class LecturaMixin:
                 # se pueden volver a leer (sus hojas no están).
                 fallidos = sum(1 for e in self._cola_guardada if e.get("fallido")) \
                     + sum(1 for e in self._fallidos_cola if e.get("sin_hojas"))
+                # Bloques distintos: uno que se vuelve a leer a mitad de cola
+                # contaba dos veces (5 procesados de un PDF de 4 bloques).
+                procesados = len({id(e) for e in self._procesados_cola if e}) \
+                    + sum(1 for e in self._procesados_cola if not e)
                 self.lbl_estado.setText(
-                    f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
+                    f"Cola terminada: {procesados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
                        if pendientes else ""))
                 if pendientes:
@@ -550,6 +555,7 @@ class LecturaMixin:
         actual = self._elemento_cola_actual
         sigue = actual is not None and not se_tira(actual)
         self._cola_total, self._cola_completados = len(self._cola) + sigue, 0
+        self._procesados_cola = []
         self._fallidos_cola = [e for e in self._fallidos_cola if not se_tira(e)]
         if actual is None:
             return
@@ -787,6 +793,7 @@ class LecturaMixin:
         if not self._lectura_en_curso() and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
+            self._procesados_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         self.btn_gastos.setEnabled(False)
@@ -806,6 +813,7 @@ class LecturaMixin:
         else:
             self._limpiar_parte_interna(elemento)
         self._cola_completados += 1
+        self._procesados_cola.append(elemento)
         if elemento and self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None
         if self._cola:
@@ -862,6 +870,7 @@ class LecturaMixin:
             return
         self._muestra_capturada(elemento)
         self._cola_completados += 1
+        self._procesados_cola.append(elemento)
         self._escaneo_reciente = False
         if self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None

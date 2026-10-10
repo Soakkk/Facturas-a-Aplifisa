@@ -151,6 +151,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola = []
         self._cola_total = 0
         self._cola_completados = 0
+        self._procesados_cola = []      # los de esta cola, para contarlos
         # Los bloques que no se pudieron leer (ver _on_fallo) y cuyo aviso
         # la persona aún no ha cerrado (ver _aviso_quitado); y ese aviso.
         self._fallidos_cola = []

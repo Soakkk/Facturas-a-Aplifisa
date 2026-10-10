@@ -1555,3 +1555,22 @@ def test_vaciar_todo_olvida_el_bloque_que_fallo_sin_sus_hojas(
     lectura.entregar(_bloque_de(lectura, 1, 10))
     assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
     assert not any("a.jpg" in texto for texto in ventana.banda.historial[avisos:])
+
+
+def test_volver_a_leer_a_mitad_de_cola_no_cuenta_dos_veces_el_bloque(
+        ventana, tmp_path, monkeypatch):
+    # Falla la parte 1 de un taco de 4, se pulsa «Volver a leer» mientras se
+    # lee la 2 y la 1 vuelve a fallar: la barra decía «5 bloque(s)
+    # procesado(s)» de un PDF de 4.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    ventana.banda.btn_deshacer.click()
+    for _ in range(3):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    lectura = WorkerFalso.creados[-1]
+    assert os.path.basename(lectura.rutas[0]).startswith("taco_parte_01")
+    _fallar(lectura, "Error 503 otra vez")
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 4 bloque(s) procesado(s). 1 no se pudieron leer (ver el aviso).")
