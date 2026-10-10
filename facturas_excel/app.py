@@ -151,6 +151,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola = []
         self._cola_total = 0
         self._cola_completados = 0
+        # Los bloques de esta cola que no se pudieron leer (ver _on_fallo).
+        self._fallidos_cola = []
         self._elemento_cola_actual = None
         # La lectura de la cola (ver LecturaMixin): la de ahora, las que aún
         # están acabando (un QThread que Python suelta mientras trabaja tumba

@@ -1268,6 +1268,38 @@ def test_el_aviso_de_los_bloques_que_fallan_vuelve_al_acabar_la_cola(
     assert ventana.banda.btn_deshacer.text() == "Volver a leer"
 
 
+def test_el_aviso_de_un_fallo_de_otra_cola_no_vuelve_al_acabar_esta(
+        ventana, tmp_path, monkeypatch):
+    # Un bloque de un taco falla y el aviso se cierra sin volver a leerlo.
+    # Al acabar cada carga posterior, aunque no fallara nada, volvía el aviso
+    # rojo fijo de aquel taco y la barra decía «1 no se pudieron leer».
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    assert "1 no se pudieron leer" in ventana.lbl_estado.text()
+    ventana.banda.btn_cerrar.click()
+
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert ventana.banda.isHidden() or "No se han podido" not in ventana.banda.lbl.text()
+    assert len(ventana._cola_guardada) == 1      # sigue por leer (Exportar lo dice)
+
+    # Lo que falla en esta cola y se vuelve a leer bien antes de acabarla
+    # tampoco cuenta como fallido.
+    ventana.procesar_rutas([_pdf(tmp_path / "tercero.pdf", 50)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    ventana.banda.btn_deshacer.click()               # con la cola a medias
+    for _ in range(3):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    assert not ventana._cola_guardada and len(ventana.filas) == 110
+    assert "no se pudieron leer" not in ventana.lbl_estado.text()
+
+
 def test_la_parte_de_lo_puesto_no_se_borra_hasta_que_el_disco_lo_tiene(
         ventana, tmp_path, monkeypatch):
     # El guardado tras poner un bloque se escribe aparte, y con un lote

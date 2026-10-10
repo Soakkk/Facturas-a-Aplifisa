@@ -176,6 +176,7 @@ class LecturaMixin:
         if not en_curso and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
+            self._fallidos_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         # Lo que queda por leer va con la sesión ya: el guardado solo se
@@ -220,7 +221,12 @@ class LecturaMixin:
             self.btn_gastos.setEnabled(hay_datos)
             self.btn_registro.setEnabled(hay_datos)
             if self._cola_total:
-                fallidos = sum(1 for e in self._cola_guardada if e.get("fallido"))
+                # Solo los de esta cola que siguen sin leer: uno de una carga
+                # anterior (con su aviso ya cerrado) volvía al acabar cada
+                # carga, aunque no fallara nada, y la barra lo contaba.
+                de_esta = {id(e) for e in self._fallidos_cola}
+                fallidos = sum(1 for e in self._cola_guardada
+                               if e.get("fallido") and id(e) in de_esta)
                 self.lbl_estado.setText(
                     f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
@@ -546,6 +552,7 @@ class LecturaMixin:
         actual = self._elemento_cola_actual
         sigue = actual is not None and not se_tira(actual)
         self._cola_total, self._cola_completados = len(self._cola) + sigue, 0
+        self._fallidos_cola = [e for e in self._fallidos_cola if not se_tira(e)]
         if actual is None:
             return
         if sigue:
@@ -712,6 +719,7 @@ class LecturaMixin:
         if not self._lectura_en_curso() and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
+            self._fallidos_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         self.btn_gastos.setEnabled(False)
@@ -804,6 +812,7 @@ class LecturaMixin:
             # La marca no va con la sesión: al volver es «de la última vez».
             elemento["fallido"] = True
             self._cola_guardada.append(elemento)
+            self._fallidos_cola.append(elemento)
         else:
             self._limpiar_parte_interna(elemento)
         # En la banda, no en una ventana: un aviso abierto paraba la cola
