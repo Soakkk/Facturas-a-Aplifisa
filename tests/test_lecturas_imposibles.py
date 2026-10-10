@@ -774,6 +774,48 @@ def test_la_fila_juntada_se_puede_marcar_revisada_y_exportar(ventana):
     assert ventana.filas[0].factura.cuota_iva == 18.6      # la cobrada
 
 
+def _elegir_lectura_2_del_desglose(ventana, principal, segunda, total):
+    ventana._rutas_actuales = ["taco.pdf"]
+    ventana._on_terminado(lote(combinada(lectura(0, lineas_iva=principal, total=total),
+                                         lectura(0, lineas_iva=segunda, total=total))),
+                          *CLIENTE)
+    f = ventana.filas[0].factura
+    indice = next(i for i, d in enumerate(f.discrepancias)
+                  if d.get("campo") == "lineas_iva")
+    ventana._resolver_discrepancia(0, indice, 2)
+    ventana._revalidar_todo()
+    return ventana.filas[0].factura, [str(m) for m in ventana.filas[0].get("mensajes") or []]
+
+
+UNA_LINEA_DE_PAN = [{"base": 462.0, "tipo_iva": 4.0, "cuota_iva": 18.48,
+                     "pct_requiv": None, "cuota_requiv": None}]
+
+
+def test_usar_la_lectura_2_juntada_se_lleva_su_redondeo(ventana):
+    # La principal leyó una línea con la cuota calculada; la segunda, los 30
+    # albaranes (18,60, la cobrada). Al elegir la segunda, la fila es su
+    # suma: cuadra con el redondeo de cada albarán, no en rojo sin salida.
+    f, mensajes = _elegir_lectura_2_del_desglose(
+        ventana, UNA_LINEA_DE_PAN, lineas(30, 15.40, 4.0), 480.6)
+    assert (f.base_iva, f.cuota_iva) == (462.0, 18.6)
+    assert not any("Cuota IVA descuadra" in m for m in mensajes), mensajes
+    assert ventana.filas[0]["estado"] != ERROR
+    assert f.lineas_juntadas == 30
+
+
+def test_usar_la_lectura_2_de_una_linea_olvida_las_juntadas(ventana):
+    # Al revés: la principal juntó 30 y la segunda leyó una. Tras elegirla,
+    # la fila ya no es una suma: una cuota mal tecleada después no se
+    # disculpa con el redondeo de los 30 albaranes.
+    f, _ = _elegir_lectura_2_del_desglose(
+        ventana, lineas(30, 15.40, 4.0), UNA_LINEA_DE_PAN, 480.6)
+    assert f.cuota_iva == 18.48
+    f.cuota_iva = 18.63
+    ventana._revalidar_todo()
+    assert ventana.filas[0]["estado"] == ERROR, ventana.filas[0].get("mensajes")
+    assert (f.lineas_juntadas, f.redondeo_lineas_iva) == (1, 0.0)
+
+
 def test_una_cuota_mal_leida_entre_las_juntadas_sigue_en_rojo():
     # El margen es el del redondeo, no más: un euro de más en una línea no
     # se disculpa por estar juntada.

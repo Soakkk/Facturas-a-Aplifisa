@@ -17,7 +17,7 @@ from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.conceptos import descripcion_de
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
-from facturas_excel.procesar import normaliza_nif
+from facturas_excel.procesar import apuntar_juntadas, normaliza_nif
 from facturas_excel.resumen import eur
 from facturas_excel.texto import limpiar
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
@@ -650,6 +650,10 @@ class FichaMixin:
                 setattr(self.filas[r].factura, campo,
                         self._con_signo_del_documento(campo, valor, filas_doc))
                 self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
+            if d.get("campo") == "lineas_iva":
+                # Si la línea de la lectura 2 suma varias juntadas, la fila
+                # pasa a ser esa suma (con su redondeo); si no, deja de serlo.
+                apuntar_juntadas(self.filas[destino[0]].factura, linea)
             self._invalidar_contraste_registro()
             if d.get("campo_factura") == "nif":
                 self._nif_escrito_a_mano(fila)
