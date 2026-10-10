@@ -1375,3 +1375,28 @@ def test_el_aviso_de_un_fallo_tapado_sin_cerrar_vuelve_al_acabar_otra_carga(
     assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
     assert ventana.banda.isHidden() or "No se han podido" not in ventana.banda.lbl.text()
     assert len(ventana._cola_guardada) == 1      # sigue por leer (Exportar lo dice)
+
+
+def test_la_barra_cuenta_los_mismos_bloques_sin_leer_que_el_aviso(
+        ventana, tmp_path, monkeypatch):
+    # Falla un bloque de un taco y se cierra su aviso; en la carga siguiente
+    # falla otro. La barra contaba solo el de esta carga («1 no se pudieron
+    # leer (ver el aviso)») y el aviso al que manda, y Exportar, decían 2.
+    from facturas_excel.ventana_aplifisa import DialogoOrden
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 1 bloque(s) procesado(s). 2 no se pudieron leer (ver el aviso).")
+    assert "No se han podido leer 2 bloque(s) de otro.pdf, taco.pdf" in ventana.banda.lbl.text()
+    textos = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda *a, **k: textos.append(a[2]) or QMessageBox.No))
+    monkeypatch.setattr(DialogoOrden, "exec", lambda self: 0)
+    ventana._exportar_todo()
+    assert textos[0].startswith("Faltan 2 bloque(s)")

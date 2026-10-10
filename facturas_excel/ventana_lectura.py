@@ -225,13 +225,16 @@ class LecturaMixin:
                 # ya cerrado volvía al acabar cada carga, aunque no fallara
                 # nada, y la barra lo contaba.
                 de_esta = {id(e) for e in self._fallidos_cola}
-                fallidos = sum(1 for e in self._cola_guardada
-                               if e.get("fallido") and id(e) in de_esta)
+                pendientes = sum(1 for e in self._cola_guardada
+                                 if e.get("fallido") and id(e) in de_esta)
+                # El número es el del aviso (y el de Exportar): con uno de
+                # antes, la barra decía 1 y el aviso 2.
+                fallidos = sum(1 for e in self._cola_guardada if e.get("fallido"))
                 self.lbl_estado.setText(
                     f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
-                       if fallidos else ""))
-                if fallidos and self.banda.accion() is None:
+                       if pendientes else ""))
+                if pendientes and self.banda.accion() is None:
                     # Otro aviso lo tapó (páginas sin leer, «Lote rehecho…»:
                     # la banda enseña uno solo): vuelve, con ése delante. Uno
                     # con su propio botón (un «Deshacer») no se pisa.
