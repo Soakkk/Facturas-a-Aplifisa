@@ -103,6 +103,12 @@ class Factura:
     # Cuántas líneas de IVA leídas suma esta (1.26: con más de 12 se juntan
     # por tipo al leer). Cada una traía su cuota redondeada a céntimos.
     lineas_juntadas: int = 1
+    # Cuánto se aparta de base×% de la fila lo que suman esas líneas si cada
+    # una cuadra sola, como en la 1.25 (sanear_lectura.juntar_por_tipo): el
+    # redondeo de cada una, conocido al leer. Va en el sentido de la base
+    # (positivo: más lejos de cero), para que valga igual en un abono.
+    redondeo_lineas_iva: float = 0.0
+    redondeo_lineas_requiv: float = 0.0
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -118,7 +124,8 @@ class Factura:
                      "paginas_documento", "tipo_documento", "moneda",
                      "mencion_iva", "posible_no_deducible",
                      "sin_nif_destinatario", "no_deducible", "rectifica_a",
-                     "nombre_sin_letra", "lineas_juntadas"}
+                     "nombre_sin_letra", "lineas_juntadas",
+                     "redondeo_lineas_iva", "redondeo_lineas_requiv"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 

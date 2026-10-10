@@ -21,6 +21,7 @@ import math
 
 from .extraccion import ESQUEMA, _num
 from .texto import visible
+from .validacion import TOLERANCIA
 
 _PROPIEDADES = ESQUEMA["properties"]
 
@@ -154,23 +155,47 @@ def _sumar(a, b):
     return a if b is None else round(a + b, 6)
 
 
+def _cuota_que_cuadra(base, pct, cuota):
+    """La cuota de una línea si cuadra sola, como cuando cada una iba en su
+    fila (1.25): la leída si se aparta de base×% como mucho TOLERANCIA; si
+    no, base×%. None si falta la base o el porcentaje."""
+    if base is None or pct is None:
+        return None
+    calculada = round(base * pct / 100.0, 2)
+    if cuota is not None and abs(cuota - calculada) <= TOLERANCIA:
+        return cuota
+    return calculada
+
+
 def juntar_por_tipo(lineas: list) -> tuple:
     """(líneas, nota): como mucho una por tipo de IVA y recargo, con la base y
     las cuotas sumadas. Si ni así caben (tipos inventados), las primeras.
 
-    Cada una dice en «_juntadas» cuántas suma: sus cuotas, redondeadas línea
-    a línea, se apartan de base×% hasta medio céntimo por línea, y validar
-    tiene que saberlo para no dejarla en rojo (ver validacion)."""
+    Cada una dice en «_juntadas» cuántas suma y en «_cuota_lineas» y
+    «_requiv_lineas» lo que sumarían sus cuotas si cada línea cuadrara sola
+    (None si a alguna le falta la base o el porcentaje). Redondeadas línea a
+    línea, se apartan de base×% de la suma hasta medio céntimo por línea:
+    validar acepta ese redondeo exacto, no un margen en el que quepa una
+    cuota mal leída (ver procesar.apuntar_juntadas)."""
     por_tipo = {}
     for linea in lineas:
         clave = (linea.get("tipo_iva"), linea.get("pct_requiv"))
+        cuadran = {
+            "_cuota_lineas": _cuota_que_cuadra(
+                linea.get("base"), linea.get("tipo_iva"), linea.get("cuota_iva")),
+            "_requiv_lineas": _cuota_que_cuadra(
+                linea.get("base"), linea.get("pct_requiv"),
+                linea.get("cuota_requiv"))}
         suma = por_tipo.get(clave)
         if suma is None:
-            por_tipo[clave] = dict(linea, _juntadas=1)
+            por_tipo[clave] = dict(linea, _juntadas=1, **cuadran)
             continue
         suma["_juntadas"] += 1
         for campo in ("base", "cuota_iva", "cuota_requiv"):
             suma[campo] = _sumar(suma.get(campo), linea.get(campo))
+        for campo, valor in cuadran.items():
+            suma[campo] = (None if suma[campo] is None or valor is None
+                           else round(suma[campo] + valor, 6))
     juntas = list(por_tipo.values())
     nota = (f"{len(lineas)} líneas de IVA, seguramente los artículos: "
             f"juntadas en {min(len(juntas), LINEAS_MAXIMAS)}, una por tipo")

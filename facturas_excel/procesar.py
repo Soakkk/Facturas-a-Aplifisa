@@ -280,6 +280,34 @@ def _cuadre_factura(facturas: List[Factura]) -> str:
             f"{len(facturas)} líneas de IVA suman {suma:.2f}.")
 
 
+def _redondeo_de_lineas(base, pct, suma) -> float:
+    """Lo que `suma` (las cuotas de las líneas juntadas, cada una cuadrando
+    sola) se aparta de base×% de la fila, en el sentido de la base."""
+    if base is None or pct is None or suma is None:
+        return 0.0
+    return round((suma - round(base * pct / 100.0, 2))
+                 * (-1 if base < 0 else 1), 6)
+
+
+def apuntar_juntadas(f: Factura, linea: dict) -> None:
+    """Lo que validar necesita saber de una línea de IVA que suma varias
+    leídas (sanear_lectura.juntar_por_tipo): cuántas son y el redondeo exacto
+    de sus cuotas, línea a línea. Con una línea sin juntar, nada (y se olvida
+    lo que hubiera: la fila deja de ser una suma)."""
+    juntadas = linea.get("_juntadas")
+    if not (isinstance(juntadas, int) and not isinstance(juntadas, bool)
+            and juntadas > 1):
+        f.lineas_juntadas = 1
+        f.redondeo_lineas_iva = f.redondeo_lineas_requiv = 0.0
+        return
+    base = _num(linea.get("base"))
+    f.lineas_juntadas = juntadas
+    f.redondeo_lineas_iva = _redondeo_de_lineas(
+        base, _num(linea.get("tipo_iva")), _num(linea.get("_cuota_lineas")))
+    f.redondeo_lineas_requiv = _redondeo_de_lineas(
+        base, _num(linea.get("pct_requiv")), _num(linea.get("_requiv_lineas")))
+
+
 def normalizar_importes_abono(facturas: List[Factura]) -> bool:
     """Pone en negativo todos los importes cuando el total identifica un abono.
 
@@ -580,12 +608,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         f.base_iva = _num(linea.get("base"))
         f.pct_iva = _num(linea.get("tipo_iva"))
         f.cuota_iva = _num(linea.get("cuota_iva"))
-        # Una línea que suma varias leídas (sanear_lectura.juntar_por_tipo):
-        # validar le deja el margen del redondeo de cada una.
-        juntadas = linea.get("_juntadas")
-        if isinstance(juntadas, int) and not isinstance(juntadas, bool) \
-                and juntadas > 1:
-            f.lineas_juntadas = juntadas
+        apuntar_juntadas(f, linea)
         # CADA tipo de IVA lleva su propio recargo (21->5,2 / 10->1,4 / 4->0,5),
         # y su base es la de esa linea. Los campos sueltos de nivel factura son
         # el respaldo para cuando Gemini los devuelve al viejo estilo.
