@@ -1133,6 +1133,9 @@ class LecturaMixin:
         if analisis.empate or analisis.homonimo:
             self._cambiar_cliente(automatico=True)
         self._cliente_por_decidir = False
+        # El régimen del recargo, si también quedó por preguntar: ya con el
+        # cliente decidido, que es de quien es (ver _preguntar_recargo_pendiente).
+        self._preguntar_recargo_pendiente()
         # Se pregunta después de ofrecer lo que quedó por leer (casi siempre
         # hay: se cerró con un bloque llegando), y «Lote rehecho…» tapaba ese
         # aviso (la banda enseña uno solo): se vuelve a ofrecer, con él delante.

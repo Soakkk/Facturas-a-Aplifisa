@@ -1192,3 +1192,54 @@ def test_el_bloque_que_fallo_antes_de_archivar_el_escaneo_sigue_a_su_pdf(
     tercera.entregar(_bloque_de(tercera))
     assert len(abierta.filas) == 50
     assert {f.factura.origen_imagen for f in abierta.filas} == {archivado}
+
+
+def test_al_volver_el_recargo_se_pregunta_despues_de_quien_es_el_cliente(
+        ventana, tmp_path, monkeypatch):
+    # Al cerrar llega un bloque con recargo y con el cliente dudoso (su
+    # nombre con otro NIF): las dos preguntas quedan para la vuelta. Al
+    # volver, la del recargo saltaba dentro de la de «¿quién es el cliente?»
+    # (en su bucle de eventos) y guardaba para siempre el régimen del
+    # cliente supuesto, que es justo lo que se estaba preguntando.
+    from PySide6.QtCore import QEventLoop, QTimer
+    from facturas_excel import app as modulo_app
+    from facturas_excel.clientes import TOTAL
+    from facturas_excel.dialogo_cliente import DialogoCliente
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.5, raising=False)
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a])
+    lectura = WorkerFalso.creados[-1]
+    hojas = []
+    for n in (1, 2, 3):
+        hoja = _hoja(a, n, f"F-{n}")
+        linea = hoja[3]["lineas_iva"][0]
+        linea["pct_requiv"] = 5.2
+        linea["cuota_requiv"] = round(linea["base"] * 0.052, 2)
+        hoja[3]["total"] = round(linea["base"] + linea["cuota_iva"]
+                                 + linea["cuota_requiv"], 2)
+        hojas.append(hoja)
+    hojas[2][3]["receptor_nif"] = "A12345674"       # homónimo del cliente
+    lectura.cancelar = lambda: lectura.entregar(hojas)
+    ventana.closeEvent(QCloseEvent())
+    assert ventana._cliente_por_decidir and ventana._recargo_por_decidir
+
+    orden = []
+
+    def quien_es(self):
+        # Como QDialog.exec: su propio bucle de eventos mientras está abierta.
+        orden.append("abre cliente")
+        bucle = QEventLoop()
+        QTimer.singleShot(300, bucle.quit)
+        bucle.exec()
+        orden.append("cierra cliente")
+        return 0
+    monkeypatch.setattr(DialogoCliente, "exec", quien_es)
+    monkeypatch.setattr(modulo_app.DialogoRecargo, "exec",
+                        lambda self: orden.append("recargo") or 1)
+    monkeypatch.setattr(modulo_app.DialogoRecargo, "elegido", lambda self: TOTAL)
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _esperar(lambda: "recargo" in orden)
+    _app.processEvents()
+    assert orden == ["abre cliente", "cierra cliente", "recargo"]
+    assert not abierta._recargo_por_decidir and not abierta._cliente_por_decidir

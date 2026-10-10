@@ -2029,14 +2029,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._rellenar_tabla()
             self._pintar_cliente()
             self._revalidar_todo()
+            # Y el régimen del recargo, después del cliente (es el suyo): si
+            # también hay que preguntar quién es, lo pregunta ésa al acabar.
+            # Por separado, la del recargo se abría encima de la del cliente
+            # (salta en su bucle) y se guardaba para el cliente supuesto.
+            if datos.get("recargo_por_decidir"):
+                self._recargo_por_decidir = True
             if datos.get("cliente_por_decidir"):
                 # Se cerró sin preguntarlo: se pregunta ya con la ventana
                 # abierta, como se habría preguntado al poner el bloque.
                 self._cliente_por_decidir = True
                 QTimer.singleShot(0, self._preguntar_cliente_pendiente)
-            if datos.get("recargo_por_decidir"):
-                # Y el régimen del recargo, después del cliente (es el suyo).
-                self._recargo_por_decidir = True
+            elif self._recargo_por_decidir:
                 QTimer.singleShot(0, self._preguntar_recargo_pendiente)
             # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
             try:
