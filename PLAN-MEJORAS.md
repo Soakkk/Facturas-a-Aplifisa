@@ -1,77 +1,71 @@
 # Plan de mejoras — Facturas a Aplifisa (v1.1.0 y siguientes)
 
-## Para seguir (nota del 05/10/2026, sesión interrumpida)
+## Para seguir (nota del 10/10/2026)
 
-**Estado.** Publicadas la 1.22.1, la 1.23.0 y la 1.24.0 (la 1.24.0, el
-05/10/2026). La **1.25.0 «memoria y lectura»** está en la rama
-`claude/serene-franklin-7smpxl`, **sin publicar**. Ya tiene la versión en
-`__init__.py`, sus notas en `notas_version.py` y «Lo nuevo de la 1.25» en
-`config/pendientes.md`. El usuario pidió: «avísame cuando esté publicada».
+**Estado.** Publicada la **1.26.0 «PDF pesados sin miedo»** (10/10/2026).
+El usuario pidió: «el objetivo es que el programa pueda trabajar con PDF de
+alto peso de 100-200 MB para ir sobrados» y «cuando termines sube todo como
+update».
 
-### 1.25: lo que falta
+### Qué se hizo en la 1.26
 
-La revisión adversarial de la 1.25 dio 9 hallazgos y están **todos arreglados
-en el código**. Sus reproducciones están en
-`docs/revisiones/rev125_reproducciones.py`. Falta:
+- **Pruebas de estrés** en 4 frentes (volumen y mañana, tablas grandes,
+  lecturas absurdas de la IA, registro y concurrencia), con 37 puntos
+  priorizados. Quedaron hechos los n.º 1–18, 20 (1), 21–26, 28–35.
+- **Memoria:** imagen de cada hoja en disco con su asa (`imagen_hoja.py`),
+  caché de MuPDF vaciada, original guardado a trozos en un hilo, sesión
+  pequeña y con un solo guardado pendiente.
+- **Tabla incremental**, exportación con el archivo del cliente en un hilo,
+  expediente por tandas.
+- **Nitidez:** la foto del escaneo se reduce con PIL sin que MuPDF la dibuje
+  (también HP Scan, «1 g»), JPEG 90, cada hoja se dibuja justo antes de
+  leerla (`pdf.Hojas`), tope de 9 Mpx.
+- **Lecturas absurdas:** `sanear_lectura.py`, importes imposibles en rojo,
+  JSON seguro, líneas juntadas por tipo (con margen de redondeo), tope de
+  tokens con reintento ampliado si Gemini corta.
+- **Cola y cierres:** una lectura a la vez, cerrar/actualizar/vaciar a mitad
+  sin perder nada, cola guardada en la sesión con «Seguir leyendo», bloques
+  fallidos que se pueden volver a leer, salir con `os._exit(0)` tras guardar
+  si la lectura no acaba.
+- **Registro:** al archivar se guardan todas las líneas de IVA (antes solo la
+  primera; venía de antes de la 1.25).
+- Tres revisiones adversariales (por rama, final por 5 frentes y segunda
+  ronda de los arreglos).
 
-1. **Pruebas** en `tests/test_memoria_lectura.py`, una o más por hallazgo:
-   1. Un `cuentas_cliente` raro (lista, dict, lista de un elemento) no rompe
-      el lote ni el guardado (`procesar._cuentas_por_cliente`).
-   2. La cuenta anterior a la 1.25 (sin cliente) se guarda bajo `"*"` y se
-      sigue poniendo en silencio en los demás clientes. Un cliente sin NIF no
-      queda en ámbar para siempre.
-   3. «…en otro cliente»:
-      - lo quita `quitar_aviso_cuenta`;
-      - no sale si Gemini propone la misma cuenta;
-      - «Marcar revisada» guarda la cuenta (`app._marcar_revisada` →
-        `_cuenta_escrita_a_mano`).
-   4. Bien de inversión:
-      - la memoria no pisa la 200;
-      - el texto «va a la 200» solo sale con el concepto 200
-        (`validacion.texto_motivo_revision(motivo, f)`);
-      - una venta con bien de inversión no dice «200».
-   5. Varios:
-      - **Homónimo del cliente:** se pregunta una vez por lote
-        (`_cliente_elegido_lote`, en `ventana_lectura`), y el homónimo no se
-        apunta como proveedor. Probarlo en la ventana, con dos bloques y
-        `DialogoCliente.exec` parcheado. La reproducción antigua simula el
-        diálogo viejo y ya no aplica tal cual.
-      - **«POSIBLEMENTE YA EXPORTADA»:** no salta con un número corto (menos
-        de 3 caracteres), de otro año, ni con dos NIF válidos distintos.
-      - **Margen de redondeo:** probar con un abono (base negativa).
-   6. Doble lectura sin falsos ámbar (`doble_lectura.comparar`):
-      - ya no compara `fecha_operacion` ni `sustituye_a`;
-      - en IRPF y suplidos, None vale 0;
-      - la cuenta se compara como «629 (G22)» (`cuenta_de`), y una subclave
-        única se da por puesta; ya no hay discrepancia aparte de subclave;
-      - si las dos lecturas dicen bien de inversión, no se compara la cuenta;
-      - `es_bien_inversion` lleva `campo_factura` "".
-   7. Ficha: «Usar este» y «Es correcto» con la cuenta ponen cuenta y
-      subclave en todas las líneas (y en sus fuentes), y la recuerdan
-      (`ventana_ficha._poner_cuenta_leida`). Lo mismo para `base_irpf` y
-      `pct_irpf` que para `cuota_irpf`. **Sin probar aún en la ventana.**
-   8. Palabras clave:
-      - «impuestos incluidos» no va a la 631;
-      - «caja registradora» no va a la 623;
-      - «registro mercantil» y «registradores» sí van a la 623.
-   9. Ficha: la fecha elegida de cualquiera de las dos lecturas queda en
-      dd/mm/aaaa (`normalizar_fecha`). **Sin probar aún en la ventana.**
-2. Pasar la suite completa y la emulada (`-p letra_grande -p
-   pantalla_pequena`), y pyflakes. Hoy hay 35 avisos antiguos; no añadir más.
-3. Publicar:
-   1. Commit y PR «v1.25.0: memoria y lectura», y esperar al CI.
-   2. Squash-merge con el `expectedHeadSha` completo.
-   3. Lanzar `build.yml` en master con `publicar=true` y comprobar
-      `releases/latest`.
-4. **Avisar al usuario** de que la 1.25 está publicada.
-5. Reiniciar la rama sobre master:
-   ```
-   git fetch origin +refs/heads/<rama>:refs/remotes/origin/<rama>
-   git checkout -B <rama> origin/master
-   git merge -s ours origin/<rama>
-   ```
-   El fetch necesita el refspec explícito: uno simple solo actualiza
-   FETCH_HEAD.
+**Medida final** (banco con IA falsa, `scratchpad/sintesis/res/final.md`):
+
+| Caso | Pico 1.25 → 1.26 | Parón máx. | Cierre | Sesión |
+|---|---|---|---|---|
+| 450 hojas | 1063 → 398 MB | 17,9 → 0,9 s | 4,5 → 0,17 s | 75 → 0,1 MB |
+| 200 hojas a 300 ppp | 1106 → 442 MB | 7,8 → 0,5 s | 6,5 → 0,18 s | 120 → 0,05 MB |
+| Dos PDF (650 hojas) | 1257 → 431 MB | 10,2 → 1,5 s | 5,2 → 0,33 s | 104 → 0,15 MB |
+
+### Pendiente para la 1.27
+
+1. **Bloque cortado al cerrar:** se vuelve a leer (y pagar) entero, hasta
+   24 hojas. Que `Worker.run` guarde con la cola las hojas ya leídas y no
+   las vuelva a pedir.
+2. **Registro con facturas de varios tipos archivadas antes de la 1.26:**
+   tienen solo la primera línea. Repararlas leyendo la copia del Excel que
+   se guarda en el expediente (no volver a exportar).
+3. **n.º 19 (a) y hallazgo d2o:** lo tecleado en una fila se pierde si llega
+   un bloque con el editor abierto. Delegado para el desplegable o pasar a
+   `QTableView` con modelo.
+4. **Cerrar mientras se dibuja** tarda hasta 5 s: mirar la cancelación dentro
+   de `pdf.hoja_a_jpg`, ya con el cerrojo.
+5. **n.º 27 purga de disco** (partes de una cola guardada que se queda días,
+   muestras viejas) y **n.º 36** (el cuadre crece con el cuadrado con muchos
+   importes iguales).
+6. **n.º 20 (2):** productor/consumidor (dibujar y leer en paralelo con la IA).
+7. **Volver a la 1.25 tras instalar la 1.26** aparta la sesión (el pickle
+   lleva `imagen_hoja.ImagenHoja`) y la 1.26 no la recupera después. Riesgo
+   bajo.
+8. **Banco reducido en `tools/`** para correrlo antes de cada versión (punto
+   de la síntesis), con los umbrales: pico < 600 MB, parones < 1 s, cierre
+   < 0,5 s, sesión < 1 MB.
+9. **Escáner nuevo** (cuando lo compre): elegir controlador TWAIN/WIA/eSCL,
+   dos caras, quitar hojas en blanco. **UBL** (RD 238/2026).
+10. Lo que quede de `docs/revisiones/` (aplicación, organización, diseño).
 
 ### Después: «El resto dale con todo»
 
