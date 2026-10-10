@@ -769,10 +769,14 @@ class LecturaMixin:
         # anterior: con el crédito agotado a mitad de un taco solo se veía
         # el de la última parte, y el Excel salía sin las demás sin preguntar.
         if elemento.get("rutas") and all(map(os.path.isfile, elemento["rutas"])):
-            fallido = self._elemento_para_guardar(elemento)
+            # El mismo elemento, no una copia: si falla con «¿Vaciar todo?»
+            # abierta, la pregunta lo contaba y se tiene que vaciar (ver
+            # _soltar_cola, que reconoce lo de antes por quién es). Su huella
+            # ya está resuelta (arriba); la generación se pone al releerlo.
+            elemento.pop("generacion", None)
             # La marca no va con la sesión: al volver es «de la última vez».
-            fallido["fallido"] = True
-            self._cola_guardada.append(fallido)
+            elemento["fallido"] = True
+            self._cola_guardada.append(elemento)
         else:
             self._limpiar_parte_interna(elemento)
         # En la banda, no en una ventana: un aviso abierto paraba la cola

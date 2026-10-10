@@ -1134,3 +1134,33 @@ def test_recoger_sueltos_no_se_lleva_lo_que_queda_por_leer(
     abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
     assert len(abierta._cola_guardada) == 4
     assert sueltos(abierta) == [suelta]                 # y lo de la última vez
+
+
+def test_vaciar_todo_vacia_tambien_lo_que_falla_con_la_pregunta_abierta(
+        ventana, tmp_path, monkeypatch):
+    # Sin crédito en Gemini, «Vaciar todo» con un taco a medias: mientras la
+    # pregunta está abierta la cola sigue y sus bloques fallan uno tras otro.
+    # Cada fallo se guardaba como una copia que la pregunta no contaba: al
+    # decir que sí se quedaban (con sus partes) por leer en el lote nuevo,
+    # Exportar preguntaba por ellos y al volver se ofrecía seguir leyéndolos.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    textos = []
+
+    def pregunta(*a, **k):
+        textos.append(a[2])
+        while ventana._elemento_cola_actual is not None:
+            _fallar(WorkerFalso.creados[-1], "la API key se quedó sin crédito")
+        return QMessageBox.Yes
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(pregunta))
+
+    ventana._vaciar_todo()
+
+    assert "3 bloque(s) por leer" in textos[0]
+    assert not ventana._bloques and not ventana.filas
+    assert not ventana._cola_guardada and not ventana._cola
+    assert ventana.banda.accion() != ventana._seguir_cola_guardada
+    assert not _partes_en_disco()
+    ventana._guardar_sesion_automatica()
+    assert sesion.cargar() is None
