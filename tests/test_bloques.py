@@ -109,16 +109,14 @@ def test_vaciar_todo_deja_el_lote_a_cero(monkeypatch):
 
 
 def test_avisa_si_el_segundo_bloque_es_de_otro_cliente(monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-    avisos = []
-    monkeypatch.setattr(QMessageBox, "warning",
-                        staticmethod(lambda *a, **k: avisos.append(a[2])))
     v = VentanaPrincipal(comprobar_updates=False)
     cargar_bloque(v, r"C:\tmp\uno.pdf", [factura("F-1")], nif="12345678Z")
     cargar_bloque(v, r"C:\tmp\dos.pdf", [factura("F-2", 50)], nif="11111111H",
                   cliente="CLIENTE DOS")
 
-    assert avisos and "otro cliente" in avisos[0].lower()
+    # En la banda: una ventana aquí paraba la cola mientras estaba abierta.
+    avisos = [t for t in v.banda.historial if "otro cliente" in t.lower()]
+    assert avisos
     assert "VARIOS CLIENTES" in v.lbl_cliente.text()
 
 

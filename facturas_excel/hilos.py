@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import threading
+import traceback
+
 from PySide6.QtCore import QObject, QThread, Signal
 
-from facturas_excel import ajustes, costes, escaner, updater
+from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
 from facturas_excel.extraccion import Extractor, SinCredito
-from facturas_excel.pdf import cargar_imagenes
+from facturas_excel.pdf import Hojas
 from facturas_excel.procesar import detectar_cliente, preparar_lote
 
 
 HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
+# Lo que dice una hoja que no se ha pedido porque se cerró el programa (o se
+# vació el lote) mientras se leía. Es el mismo texto que pone la lectura
+# (extraccion.Extractor) cuando la cancelan con la hoja esperando turno: la
+# ventana lo usa para saber que el bloque se quedó a medias.
+NO_LEIDA_AL_CERRAR = "No leída: se cerró el programa mientras se leía."
 
 
 def hilos_lectura() -> int:
@@ -34,25 +42,56 @@ class Worker(QThread):
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
         self._extractor = None
+        self._hojas = None
+        # Se crea ya, no con la lectura: cancelar mientras se cuentan o se
+        # dibujan las hojas (antes de que exista la lectura) también vale.
+        self._cancelado = threading.Event()
+        # Lo gastado en Gemini (con los tokens de cada respuesta) se apunta
+        # al acabar el bloque, una sola vez (ver apuntar_gasto_pendiente).
+        self._consumo = []
+        self._cerrojo_gasto = threading.Lock()
+        self._gasto_apuntado = False
 
     def cancelar(self) -> None:
-        """Al cerrar el programa: no se espera a Google ni se piden más hojas."""
-        if self._extractor is not None:
-            self._extractor.cancelado.set()
+        """Al cerrar el programa (o vaciar el lote): no se dibujan más hojas,
+        no se espera a Google ni se piden más."""
+        self._cancelado.set()
+        cancelado = getattr(self._extractor, "cancelado", None)
+        if cancelado is not None:
+            cancelado.set()
+        # El PDF se suelta ya, sin esperar a que Gemini conteste: ya no se
+        # dibuja ninguna hoja más, y la parte de la cola queda libre aunque
+        # la lectura tarde (la ventana la espera como mucho 5 s y luego la
+        # deja atrás; en Windows, abierta no se puede mover ni borrar).
+        hojas = self._hojas
+        if hojas is not None and not hojas.cerrar(espera=0.5):
+            # El cerrojo de MuPDF lo puede tener un buen rato el archivo de
+            # una exportación (guardando el expediente del año): la ventana
+            # no se queda parada esperándolo; se suelta en cuanto quede libre.
+            threading.Thread(target=hojas.cerrar, daemon=True,
+                             name="soltar-pdf").start()
 
     def run(self):
+        hojas = None
         try:
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            imagenes = cargar_imagenes(
+            # Aquí solo se cuentan las hojas: cada una se dibuja en su hilo
+            # justo antes de leerla (ver `tarea`). Antes se dibujaba el bloque
+            # entero (de 3 a 5 s) sin que Gemini empezara, con todas sus
+            # imágenes en memoria; ahora en memoria solo están las que se
+            # están leyendo, y la ventana no se para mientras.
+            hojas = self._hojas = Hojas(
                 self.rutas, dpi=int(ajustes.leer('lectura_ppp', 150)))
-            if not imagenes:
+            if not len(hojas):
                 raise ValueError("No se encontraron páginas o imágenes compatibles.")
             extractor = Extractor(self.api_key)
             self._extractor = extractor
-            total = len(imagenes)
+            if self._cancelado.is_set():        # se cerró mientras se contaban
+                self.cancelar()
+            total = len(hojas)
             registros = [None] * total
 
-            consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
+            consumo = self._consumo   # (modelo, tokens entrada, tokens salida) por llamada
             sin_credito = []
             leidas = []
 
@@ -62,11 +101,50 @@ class Worker(QThread):
                 return {"emisor_nombre": None, "lineas_iva": [{}],
                         "_error": motivo}
 
+            def sin_imagen(idx, origen, pagina, motivo):
+                """La hoja queda en rojo, sin imagen y sin pedirla a Gemini."""
+                self.fallos.append((origen, pagina, motivo))
+                return idx, (b"", origen, pagina, {
+                    "emisor_nombre": None, "lineas_iva": [{}], "_error": motivo})
+
+            def a_disco(img):
+                """La imagen pasa a las muestras en cuanto se ha leído, aquí,
+                fuera de la ventana, y el lote se queda con su asa (ver
+                imagen_hoja). La que no se pueda escribir sigue con sus bytes."""
+                try:
+                    return imagen_hoja.a_disco(img) if img else img
+                except OSError:
+                    return img
+
             def tarea(idx):
-                origen, pagina, img = imagenes[idx]
+                origen, pagina = hojas.lista[idx]
+                if self._cancelado.is_set():
+                    # Se está cerrando: ni se dibuja ni se pide.
+                    return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
+                try:
+                    # Con el cerrojo de MuPDF solo lo suyo; la foto de un
+                    # escaneo se reduce fuera (pdf.hoja_a_jpg).
+                    img = hojas.imagen(idx)
+                except Exception as e:
+                    if self._cancelado.is_set():
+                        # Cancelar suelta el PDF aunque haya hojas esperando
+                        # al cerrojo para dibujarse: esas no se han roto, se
+                        # han quedado sin pedir (y así la ventana sabe que el
+                        # bloque está a medias y lo vuelve a poner en cola).
+                        return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
+                    # Una hoja que no se puede sacar no tumba el bloque (ni
+                    # se pierde lo ya leído y pagado de las demás).
+                    return sin_imagen(idx, origen, pagina,
+                                      f"No se pudo sacar la imagen de la hoja: {e}"[:120])
+                if self._cancelado.is_set():
+                    # Se canceló mientras se dibujaba esta hoja: ya no se
+                    # pide (con la ventana cerrada se seguía pagando).
+                    return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
                 if sin_credito:
                     # Se acabó el crédito en otra hoja: no se pide nada más.
-                    return idx, (img, origen, pagina, sin_leer(img, origen, pagina))
+                    # La imagen sí se queda, para leerla cuando haya saldo.
+                    return idx, (a_disco(img), origen, pagina,
+                                 sin_leer(img, origen, pagina))
                 try:
                     leido = extractor.extraer(img, origen, pagina)
                     consumo.extend(leido.consumos or [(
@@ -86,7 +164,7 @@ class Worker(QThread):
                     datos = {"emisor_nombre": None, "lineas_iva": [{}],
                              "_error": str(e)[:120]}
                     self.fallos.append((origen, pagina, str(e)[:120]))
-                return idx, (img, origen, pagina, datos)
+                return idx, (a_disco(img), origen, pagina, datos)
 
             hechas = 0
             ex = ThreadPoolExecutor(max_workers=hilos_lectura())
@@ -101,6 +179,10 @@ class Worker(QThread):
                 # Si algo corta el lote, las hojas que aún no han empezado se
                 # cancelan: no se sigue pagando por nada.
                 ex.shutdown(wait=True, cancel_futures=True)
+                # Ya no queda ningún hilo dibujando: los PDF se cierran antes
+                # de avisar a la ventana, que al acabar el bloque mueve el
+                # original o borra la parte (en Windows, abierto no se puede).
+                hojas.cerrar()
                 self._registrar_consumo(consumo)
 
             if sin_credito:
@@ -111,16 +193,36 @@ class Worker(QThread):
             procesadas = preparar_lote(registros, nombre, nif)
             self.terminado.emit(procesadas, nombre, nif, registros)
         except Exception as e:  # noqa
+            if hojas is not None:
+                hojas.cerrar()
             self.fallo.emit(str(e))
 
     def _registrar_consumo(self, consumo) -> None:
         """Lo gastado en Gemini, con los tokens reales de cada respuesta."""
+        with self._cerrojo_gasto:
+            if self._gasto_apuntado:
+                return          # ya lo apuntó la salida sin esperar
+            self._gasto_apuntado = True
         modelo, coste_lote = "", 0.0
         for m, entrada, salida in consumo:
             modelo = modelo or m
             coste_lote += costes.registrar(m, entrada, salida)
         if consumo:
             self.gasto.emit(modelo, round(coste_lote, 6))
+
+    def apuntar_gasto_pendiente(self) -> None:
+        """Al salir del programa sin esperar a esta lectura (una hoja que
+        Gemini no contesta; ver app._salir_sin_esperar), lo gastado en las
+        hojas ya leídas se apunta ya: se apuntaba al acabar el bloque, al que
+        así no se llega, y lo pagado no contaba en el gasto del mes (ni para
+        el aviso del tope). La hoja que no ha contestado no se sabe."""
+        with self._cerrojo_gasto:
+            if self._gasto_apuntado:
+                return
+            self._gasto_apuntado = True
+            consumo = list(self._consumo)
+        for modelo, entrada, salida in consumo:
+            costes.registrar(modelo, entrada, salida)
 
 
 class HiloEscaneo(QThread):
@@ -147,6 +249,38 @@ class HiloEscaneo(QThread):
             self.terminado.emit(ruta)
         except Exception as e:
             self.fallo.emit(str(e))
+
+
+# Los hilos del archivo que siguen vivos. Un QThread que Python suelta
+# mientras trabaja tumba el programa («Destroyed while thread is still
+# running»): aquí se guardan hasta que la ventana los da por terminados.
+VIVOS: set = set()
+
+
+def soltar_hilo(hilo) -> None:
+    VIVOS.discard(hilo)
+
+
+class HiloArchivo(QThread):
+    """El archivo del cliente tras exportar (un PDF por factura, la copia del
+    Excel y el expediente), sin parar la ventana: con 800 líneas eran 19 s
+    sin responder. `trabajo` es un ventana_archivo.ArchivoExportacion: lo que
+    haya que contar, y el fallo si lo hay, quedan en él para avisarlo."""
+    progreso = Signal(str)        # cómo va, para la barra de estado
+    hecho = Signal(object)        # este mismo hilo, al acabar
+
+    def __init__(self, trabajo):
+        super().__init__()
+        self.trabajo = trabajo
+        VIVOS.add(self)
+
+    def run(self):
+        try:
+            self.trabajo.hacer(self.progreso.emit)
+        except Exception as error:  # noqa: se apunta y se avisa al terminar
+            self.trabajo.error = error
+            self.trabajo.detalle = traceback.format_exc()
+        self.hecho.emit(self)
 
 
 class HiloActualizacion(QThread):
@@ -223,6 +357,11 @@ class HiloLocalizar(QObject):
             if self.cancelado:
                 raise RuntimeError("cancelado")
             clave, img, lista = trabajo
+            # La imagen se lee del disco aquí, fuera de la ventana. Si ya no
+            # está (se borraron los ejemplos), esa hoja no se puede señalar.
+            img = imagen_hoja.como_bytes(img)
+            if not img:
+                raise FileNotFoundError("la imagen de la hoja ya no está")
             return clave, localizar.pedir(self.api_key, self.modelo, img, lista)
 
         ex = ThreadPoolExecutor(max_workers=min(4, hilos_lectura()))
@@ -239,6 +378,8 @@ class HiloLocalizar(QObject):
                     self.hecho.emit(clave, cajas)
         finally:
             ex.shutdown(wait=not self.cancelado, cancel_futures=True)
+            # Lo pedido ya no hace falta: no se queda retenido con el hilo.
+            self.trabajos = []
         coste = sum(costes.registrar(m, e, s, facturas=0) for m, e, s in consumo)
         if self.cancelado:
             return

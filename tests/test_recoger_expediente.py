@@ -185,6 +185,7 @@ def test_exportar_guarda_el_excel_y_actualiza_el_expediente(entorno, monkeypatch
         documento_id="d1"), "gasto", "622", "G13", "", "b1")
     v._revalidar_todo()
     v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
     base = archivo.carpeta_escaneos()
     [e] = expediente.listar(base)
     excel = os.path.join(base, e.carpeta_cliente, "2026", "Excel Aplifisa")

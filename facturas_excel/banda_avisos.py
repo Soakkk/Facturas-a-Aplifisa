@@ -24,6 +24,15 @@ _ESTILOS = {
 }
 
 
+def fuera_del_lote(accion: Callable) -> Callable:
+    """Marca un «Deshacer» que no toca el lote: devolver a su sitio los PDF
+    de una recogida, volver a apuntar una exportación olvidada. «Vaciar
+    todo» no lo quita (el aviso de una recogida se queda fijo, con lo que no
+    se pudo mover)."""
+    accion.fuera_del_lote = True
+    return accion
+
+
 class BandaAvisos(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,8 +62,12 @@ class BandaAvisos(QFrame):
         self.hide()
 
     def mostrar(self, texto: str, tipo: str = INFO,
-                deshacer: Optional[Callable] = None, segundos: int = 10) -> None:
-        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo."""
+                deshacer: Optional[Callable] = None, segundos: int = 10,
+                boton: str = "Deshacer") -> None:
+        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo.
+
+        `boton` es el texto del botón de `deshacer`, que también vale para
+        ofrecer otra acción («Seguir leyendo»)."""
         fondo, borde, tinta = _ESTILOS.get(tipo, _ESTILOS[INFO])
         self.setStyleSheet(
             f"QFrame#bandaAvisos {{ background: {fondo}; border: 1px solid {borde};"
@@ -69,6 +82,7 @@ class BandaAvisos(QFrame):
         self.lbl.setText(texto)
         self.historial.append(texto)
         self._accion_deshacer = deshacer
+        self.btn_deshacer.setText(boton)
         self.btn_deshacer.setVisible(deshacer is not None)
         self.show()
         if segundos:
@@ -80,6 +94,19 @@ class BandaAvisos(QFrame):
         self._timer.stop()
         self._accion_deshacer = None
         self.hide()
+
+    def accion(self) -> Optional[Callable]:
+        """Lo que hace el botón del aviso que se ve ahora (None si no hay)."""
+        return self._accion_deshacer
+
+    def olvidar_deshacer(self) -> None:
+        """El «Deshacer» del aviso ya no vale (se ha vaciado el lote): se
+        quita ese aviso, que además retenía todo lo que deshacía. Los que no
+        deshacen nada del lote (ver `fuera_del_lote`) siguen valiendo y se
+        quedan, como antes de vaciar."""
+        accion = self._accion_deshacer
+        if accion is not None and not getattr(accion, "fuera_del_lote", False):
+            self.ocultar()
 
     def _deshacer(self) -> None:
         accion = self._accion_deshacer

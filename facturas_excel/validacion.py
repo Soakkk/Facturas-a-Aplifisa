@@ -6,9 +6,11 @@ cuentas de la factura. Un digito mal leido casi siempre rompe alguna cuenta.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Dict, List, Optional
 
 from .modelo import Factura
@@ -20,6 +22,27 @@ REVISAR = "revisar"  # ambar: falta un dato o hay algo dudoso
 ERROR = "error"      # rojo: una cuenta no cuadra
 
 TOLERANCIA = 0.02  # euros de margen por redondeos
+
+# Un importe de una factura de verdad no llega a mil millones de euros: más
+# es una lectura desbocada (cifras repetidas, 1e300). Y un NaN o un infinito
+# (el JSON los admite) no se puede sumar, pintar ni exportar: con uno solo se
+# paraba la cola y el lote no se podía recuperar (fuzzing, 09/10/2026).
+IMPORTE_MAXIMO = 1e9
+CAMPOS_IMPORTE_IMPOSIBLE = {
+    "base_iva": "la base", "pct_iva": "el % de IVA", "cuota_iva": "la cuota de IVA",
+    "base_irpf": "la base de la retención", "pct_irpf": "el % de retención",
+    "cuota_irpf": "la retención", "base_requiv": "la base del recargo",
+    "pct_requiv": "el % del recargo", "cuota_requiv": "el recargo",
+    "total_impreso": "el total", "suplidos": "los suplidos"}
+
+
+def importe_posible(valor) -> bool:
+    """Si un número puede ser un importe (o un tipo) de una factura."""
+    try:
+        return math.isfinite(valor) and abs(valor) <= IMPORTE_MAXIMO
+    except (TypeError, OverflowError):
+        return False
+
 
 # El recargo de equivalencia va SIEMPRE emparejado con su tipo de IVA: es el
 # regimen quien lo fija, no el proveedor (confirmado por el usuario 2026-09-02).
@@ -93,6 +116,13 @@ def fecha_de(fecha: str) -> Optional[date]:
     La validación básica solo comprueba que la fecha exista. El periodo fiscal
     esperado del lote se controla aparte en la interfaz.
     """
+    try:
+        return _fecha_recordada(fecha)
+    except TypeError:                     # algo que no se puede recordar
+        return _fecha_de(fecha)
+
+
+def _fecha_de(fecha) -> Optional[date]:
     if not fecha:
         return None
     texto = str(fecha).strip()
@@ -102,6 +132,11 @@ def fecha_de(fecha: str) -> Optional[date]:
         except ValueError:
             continue
     return None
+
+
+# Cada revisión del lote pregunta la fecha de cada línea unas diez veces, y
+# con 800 líneas se notaba: lo que ya se entendió no se vuelve a descifrar.
+_fecha_recordada = lru_cache(maxsize=8192)(_fecha_de)
 
 
 def normalizar_fecha(fecha):
@@ -134,7 +169,10 @@ def validar_nif(nif: str) -> bool:
     cualquiera de las dos formas daba por buenos CIF mal leídos.
     """
     nif = _limpiar_nif(nif)
-    if len(nif) != 9:
+    # Solo cifras y letras normales: «１２３４５６７８Z» (ancho completo) o
+    # «١٢٣٤٥٦٧٨Z» (árabes) pasaban isdigit() e int() y salían en verde, con
+    # esas cifras en el Excel. Las de la lectura ya llegan normalizadas (NFKC).
+    if len(nif) != 9 or not nif.isascii():
         return False
 
     # NIE: X/Y/Z -> 0/1/2
@@ -228,6 +266,33 @@ def _margen_redondeo(base) -> float:
     return max(0.05, abs(base or 0) * 0.0001)
 
 
+def _cuota_esperada(f: Factura, base, pct, cuota, redondeo,
+                    a_mano) -> tuple:
+    """(cuota esperada, de dónde sale, estricta) para comparar con la cuota.
+
+    Una fila normal: base×%, con la escala de siempre. Una que suma líneas
+    juntadas al leer: lo que suman sus cuotas cuando cada una cuadra sola
+    (base×% más el redondeo de cada línea, que se apuntó al leer:
+    procesar.apuntar_juntadas), sin más margen que TOLERANCIA (estricta):
+    una cuota mal leída en una línea, de más o de menos, aparta la suma lo
+    mismo que apartaba esa línea en su fila en la 1.25, aunque la acerque a
+    base×% o quepa en el redondeo de la base de toda la fila. Si una persona
+    ha tecleado la cuota o el tipo (`a_mano`), ya no es la suma leída: base×%
+    o esa suma, la que más se acerque, con la escala de siempre."""
+    esperada = round(base * pct / 100.0, 2)
+    n = getattr(f, "lineas_juntadas", 1)
+    if not isinstance(n, int) or n < 2:
+        return esperada, "base×%", False
+    redondeo = redondeo or 0.0
+    por_lineas = round(esperada + (-redondeo if base < 0 else redondeo), 6)
+    de_lineas = f"base×% sumado en sus {n} líneas juntadas"
+    if not a_mano:
+        return por_lineas, de_lineas if redondeo else "base×%", True
+    if redondeo and abs(cuota - por_lineas) < abs(cuota - esperada):
+        return por_lineas, de_lineas, False
+    return esperada, "base×%", False
+
+
 def porcentaje(v) -> str:
     """21, 10, 5,2... como se escribe, sin ceros de sobra."""
     v = float(v)
@@ -310,6 +375,17 @@ def validar(f: Factura) -> Resultado:
             marcar_revisar(f"NIF/CIF dudoso (no pasa el digito de control): "
                            f"{f.nif}", "nif")
 
+    # Un importe imposible (de una sesión de antes de la 1.26: ahora no se
+    # deja entrar) no puede salir en verde: con NaN ninguna cuenta descuadra.
+    for campo, nombre in CAMPOS_IMPORTE_IMPOSIBLE.items():
+        valor = getattr(f, campo, None)
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool) \
+                and not importe_posible(valor):
+            # Un entero de miles de cifras ni se puede escribir con repr().
+            leido = f"{valor:.6g}" if isinstance(valor, float) else "un número enorme"
+            marcar_error(f"Importe imposible en {nombre} ({leido}): escriba el "
+                         "de la factura.", campo)
+
     # Verde significa que están presentes todos los importes necesarios para
     # el flujo rutinario. Antes, al faltar todos, no se ejecutaba ninguna
     # comprobación aritmética y la fila podía parecer correcta.
@@ -359,21 +435,33 @@ def validar(f: Factura) -> Resultado:
 
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
-        esperada = round(f.base_iva * f.pct_iva / 100.0, 2)
+        esperada, de, estricta = (None, "", False) if f.cuota_iva is None \
+            else _cuota_esperada(f, f.base_iva, f.pct_iva, f.cuota_iva,
+                                 getattr(f, "redondeo_lineas_iva", 0.0),
+                                 getattr(f, "iva_a_mano", False))
         if f.cuota_iva is None:
             marcar_revisar("Falta la cuota de IVA", "cuota_iva")
-        elif abs(f.cuota_iva - esperada) > TOLERANCIA \
+        elif estricta and abs(f.cuota_iva - esperada) <= TOLERANCIA \
+                and getattr(f, "lineas_ambar_iva", 0):
+            # Líneas juntadas que en la 1.25 salían en ámbar, cada una en su
+            # fila: su cuota se apartaba unos céntimos de su base×%.
+            marcar_revisar(
+                f"La cuota de IVA ({f.cuota_iva}) suma {f.lineas_juntadas} "
+                f"líneas juntadas, y en {f.lineas_ambar_iva} de ellas se "
+                "aparta unos céntimos de base×%: suele ser el redondeo por "
+                "líneas. Compruébela.", "cuota_iva")
+        elif abs(f.cuota_iva - esperada) > TOLERANCIA and not estricta \
                 and abs(f.cuota_iva - esperada) <= _margen_redondeo(f.base_iva):
             # Una factura grande que redondea el IVA línea a línea se aparta
             # unos céntimos de base×%: es la cuota impresa, no un error (antes
             # quedaba en rojo sin salida y había que teclear otra cuota).
             marcar_revisar(
                 f"La cuota de IVA ({f.cuota_iva}) difiere en "
-                f"{abs(f.cuota_iva - esperada):.2f} € de base×% ({esperada}): "
+                f"{abs(f.cuota_iva - esperada):.2f} € de {de} ({esperada}): "
                 "suele ser el redondeo por líneas. Compruébela.", "cuota_iva")
         elif abs(f.cuota_iva - esperada) > TOLERANCIA:
             marcar_error(
-                f"Cuota IVA descuadra: {f.cuota_iva} pero base×% = {esperada}",
+                f"Cuota IVA descuadra: {f.cuota_iva} pero {de} = {esperada}",
                 "cuota_iva", "base_iva", "pct_iva")
 
     # Si aparece parte de un impuesto, tienen que estar sus tres piezas. Un
@@ -400,14 +488,18 @@ def validar(f: Factura) -> Resultado:
                 f"{esperado}, no {porcentaje(f.pct_requiv)}%",
                 "pct_requiv")
     if f.base_requiv is not None and f.pct_requiv is not None:
-        esperada = round(f.base_requiv * f.pct_requiv / 100.0, 2)
         if f.cuota_requiv is None:
             marcar_revisar("Falta la cuota del recargo de equivalencia",
                            "cuota_requiv")
-        elif abs(f.cuota_requiv - esperada) > TOLERANCIA:
-            marcar_error(
-                f"Cuota del recargo descuadra: {f.cuota_requiv} pero "
-                f"base×% = {esperada}", "cuota_requiv")
+        else:
+            esperada, de = _cuota_esperada(
+                f, f.base_requiv, f.pct_requiv, f.cuota_requiv,
+                getattr(f, "redondeo_lineas_requiv", 0.0),
+                getattr(f, "requiv_a_mano", False))[:2]
+            if abs(f.cuota_requiv - esperada) > TOLERANCIA:
+                marcar_error(
+                    f"Cuota del recargo descuadra: {f.cuota_requiv} pero "
+                    f"{de} = {esperada}", "cuota_requiv")
 
     # Aritmetica del IRPF
     if f.base_irpf is not None and f.pct_irpf is not None and f.cuota_irpf is not None:

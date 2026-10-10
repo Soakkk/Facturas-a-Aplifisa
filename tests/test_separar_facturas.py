@@ -194,6 +194,7 @@ def test_exportar_parte_el_taco_y_actualiza_la_ventana(monkeypatch):
         v._anadir_fila(b"", f, "gasto", "622", "G13", "", "b1")
     v._revalidar_todo()
     v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
     gastos = sorted(n for n in os.listdir(carpeta) if n.endswith(".pdf"))
     assert gastos == ["2026-02-10 PROVEEDOR PRUEBA F-1.pdf",
                       "2026-02-10 PROVEEDOR PRUEBA F-2.pdf"]
@@ -240,8 +241,72 @@ def test_las_revisadas_con_motivo_se_exportan_y_tienen_su_pdf(monkeypatch):
     v.tabla.selectRow(1)
     v._marcar_revisada()
     v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
     # Ya no hay «apartadas»: si INV-1 tiene su PDF es porque salió en el Excel.
     assert "2 línea(s)" in v.banda.historial[-1]
     gastos = sorted(n for n in os.listdir(carpeta) if n.endswith(".pdf"))
     assert gastos == ["2026-02-10 PROVEEDOR PRUEBA F-1.pdf",
                       "2026-02-10 PROVEEDOR PRUEBA INV-1.pdf"]
+
+
+def test_al_archivar_el_registro_guarda_todas_las_lineas_de_iva(monkeypatch):
+    """Una factura con dos tipos de IVA: al exportar se apuntaba bien (base
+    300, IVA 41), pero al archivarla (separar da una entrada por documento,
+    su primera línea) el registro se quedaba con la base y el IVA de la
+    primera. Lo leen el cuadre del año y el Resumen del expediente cuando el
+    lote ya se ha vaciado: salía «distinta» frente a Aplifisa."""
+    from datetime import date
+
+    import facturas_excel.app as modulo_app
+    from facturas_excel import cuadre_anual, registro_facturas
+
+    class Orden:
+        def __init__(self, parent):
+            pass
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def recordar(self):
+            pass
+
+        def orden(self):
+            return ventana_aplifisa.ORDEN_PDF
+
+    monkeypatch.setattr(ventana_aplifisa, "DialogoOrden", Orden)
+    base = archivo.carpeta_escaneos()
+    carpeta = archivo.carpeta_tipo_cliente(CLIENTE[0], 2026, "gastos", base, nif=CLIENTE[1])
+    taco = _taco(os.path.join(carpeta, "taco.pdf"), 1)
+    v = modulo_app.VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
+    v._cliente_nombre, v._cliente_nif = CLIENTE
+    v._bloques = [{"nombre": "b1", "cliente": CLIENTE[0], "nif": CLIENTE[1],
+                   "original": taco, "procesadas": [], "crudos": []}]
+    for base_iva, pct, cuota in ((100.0, 21.0, 21.0), (200.0, 10.0, 20.0)):
+        f = _f("F-7", "PROVEEDOR PRUEBA", "10/02/2026", taco, 1, doc="d7",
+               base_iva=base_iva, pct_iva=pct, cuota_iva=cuota,
+               total_impreso=341.0, lineas_factura=2,
+               concepto="622", subclave="G13", verificacion="doble")
+        v._anadir_fila(b"", f, "gasto", "622", "G13", "", "b1")
+    v._revalidar_todo()
+    v._exportar_todo()
+    v._esperar_archivo()      # el archivo del cliente va en segundo plano
+
+    [ficha] = registro_facturas.consultar("F-7")
+    assert ficha["estado"] == registro_facturas.ARCHIVADA and os.path.isfile(ficha["pdf"])
+    assert (ficha["base"], ficha["cuota_iva"], ficha["total"]) == (300.0, 41.0, 341.0)
+    # Archivarla otra vez (su PDF ya estaba) tampoco la deja a medias.
+    otra_vez = separar.separar({"gasto": [r["factura"] for r in v.filas]},
+                               base, *CLIENTE)
+    assert otra_vez["ya_estaban"] == 1 and not otra_vez["creados"]
+    registro_facturas.archivar(CLIENTE[1], CLIENTE[0], otra_vez["pdfs"])
+    [ficha] = registro_facturas.consultar("F-7")
+    assert (ficha["base"], ficha["cuota_iva"]) == (300.0, 41.0)
+    # El cuadre con el lote ya vaciado: solo con lo del registro.
+    año = (date(2026, 1, 1), date(2026, 12, 31))
+    programa = cuadre_anual.facturas_del_registro(CLIENTE[1], CLIENTE[0], *año)
+    aplifisa = [cuadre_anual.FacturaAplifisa(
+        tipo="gasto", fecha="10/02/2026", num_proveedor="F-7",
+        nombre="PROVEEDOR PRUEBA", nif="12345678Z", base=300.0, cuota=41.0,
+        neto=341.0, lineas=2)]
+    cuadre = cuadre_anual.cuadrar(programa, aplifisa, {"gasto": año})
+    assert cuadre.todo_bien, [l.estado for l in cuadre.lineas]

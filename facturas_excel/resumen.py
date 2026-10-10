@@ -8,6 +8,7 @@ Si el impreso no coincide, validacion ya lo marca factura a factura.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Tuple
 
@@ -97,6 +98,10 @@ def resumir_por_bloque(filas: Iterable[Tuple[str, Factura]]) -> Dict[str, Totale
 
 
 def eur(v: float) -> str:
+    # Un importe imposible (NaN o infinito de una sesión vieja) no puede
+    # tumbar el resumen: era lo que paraba la cola a mitad de un PDF.
+    if not _finito(v):
+        return "— €"
     entero, dec = f"{abs(v):.2f}".split(".")
     grupos = []
     while len(entero) > 3:
@@ -105,6 +110,13 @@ def eur(v: float) -> str:
     grupos.insert(0, entero)
     signo = "-" if v < 0 else ""
     return f"{signo}{'.'.join(grupos)},{dec} €"
+
+
+def _finito(v) -> bool:
+    try:
+        return math.isfinite(v)
+    except (TypeError, OverflowError):
+        return False
 
 
 def eur_con_signo(v: float) -> str:

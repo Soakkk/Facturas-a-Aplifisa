@@ -80,7 +80,16 @@ def es_cliente(nif) -> bool:
 def nombre_de(nif) -> str:
     """Nombre del cliente en el directorio. Vacio si no esta o si hay dos
     nombres en conflicto sin resolver (entonces no se elige ninguno)."""
-    ficha = clientes().get(_normaliza(nif))
+    return _nombre_de_ficha(clientes().get(_normaliza(nif)))
+
+
+def nombres_por_nif() -> Dict[str, str]:
+    """{NIF: nombre_de(NIF)} de todo el directorio, de una sola pasada (por
+    cada NIF, nombre_de vuelve a recorrer el directorio entero)."""
+    return {nif: _nombre_de_ficha(ficha) for nif, ficha in clientes().items()}
+
+
+def _nombre_de_ficha(ficha) -> str:
     if not ficha:
         return ""
     if (ficha.get("conflictos") or {}).get("nombre"):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import gzip
+import hashlib
 import os
 import pickle
 import shutil
@@ -31,6 +32,16 @@ _pedidas = 0       # número de la última escritura pedida
 _escrita = 0       # número de la última escrita (o anulada al borrar)
 _hilos: list[threading.Thread] = []
 _ultimo_error = ""
+# El guardado automático va en un solo hilo escritor, con como mucho una
+# foto esperando: si llegan varias mientras escribe, solo cuenta la última
+# (las de en medio ya son viejas). Antes cada guardado lanzaba su hilo con
+# su propia copia del lote. Y lo que no ha cambiado no se vuelve a escribir.
+_cerrojo_pendiente = threading.Lock()
+_pendiente: tuple | None = None    # (paquete, número, huella) sin escribir
+_escribiendo = False               # el hilo escritor está en marcha
+_huella_pedida = None              # la de la última foto pedida…
+_numero_pedido = 0                 # …y su número
+_huella_escrita = None             # la de lo que hay en el disco
 _apartada = ""
 # Una sesión que no se pudo abrir NI apartar (bloqueada por el antivirus u
 # otra copia del programa): en esta ejecución no se borra ni se pisa.
@@ -46,6 +57,22 @@ def _empaquetar(datos: dict) -> bytes:
                         protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def _huella(paquete: bytes) -> bytes:
+    """Lo que identifica una foto del lote, y dónde va (otra carpeta de
+    datos es otra sesión)."""
+    resumen = hashlib.sha256(os.path.normcase(_ruta()).encode("utf-8"))
+    resumen.update(paquete)
+    return resumen.digest()
+
+
+def _olvidar_huellas() -> None:
+    """Lo del disco ya no es lo último escrito (se borró o se apartó).
+    Se llama con el cerrojo del fichero cogido."""
+    global _huella_pedida, _huella_escrita
+    with _cerrojo_pendiente:
+        _huella_pedida = _huella_escrita = None
+
+
 def _siguiente() -> int:
     global _pedidas
     with _cerrojo_numeros:
@@ -55,7 +82,7 @@ def _siguiente() -> int:
 
 def _escribir(paquete: bytes, numero: int) -> None:
     """Escribe de forma atómica, si no hay ya algo más nuevo escrito."""
-    global _escrita
+    global _escrita, _huella_escrita
     with _cerrojo_fichero:
         if numero <= _escrita:
             return
@@ -65,10 +92,16 @@ def _escribir(paquete: bytes, numero: int) -> None:
                           "apartar, y no se pisa")
         temporal = ruta + ".tmp"
         try:
-            with gzip.open(temporal, "wb", compresslevel=3) as fh:
-                fh.write(paquete)
+            with open(temporal, "wb") as crudo:
+                with gzip.GzipFile(fileobj=crudo, mode="wb", compresslevel=3) as fh:
+                    fh.write(paquete)
+                # En el disco de verdad antes de sustituir al anterior: tras
+                # un corte de luz, el nuevo entero o el de antes, no a medias.
+                crudo.flush()
+                os.fsync(crudo.fileno())
             os.replace(temporal, ruta)
             _escrita = numero
+            _huella_escrita = _huella(paquete)
         except Exception:
             try:
                 if os.path.exists(temporal):
@@ -79,30 +112,86 @@ def _escribir(paquete: bytes, numero: int) -> None:
 
 
 def guardar(datos: dict) -> None:
-    """Escribe la sesión completa de forma atómica (y espera a que acabe)."""
+    """Escribe la sesión completa de forma atómica (y espera a que acabe).
+
+    Si en el disco ya está exactamente esto (lo dejó el guardado automático
+    y no se ha tocado nada), no se reescribe: así se cierra al momento."""
     global _ultimo_error
     paquete = _empaquetar(datos)
-    _escribir(paquete, _siguiente())
+    huella = _huella(paquete)
+    with _cerrojo_pendiente:
+        if (huella == _huella_escrita and _pendiente is None and not _escribiendo
+                and os.path.exists(_ruta())):
+            _ultimo_error = ""
+            return
+    numero = _siguiente()
+    _escribir(paquete, numero)
+    _pedida(huella, numero)
     _ultimo_error = ""
 
 
-def guardar_en_segundo_plano(datos: dict) -> None:
-    """Guardado automático: la foto del lote se toma ahora (en este hilo) y
-    se comprime y escribe aparte, para no parar la pantalla."""
-    paquete = _empaquetar(datos)
-    numero = _siguiente()
+def _pedida(huella: bytes, numero: int) -> None:
+    """Apunta la última foto pedida (si no hay ya una más nueva)."""
+    global _huella_pedida, _numero_pedido
+    with _cerrojo_pendiente:
+        if numero > _numero_pedido:
+            _huella_pedida, _numero_pedido = huella, numero
 
-    def escribir():
-        global _ultimo_error
+
+def guardar_en_segundo_plano(datos: dict) -> int:
+    """Guardado automático: la foto del lote se toma ahora (en este hilo) y
+    se comprime y escribe aparte, para no parar la pantalla.
+
+    Devuelve el número de la foto que lleva esto, para saber cuándo está en
+    el disco (ver `escrita`)."""
+    global _pendiente, _escribiendo, _huella_pedida, _numero_pedido
+    paquete = _empaquetar(datos)
+    huella = _huella(paquete)
+    with _cerrojo_pendiente:
+        if huella == _huella_pedida and (_pendiente is not None or _escribiendo
+                                         or os.path.exists(_ruta())):
+            return _numero_pedido   # nada ha cambiado desde la última foto
+        numero = _siguiente()
+        _huella_pedida, _numero_pedido = huella, numero
+        _pendiente = (paquete, numero, huella)
+        if _escribiendo:
+            return numero   # el hilo que escribe la recoge al acabar
+        _escribiendo = True
+        hilo = threading.Thread(target=_escritor, name="guardar-sesion", daemon=True)
+        _hilos[:] = [h for h in _hilos if h.is_alive()] + [hilo]
+    hilo.start()
+    return numero
+
+
+def escrita(numero: int) -> bool:
+    """Si la foto `numero` (o una más nueva, o el borrado) ya está en el disco."""
+    return _escrita >= numero
+
+
+def proxima() -> int:
+    """El número que llevará la próxima foto que se pida."""
+    with _cerrojo_numeros:
+        return _pedidas + 1
+
+
+def _escritor() -> None:
+    """Escribe la última foto pedida, y la siguiente si llega mientras."""
+    global _pendiente, _escribiendo, _huella_pedida, _ultimo_error
+    while True:
+        with _cerrojo_pendiente:
+            if _pendiente is None:
+                _escribiendo = False
+                return
+            paquete, numero, huella = _pendiente
+            _pendiente = None
         try:
             _escribir(paquete, numero)
             _ultimo_error = ""
         except Exception as error:   # lo avisa la ventana
             _ultimo_error = str(error) or type(error).__name__
-
-    hilo = threading.Thread(target=escribir, name="guardar-sesion", daemon=True)
-    _hilos[:] = [h for h in _hilos if h.is_alive()] + [hilo]
-    hilo.start()
+            with _cerrojo_pendiente:
+                if _huella_pedida == huella:
+                    _huella_pedida = None   # el próximo vuelve a intentarlo
 
 
 def ultimo_error() -> str:
@@ -153,6 +242,7 @@ def apartar() -> str:
         destino = f"{base}-{n}.pkl.gz"
     global _intocable
     with _cerrojo_fichero:
+        _olvidar_huellas()
         if not os.path.exists(ruta):
             return ""
         try:
@@ -191,6 +281,7 @@ def borrar() -> None:
         hasta = _pedidas
     with _cerrojo_fichero:
         _escrita = max(_escrita, hasta)
+        _olvidar_huellas()
         ruta = _ruta()
         if _intocable and os.path.normcase(ruta) == os.path.normcase(_intocable):
             return
