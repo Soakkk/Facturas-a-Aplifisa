@@ -266,21 +266,31 @@ def _margen_redondeo(base) -> float:
     return max(0.05, abs(base or 0) * 0.0001)
 
 
-def _cuota_esperada(f: Factura, base, pct, cuota, redondeo) -> tuple:
-    """(cuota esperada, de dónde sale) para comparar con la leída: base×%, o,
-    si la fila suma líneas juntadas al leer, lo que suman sus cuotas cuando
-    cada una cuadra sola (base×% más el redondeo de cada línea, que se apuntó
-    al leer: procesar.apuntar_juntadas), la que más se acerque. Así cuadra la
-    cuota cobrada de 30 albaranes, y una cuota mal leída entre ellas no se
-    disculpa como «redondeo»."""
+def _cuota_esperada(f: Factura, base, pct, cuota, redondeo,
+                    a_mano) -> tuple:
+    """(cuota esperada, de dónde sale, estricta) para comparar con la cuota.
+
+    Una fila normal: base×%, con la escala de siempre. Una que suma líneas
+    juntadas al leer: lo que suman sus cuotas cuando cada una cuadra sola
+    (base×% más el redondeo de cada línea, que se apuntó al leer:
+    procesar.apuntar_juntadas), sin más margen que TOLERANCIA (estricta):
+    una cuota mal leída en una línea, de más o de menos, aparta la suma lo
+    mismo que apartaba esa línea en su fila en la 1.25, aunque la acerque a
+    base×% o quepa en el redondeo de la base de toda la fila. Si una persona
+    ha tecleado la cuota o el tipo (`a_mano`), ya no es la suma leída: base×%
+    o esa suma, la que más se acerque, con la escala de siempre."""
     esperada = round(base * pct / 100.0, 2)
     n = getattr(f, "lineas_juntadas", 1)
-    if not isinstance(n, int) or n < 2 or not redondeo:
-        return esperada, "base×%"
+    if not isinstance(n, int) or n < 2:
+        return esperada, "base×%", False
+    redondeo = redondeo or 0.0
     por_lineas = round(esperada + (-redondeo if base < 0 else redondeo), 6)
-    if abs(cuota - por_lineas) < abs(cuota - esperada):
-        return por_lineas, f"base×% sumado en sus {n} líneas juntadas"
-    return esperada, "base×%"
+    de_lineas = f"base×% sumado en sus {n} líneas juntadas"
+    if not a_mano:
+        return por_lineas, de_lineas if redondeo else "base×%", True
+    if redondeo and abs(cuota - por_lineas) < abs(cuota - esperada):
+        return por_lineas, de_lineas, False
+    return esperada, "base×%", False
 
 
 def porcentaje(v) -> str:
@@ -425,12 +435,22 @@ def validar(f: Factura) -> Resultado:
 
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
-        esperada, de = (None, "") if f.cuota_iva is None else _cuota_esperada(
-            f, f.base_iva, f.pct_iva, f.cuota_iva,
-            getattr(f, "redondeo_lineas_iva", 0.0))
+        esperada, de, estricta = (None, "", False) if f.cuota_iva is None \
+            else _cuota_esperada(f, f.base_iva, f.pct_iva, f.cuota_iva,
+                                 getattr(f, "redondeo_lineas_iva", 0.0),
+                                 getattr(f, "iva_a_mano", False))
         if f.cuota_iva is None:
             marcar_revisar("Falta la cuota de IVA", "cuota_iva")
-        elif abs(f.cuota_iva - esperada) > TOLERANCIA \
+        elif estricta and abs(f.cuota_iva - esperada) <= TOLERANCIA \
+                and getattr(f, "lineas_ambar_iva", 0):
+            # Líneas juntadas que en la 1.25 salían en ámbar, cada una en su
+            # fila: su cuota se apartaba unos céntimos de su base×%.
+            marcar_revisar(
+                f"La cuota de IVA ({f.cuota_iva}) suma {f.lineas_juntadas} "
+                f"líneas juntadas, y en {f.lineas_ambar_iva} de ellas se "
+                "aparta unos céntimos de base×%: suele ser el redondeo por "
+                "líneas. Compruébela.", "cuota_iva")
+        elif abs(f.cuota_iva - esperada) > TOLERANCIA and not estricta \
                 and abs(f.cuota_iva - esperada) <= _margen_redondeo(f.base_iva):
             # Una factura grande que redondea el IVA línea a línea se aparta
             # unos céntimos de base×%: es la cuota impresa, no un error (antes
@@ -474,7 +494,8 @@ def validar(f: Factura) -> Resultado:
         else:
             esperada, de = _cuota_esperada(
                 f, f.base_requiv, f.pct_requiv, f.cuota_requiv,
-                getattr(f, "redondeo_lineas_requiv", 0.0))
+                getattr(f, "redondeo_lineas_requiv", 0.0),
+                getattr(f, "requiv_a_mano", False))[:2]
             if abs(f.cuota_requiv - esperada) > TOLERANCIA:
                 marcar_error(
                     f"Cuota del recargo descuadra: {f.cuota_requiv} pero "

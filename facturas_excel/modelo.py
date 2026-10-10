@@ -109,6 +109,14 @@ class Factura:
     # (positivo: más lejos de cero), para que valga igual en un abono.
     redondeo_lineas_iva: float = 0.0
     redondeo_lineas_requiv: float = 0.0
+    # En cuántas de ellas la cuota de IVA leída se apartaba de base×% dentro
+    # del redondeo por líneas de su base (en la 1.25, esa línea en ámbar).
+    lineas_ambar_iva: int = 0
+    # Una persona ha tecleado en la tabla la cuota o el tipo (de IVA o del
+    # recargo): si la fila suma líneas juntadas, ya no es la suma leída y se
+    # compara con base×% o con la suma por líneas (validacion).
+    iva_a_mano: bool = False
+    requiv_a_mano: bool = False
     # (con varios tipos de IVA, esta fila es solo UNA parte: su base no puede
     #  cuadrar ella sola con el total impreso, que es el de la factura entera)
 
@@ -125,7 +133,8 @@ class Factura:
                      "mencion_iva", "posible_no_deducible",
                      "sin_nif_destinatario", "no_deducible", "rectifica_a",
                      "nombre_sin_letra", "lineas_juntadas",
-                     "redondeo_lineas_iva", "redondeo_lineas_requiv"}
+                     "redondeo_lineas_iva", "redondeo_lineas_requiv",
+                     "lineas_ambar_iva", "iva_a_mano", "requiv_a_mano"}
         return {f.name: getattr(self, f.name) for f in fields(self)
                 if f.name not in excluidos}
 

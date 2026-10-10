@@ -21,7 +21,7 @@ import math
 
 from .extraccion import ESQUEMA, _num
 from .texto import visible
-from .validacion import TOLERANCIA
+from .validacion import TOLERANCIA, _margen_redondeo
 
 _PROPIEDADES = ESQUEMA["properties"]
 
@@ -155,16 +155,22 @@ def _sumar(a, b):
     return a if b is None else round(a + b, 6)
 
 
-def _cuota_que_cuadra(base, pct, cuota):
-    """La cuota de una línea si cuadra sola, como cuando cada una iba en su
-    fila (1.25): la leída si se aparta de base×% como mucho TOLERANCIA; si
-    no, base×%. None si falta la base o el porcentaje."""
+def _cuota_que_cuadra(base, pct, cuota, con_redondeo=False):
+    """(cuota, en ámbar): la de una línea si cuadra sola, como cuando cada una
+    iba en su fila (1.25). La leída si se aparta de base×% como mucho
+    TOLERANCIA o, en el IVA (`con_redondeo`), como mucho el redondeo por
+    líneas de SU base: entonces en ámbar, como salía esa línea. Si no,
+    base×%. (None, False) si falta la base o el porcentaje."""
     if base is None or pct is None:
-        return None
+        return None, False
     calculada = round(base * pct / 100.0, 2)
-    if cuota is not None and abs(cuota - calculada) <= TOLERANCIA:
-        return cuota
-    return calculada
+    if cuota is not None:
+        diferencia = abs(cuota - calculada)
+        if diferencia <= TOLERANCIA:
+            return cuota, False
+        if con_redondeo and diferencia <= _margen_redondeo(base):
+            return cuota, True
+    return calculada, False
 
 
 def juntar_por_tipo(lineas: list) -> tuple:
@@ -173,19 +179,24 @@ def juntar_por_tipo(lineas: list) -> tuple:
 
     Cada una dice en «_juntadas» cuántas suma y en «_cuota_lineas» y
     «_requiv_lineas» lo que sumarían sus cuotas si cada línea cuadrara sola
-    (None si a alguna le falta la base o el porcentaje). Redondeadas línea a
+    (None si a alguna le falta la base o el porcentaje), y en «_lineas_ambar»
+    en cuántas la cuota de IVA se aparta de base×% dentro del redondeo por
+    líneas de su base (en la 1.25, esas en ámbar). Redondeadas línea a
     línea, se apartan de base×% de la suma hasta medio céntimo por línea:
     validar acepta ese redondeo exacto, no un margen en el que quepa una
     cuota mal leída (ver procesar.apuntar_juntadas)."""
     por_tipo = {}
     for linea in lineas:
         clave = (linea.get("tipo_iva"), linea.get("pct_requiv"))
+        cuota, ambar = _cuota_que_cuadra(
+            linea.get("base"), linea.get("tipo_iva"), linea.get("cuota_iva"),
+            con_redondeo=True)
         cuadran = {
-            "_cuota_lineas": _cuota_que_cuadra(
-                linea.get("base"), linea.get("tipo_iva"), linea.get("cuota_iva")),
+            "_cuota_lineas": cuota,
             "_requiv_lineas": _cuota_que_cuadra(
                 linea.get("base"), linea.get("pct_requiv"),
-                linea.get("cuota_requiv"))}
+                linea.get("cuota_requiv"))[0],
+            "_lineas_ambar": int(ambar)}
         suma = por_tipo.get(clave)
         if suma is None:
             por_tipo[clave] = dict(linea, _juntadas=1, **cuadran)
