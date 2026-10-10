@@ -169,8 +169,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cerrando = False
         self._cerrado = False
         # Lo que quedó por leer la última vez (de la sesión), hasta que se
-        # pide seguir leyéndolo: ver _ofrecer_cola_guardada.
+        # pide seguir leyéndolo: ver _ofrecer_cola_guardada. Y la que ya no se
+        # puede leer (sus hojas no están), para decirlo al abrir.
         self._cola_guardada = []
+        self._cola_perdida = []
+        # Quién es el cliente del lote, si no se preguntó por cerrar justo
+        # entonces: se pregunta al volver (ver _preguntar_cliente_pendiente).
+        self._cliente_por_decidir = False
         self._decisiones_conflicto_nif = {}
         # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
         self._localizaciones = {}
@@ -1483,6 +1488,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._guardar_sesion()
             except Exception:
                 errores.apuntar("Guardar el lote al salir:\n" + traceback.format_exc())
+        # Lo ya gastado en Gemini por las lecturas que se dejan atrás: se
+        # apuntaba al acabar su bloque, y saliendo así no se llega.
+        for hilo in vivos:
+            try:
+                getattr(hilo, "apuntar_gasto_pendiente", lambda: None)()
+            except Exception:
+                errores.apuntar("Apuntar el gasto al salir:\n" + traceback.format_exc())
         nombres = ", ".join(sorted({type(h).__name__ for h in vivos}))
         errores.apuntar(
             f"Al salir seguían trabajando {len(vivos)} hilo(s) ({nombres}): se "
@@ -1914,6 +1926,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                                in self._localizaciones.items()},
             "su_suma": self.tabla_su_suma.valores(),
             "cola": cola,
+            "cliente_por_decidir": self._cliente_por_decidir,
         }
 
     def _avisar_sesion_apartada(self, ruta: str) -> None:
@@ -2004,6 +2017,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._rellenar_tabla()
             self._pintar_cliente()
             self._revalidar_todo()
+            if datos.get("cliente_por_decidir"):
+                # Se cerró sin preguntarlo: se pregunta ya con la ventana
+                # abierta, como se habría preguntado al poner el bloque.
+                self._cliente_por_decidir = True
+                QTimer.singleShot(0, self._preguntar_cliente_pendiente)
             # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
             try:
                 self.tabla_su_suma.poner_valores(datos.get("su_suma"))
@@ -2023,13 +2041,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f"{self.tabla.rowCount()} línea(s)."
                 + (f"  {n_nombres} línea(s) con el nombre unificado por NIF."
                    if n_nombres else ""))
-            if fuera:
-                self._avisar(
-                    f"El lote de la última vez tenía {fuera} factura(s) leídas "
-                    "que no estaban en la tabla (se guardó mientras se ponía un "
-                    "bloque). Se han vuelto a poner: revíselas antes de exportar.",
-                    AVISO, segundos=0)
-            self._ofrecer_cola_guardada()
+            # En un solo aviso con el de seguir leyendo (que casi siempre
+            # hay: se guardó así al cerrar con un bloque a medio poner), que
+            # si no lo tapaba nada más abrir.
+            self._ofrecer_cola_guardada(antes=(
+                f"El lote de la última vez tenía {fuera} factura(s) leídas "
+                "que no estaban en la tabla (se guardó mientras se ponía un "
+                "bloque). Se han vuelto a poner: revíselas antes de exportar."
+                if fuera else ""))
         except Exception:
             # Una sesión antigua o dañada nunca debe impedir abrir el programa,
             # pero tampoco se pierde: se aparta y se avisa.
@@ -2469,6 +2488,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
         self._cliente_elegido_lote = ""
+        self._cliente_por_decidir = False
         self._periodo_manual_valor = "auto"
         self._periodo_lote = PeriodoLote()
         self.txt_buscar.clear()

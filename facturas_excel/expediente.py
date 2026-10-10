@@ -147,13 +147,19 @@ def _unir(pdfs: List[str], destino: str, titulo: str) -> int:
             nombre = os.path.basename(ruta)
             inicio = None
             if total is not None:
-                try:
-                    with CERROJO:
+                with CERROJO:
+                    antes = salida.page_count
+                    try:
                         with fitz.open(ruta) as doc:
-                            inicio = salida.page_count + 1
                             salida.insert_pdf(doc)
-                except Exception:
-                    inicio = None
+                        inicio = antes + 1
+                    except Exception:
+                        # Uno dañado (cortado, cifrado) puede fallar a mitad,
+                        # con alguna hoja ya metida: se quitan, o quedaban
+                        # hojas sueltas de nadie entre las de otro documento
+                        # con el índice diciendo «no se pudo abrir».
+                        if salida.page_count > antes:
+                            salida.delete_pages(antes, salida.page_count - 1)
             if inicio is None:
                 filas.append((nombre, None, "no se pudo abrir"))
                 continue

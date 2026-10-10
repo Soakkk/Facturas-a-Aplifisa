@@ -164,6 +164,7 @@ class LecturaMixin:
                 self, "No se pudo preparar el PDF",
                 f"No se ha añadido a la cola:\n\n{e}")
             return
+        self._olvidar_cola_guardada_de(elementos)
 
         # En curso hasta que su bloque está en el lote, no hasta que el hilo
         # acaba: con un aviso abierto al terminar un bloque, el hilo ya no
@@ -193,8 +194,11 @@ class LecturaMixin:
             w.isRunning() for w in self._lecturas_abandonadas)
 
     def _bloques_por_leer(self) -> int:
-        """Los bloques de la cola que aún no están en el lote."""
-        return len(self._cola) + (self._elemento_cola_actual is not None)
+        """Los bloques de la cola que aún no están en el lote (el que se lee
+        de antes de «Vaciar todo» no cuenta: ya no es del lote)."""
+        actual = self._elemento_cola_actual
+        return len(self._cola) + (actual is not None
+                                  and not self._lectura_descartada(actual))
 
     def _iniciar_siguiente_cola(self, api_key=None):
         # Una sola lectura a la vez, y nunca desde dentro de otro arranque
@@ -332,11 +336,18 @@ class LecturaMixin:
             self._resumen()      # la barra, con el lote de ahora
 
     def _devolver_a_la_cola(self, elemento) -> None:
-        """Al cerrar, un bloque a medias vuelve a la cola (que se guarda)."""
+        """Al cerrar, un bloque a medias vuelve a la cola (que se guarda).
+
+        Uno de antes de «Vaciar todo» no: ya no es del lote. Si al cerrar
+        enseguida su lectura cancelada no llegaba, se guardaba como cola y al
+        abrir se ofrecía seguir leyendo lo que se había vaciado."""
         if not elemento:
             return
         if self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None
+        if self._lectura_descartada(elemento):
+            self._limpiar_parte_interna(elemento)
+            return
         if elemento not in self._cola:
             self._cola.insert(0, elemento)
 
@@ -427,7 +438,10 @@ class LecturaMixin:
         worker = self.worker
         if worker is not None and hasattr(worker, "cancelar"):
             worker.cancelar()
-        if worker is not None and hasattr(worker, "wait"):
+        # A la de antes de «Vaciar todo» no se la espera: lo que entregue se
+        # tira igual (ver _devolver_a_la_cola).
+        if worker is not None and hasattr(worker, "wait") \
+                and not self._lectura_descartada(elemento):
             self.lbl_estado.setText("Cerrando: guardando lo ya leído…")
             limite = time.monotonic() + ESPERA_LECTURA_AL_CERRAR_S
             while self._elemento_cola_actual is not None \
@@ -452,10 +466,13 @@ class LecturaMixin:
         quedó de la última vez y lo que se está leyendo, que se cancela (lo que
         entregue se descarta: antes volvía a aparecer en el lote vacío). Sus
         partes temporales se borran."""
-        for elemento in [*self._cola, *self._cola_guardada]:
-            self._limpiar_parte_interna(elemento)
+        # Fuera de la cola antes de borrar sus partes: si no, las de un PDF
+        # cargado dos veces se guardaban unas a otras y se quedaban.
+        soltados = [*self._cola, *self._cola_guardada]
         self._cola = []
         self._cola_guardada = []
+        for elemento in soltados:
+            self._limpiar_parte_interna(elemento)
         self._generacion_cola += 1
         self._cola_total = self._cola_completados = 0
         actual = self._elemento_cola_actual
@@ -485,7 +502,10 @@ class LecturaMixin:
         leyendo (si se corta, se vuelve a leer entero), lo que espera turno y
         lo que quedó de la última vez sin seguir todavía."""
         elementos = [self._elemento_cola_actual, *self._cola, *self._cola_guardada]
-        return [self._elemento_para_guardar(e) for e in elementos if e]
+        # Sin lo que se sigue leyendo de antes de «Vaciar todo» (el guardado
+        # automático lo guardaba, y tras un corte se ofrecía seguir con él).
+        return [self._elemento_para_guardar(e) for e in elementos
+                if e and not self._lectura_descartada(e)]
 
     def _partes_de_la_cola(self) -> set:
         """Las partes temporales (cola_pdf) que aún hacen falta."""
@@ -496,32 +516,76 @@ class LecturaMixin:
 
     def _recuperar_cola_guardada(self, cola) -> None:
         """La cola que se guardó con la sesión (solo lo que aún se puede leer:
-        sus partes tienen que seguir ahí)."""
-        self._cola_guardada = [
-            dict(elemento) for elemento in (cola or [])
-            if isinstance(elemento, dict) and elemento.get("rutas")
-            and all(os.path.isfile(ruta) for ruta in elemento["rutas"])]
+        sus partes tienen que seguir ahí). Lo que ya no está (se borraron sus
+        hojas, o el PDF o la imagen suelta) se dice al ofrecerla: antes se
+        olvidaba sin decir nada."""
+        self._cola_guardada, self._cola_perdida = [], []
+        for elemento in cola or []:
+            if not isinstance(elemento, dict) or not elemento.get("rutas"):
+                continue
+            if all(os.path.isfile(ruta) for ruta in elemento["rutas"]):
+                self._cola_guardada.append(dict(elemento))
+            else:
+                self._cola_perdida.append(elemento)
 
-    def _ofrecer_cola_guardada(self) -> None:
-        """Ofrece seguir leyendo lo que quedó a medias, en la banda (no se
-        lee solo: cuesta dinero y puede que ya no haga falta)."""
-        if not self._cola_guardada:
-            return
-        hojas = 0
-        for elemento in self._cola_guardada:
-            for ruta in elemento.get("rutas", []):
-                try:
-                    hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
-                except Exception:
-                    pass
+    @staticmethod
+    def _nombres_de(elementos) -> str:
         nombres = sorted({os.path.basename(e.get("original") or e["rutas"][0])
-                          for e in self._cola_guardada})
-        self._avisar(
-            f"La última vez quedó sin leer parte de {', '.join(nombres[:3])}"
-            f"{' y otros' if len(nombres) > 3 else ''}: "
-            f"{len(self._cola_guardada)} bloque(s), {hojas} hoja(s).",
-            AVISO, deshacer=self._seguir_cola_guardada, segundos=0,
-            boton="Seguir leyendo")
+                          for e in elementos})
+        return ", ".join(nombres[:3]) + (" y otros" if len(nombres) > 3 else "")
+
+    def _ofrecer_cola_guardada(self, antes: str = "") -> None:
+        """Ofrece seguir leyendo lo que quedó a medias, en la banda (no se
+        lee solo: cuesta dinero y puede que ya no haga falta).
+
+        `antes` es otro aviso de la apertura que va delante, en el mismo:
+        la banda enseña uno solo y éste lo tapaba."""
+        perdida, self._cola_perdida = getattr(self, "_cola_perdida", []), []
+        textos = [antes] if antes else []
+        if self._cola_guardada:
+            hojas = 0
+            for elemento in self._cola_guardada:
+                for ruta in elemento.get("rutas", []):
+                    try:
+                        hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
+                    except Exception:
+                        pass
+            textos.append(
+                f"La última vez quedó sin leer parte de "
+                f"{self._nombres_de(self._cola_guardada)}: "
+                f"{len(self._cola_guardada)} bloque(s), {hojas} hoja(s).")
+        if perdida:
+            cuantos = f"{len(perdida)} bloque(s) de {self._nombres_de(perdida)}"
+            textos.append(
+                (f"Además, {cuantos} que quedaban por leer ya no están"
+                 if self._cola_guardada else
+                 f"La última vez quedaron sin leer {cuantos}, pero ya no están")
+                + " (se borraron o se movieron sus hojas): vuelva a cargarlas si "
+                "hace falta.")
+        if not textos:
+            return
+        self._avisar(" ".join(textos), AVISO, segundos=0,
+                     deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
+                     boton="Seguir leyendo")
+
+    def _olvidar_cola_guardada_de(self, elementos) -> None:
+        """Lo que quedó por leer la última vez de un PDF que se vuelve a
+        cargar ya no se ofrece: esta carga lo lee otra vez (tiene las mismas
+        partes, que borra al leerlas). Si no, «Seguir leyendo» lo leía dos
+        veces (pagándolo otra vez y con las facturas repetidas) o, más
+        tarde, se ofrecía con sus partes ya borradas."""
+        nuevas = {os.path.normcase(os.path.abspath(ruta))
+                  for elemento in elementos for ruta in elemento["rutas"]}
+        quedan = [e for e in self._cola_guardada
+                  if not any(os.path.normcase(os.path.abspath(ruta)) in nuevas
+                             for ruta in e.get("rutas", []))]
+        if len(quedan) == len(self._cola_guardada):
+            return
+        self._cola_guardada = quedan
+        if hasattr(self, "banda") and self.banda.accion() == self._seguir_cola_guardada:
+            # El aviso de «Seguir leyendo» ya no dice lo que queda.
+            self.banda.ocultar()
+            self._ofrecer_cola_guardada()
 
     def _seguir_cola_guardada(self) -> None:
         """Pone en la cola lo que quedó por leer la última vez."""
@@ -878,15 +942,26 @@ class LecturaMixin:
             AVISO, segundos=0)
 
     def _limpiar_parte_interna(self, elemento: dict) -> None:
-        """Borra una parte ya procesada, nunca el PDF original del usuario."""
+        """Borra una parte ya procesada, nunca el PDF original del usuario.
+
+        Tampoco la que aún tiene que leer otro bloque de la cola: el mismo
+        PDF vuelto a cargar (tras «Vaciar todo», o dos veces) tiene las mismas
+        partes, y al descartar la lectura vieja se borraba la del bloque
+        nuevo, que luego no se podía leer («no such file»)."""
         if int(elemento.get("partes", 1) or 1) <= 1:
             return
+        en_uso = {os.path.normcase(os.path.abspath(ruta))
+                  for otro in [self._elemento_cola_actual, *self._cola]
+                  if otro and otro is not elemento
+                  for ruta in otro.get("rutas", [])}
         raiz = os.path.abspath(os.path.join(dir_datos(), "cola_pdf"))
         for ruta in elemento.get("rutas", []):
             ruta_abs = os.path.abspath(ruta)
             if not os.path.normcase(ruta_abs).startswith(
                     os.path.normcase(raiz) + os.sep):
                 continue
+            if os.path.normcase(ruta_abs) in en_uso:
+                continue        # la borrará ese bloque cuando se lea
             try:
                 os.remove(ruta_abs)
                 carpeta = os.path.dirname(ruta_abs)
@@ -907,7 +982,12 @@ class LecturaMixin:
         pagar ninguna lectura.
         """
         if automatico and self._cerrando:
-            return      # al cerrar no se pregunta: se decide al volver
+            # Al cerrar no se pregunta: se apunta (va con la sesión) y se
+            # pregunta al volver a abrir. Antes no se preguntaba nunca y el
+            # lote se quedaba con el cliente supuesto (en un taco de ventas,
+            # el que compra: todo al revés).
+            self._cliente_por_decidir = True
+            return
         analisis = self._analisis_del_lote()
         if len(analisis.candidatos) < 2:
             if not automatico:
@@ -917,6 +997,7 @@ class LecturaMixin:
             return
         dialogo = DialogoCliente(analisis.candidatos, self,
                                  elegido=getattr(self, "_cliente_nif", ""))
+        self._cliente_por_decidir = False      # ya se ha preguntado
         if dialogo.exec() != QDialog.Accepted:
             return
         elegido = dialogo.elegido()
@@ -939,6 +1020,16 @@ class LecturaMixin:
                     != clave_proveedor(elegido.nombre)):
                 recordar_nif(otro.nombre, otro.nif, manual=True)
         self._rehacer_con_cliente(elegido.nombre, elegido.nif)
+
+    def _preguntar_cliente_pendiente(self) -> None:
+        """Quién es el cliente del lote, si no se preguntó al cerrar (su
+        bloque llegó mientras se cerraba): como al poner el bloque."""
+        if self._cerrando or not self._cliente_por_decidir:
+            return
+        analisis = self._analisis_del_lote()
+        if analisis.empate or analisis.homonimo:
+            self._cambiar_cliente(automatico=True)
+        self._cliente_por_decidir = False
 
     def _rehacer_con_cliente(self, nombre, nif):
         """Vuelve a montar todos los bloques con otro cliente, sin Gemini."""

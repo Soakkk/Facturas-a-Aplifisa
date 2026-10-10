@@ -122,6 +122,22 @@ def test_actualizar_a_mitad_de_lectura_tampoco_tumba_el_programa(tmp_path):
     assert len(_sesion_en_disco(carpeta)[1]) == 2
 
 
+def test_al_salir_sin_esperar_la_lectura_se_apunta_lo_ya_gastado(tmp_path):
+    # Una hoja se queda colgada en Gemini y se sale sin esperarla: lo gastado
+    # se apuntaba al acabar el bloque, al que así no se llega, y las 24 hojas
+    # ya leídas (y pagadas) del bloque no contaban en el gasto del mes.
+    codigo, _resultado, carpeta, detalle = _escenario(
+        tmp_path, "cerrar_con_una_hoja_lenta")
+    assert codigo == 0, detalle
+    with open(carpeta / "llamadas.txt", encoding="utf-8") as fh:
+        pedidas = len(fh.readlines())
+    with open(carpeta / "gasto.txt", encoding="utf-8") as fh:
+        apuntadas = len(fh.readlines())
+    assert pedidas == 50
+    assert apuntadas == pedidas - 1               # todas menos la colgada
+    assert len(_sesion_en_disco(carpeta)[1]) == 2  # y su bloque, en la cola
+
+
 def test_cerrar_mientras_se_dibujan_las_hojas_no_pide_nada_a_gemini(tmp_path):
     codigo, resultado, carpeta, detalle = _escenario(tmp_path, "cerrar_dibujando")
     assert codigo == 0, detalle
@@ -387,6 +403,85 @@ def test_al_abrir_un_lote_guardado_a_medias_se_recuperan_sus_facturas():
     assert any("no estaban en la tabla" in t for t in abierta.banda.historial)
 
 
+# n.º 9 ----------------------------------------------------------------
+def _partes_en_disco():
+    raiz = os.path.join(dir_datos(), "cola_pdf")
+    return sorted(os.path.join(r, f) for r, _d, fs in os.walk(raiz) for f in fs)
+
+
+def test_vaciar_y_volver_a_cargar_el_mismo_pdf_no_borra_sus_partes(
+        ventana, tmp_path, monkeypatch):
+    # El mismo PDF tiene siempre las mismas partes (misma carpeta y nombre).
+    # Al descartar la lectura cancelada se borraba su parte, que ya era la
+    # del bloque 2 del PDF vuelto a cargar: «no such file» y 25 facturas
+    # sin leer.
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    taco = _pdf(tmp_path / "taco.pdf", 60)
+    ventana.procesar_rutas([taco])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    cancelada = WorkerFalso.creados[-1]           # el 2.º bloque, leyéndose
+    ventana._vaciar_todo()
+    ventana.procesar_rutas([taco])                # enseguida, el mismo PDF
+    partes = [e["rutas"][0] for e in ventana._cola]
+    assert len(partes) == 3 and cancelada.rutas[0] in partes
+
+    cancelada.entregar(_bloque_de(cancelada))     # se descarta
+
+    assert all(os.path.exists(p) for p in partes)
+    for _ in partes:
+        lectura = WorkerFalso.creados[-1]
+        assert os.path.exists(lectura.rutas[0])
+        lectura.entregar(_bloque_de(lectura))
+    assert len(ventana._bloques) == 3
+    assert not _partes_en_disco()                 # y no quedan huérfanas
+
+
+def test_vaciar_con_el_mismo_pdf_cargado_dos_veces_no_deja_partes(
+        ventana, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    taco = _pdf(tmp_path / "taco.pdf", 60)
+    ventana.procesar_rutas([taco])
+    ventana.procesar_rutas([taco])                # dos veces, por despiste
+    leyendo = WorkerFalso.creados[-1]
+
+    ventana._vaciar_todo()
+    leyendo.entregar(_bloque_de(leyendo))         # se descarta
+
+    assert not ventana._bloques and not ventana._cola
+    assert not _partes_en_disco()
+
+
+def test_lo_vaciado_no_se_guarda_como_cola_al_cerrar_enseguida(
+        ventana, tmp_path, monkeypatch):
+    # «Vaciar todo» con el 2.º bloque leyéndose y cerrar enseguida: si la
+    # lectura cancelada no llegaba en la espera del cierre, volvía a la cola
+    # y se guardaba (y el guardado automático, entre tanto, también), y al
+    # abrir se ofrecía «Seguir leyendo» lo que se había vaciado. Y a esa
+    # lectura, que ya no cuenta, tampoco se la espera al cerrar.
+    import time
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 3, raising=False)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 60)])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    cancelada = WorkerFalso.creados[-1]          # el 2.º, que no llegará
+
+    ventana._vaciar_todo()
+    assert cancelada.cancelada and ventana._bloques_por_leer() == 0
+    ventana._guardar_sesion_automatica()
+    assert sesion.cargar() is None
+    inicio = time.monotonic()
+    ventana.closeEvent(QCloseEvent())
+
+    assert time.monotonic() - inicio < 1.5
+    assert sesion.cargar() is None
+    assert not _partes_en_disco()
+
+
 # n.º 10 ---------------------------------------------------------------
 def _ventana_con_un_bloque():
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
@@ -480,6 +575,152 @@ def test_vaciar_todo_tira_tambien_la_cola_guardada(ventana, tmp_path, monkeypatc
 
     assert not any(os.path.exists(p) for p in partes)
     assert sesion.cargar() is None
+
+
+def _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch):
+    """Cierra con el 2.º bloque leyéndose y abre otra vez: 1 bloque en el
+    lote y 2 por leer de la última vez."""
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 60)])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    ventana.closeEvent(QCloseEvent())
+    return VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+
+def test_exportar_con_lo_que_quedo_por_leer_la_ultima_vez_pregunta(
+        ventana, tmp_path, monkeypatch):
+    # Lo que quedó por leer es del mismo lote: exportar sin preguntar sacaba
+    # el Excel sin esos bloques (como con la cola a medias). Y si el aviso de
+    # «Seguir leyendo» ya lo había tapado otro, no había forma de seguir.
+    from facturas_excel.ventana_aplifisa import DialogoOrden
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    assert len(abierta._cola_guardada) == 2
+    abierta._marcar_revisada(list(range(len(abierta.filas))))   # otro aviso
+    assert abierta.banda.btn_deshacer.text() != "Seguir leyendo" \
+        or abierta.banda.btn_deshacer.isHidden()
+    preguntas, ordenes = [], []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda *a, **k: preguntas.append(a[1]) or QMessageBox.No))
+    monkeypatch.setattr(DialogoOrden, "exec", lambda self: ordenes.append(1) or 0)
+
+    abierta._exportar_todo()
+
+    assert preguntas == ["Faltan bloques por leer"]
+    assert not ordenes                        # no se ha llegado a exportar
+    # Al decir que no, vuelve a ofrecerse seguir leyendo.
+    assert not abierta.banda.btn_deshacer.isHidden()
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+
+
+def test_si_lo_que_quedo_por_leer_ya_no_esta_se_dice_al_abrir(
+        ventana, tmp_path, monkeypatch):
+    # Las hojas de la cola guardada (sus partes, o el PDF o la imagen suelta)
+    # ya no están: las borró otra versión del programa al arrancar, o se
+    # limpió la carpeta. Antes se olvidaban sin decir nada.
+    import shutil
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    abierta.close()
+    shutil.rmtree(os.path.join(dir_datos(), "cola_pdf"))
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert not otra._cola_guardada
+    aviso = otra.banda.historial[-1]
+    assert "2 bloque(s) de taco.pdf" in aviso and "ya no están" in aviso
+    assert otra.banda.btn_deshacer.isHidden()        # no hay nada que seguir
+
+
+def test_si_falta_una_parte_se_ofrece_el_resto_y_se_dice_la_que_falta(
+        ventana, tmp_path, monkeypatch):
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    ultima = abierta._cola_guardada[-1]["rutas"][0]
+    abierta.close()
+    os.remove(ultima)
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert len(otra._cola_guardada) == 1
+    aviso = otra.banda.historial[-1]
+    assert "1 bloque(s), 25 hoja(s)" in aviso
+    assert "Además, 1 bloque(s) de taco.pdf" in aviso and "ya no están" in aviso
+    assert otra.banda.btn_deshacer.text() == "Seguir leyendo"
+    assert not otra.banda.btn_deshacer.isHidden()
+
+
+def test_el_aviso_de_facturas_recuperadas_no_lo_tapa_el_de_seguir_leyendo(
+        ventana, tmp_path, monkeypatch):
+    # Cerrar con un bloque a medio poner (una pregunta abierta) guarda sus
+    # facturas fuera de las filas y, casi siempre, una cola: al abrir, el
+    # aviso de «Seguir leyendo» tapaba enseguida al de las recuperadas.
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    datos = abierta._datos_sesion()
+    datos["filas"] = datos["filas"][:20]      # como guardado a medio poner
+    sesion.guardar(datos)
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert len(otra.filas) == 25
+    aviso = otra.banda.historial[-1]
+    assert "5 factura(s) leídas que no estaban en la tabla" in aviso
+    assert "quedó sin leer parte de taco.pdf" in aviso
+    assert otra.banda.btn_deshacer.text() == "Seguir leyendo"
+
+
+def test_volver_a_cargar_el_pdf_que_quedo_a_medias_no_lo_lee_dos_veces(
+        ventana, tmp_path, monkeypatch):
+    # Se abre con 2 bloques de taco.pdf por leer y, en vez de «Seguir
+    # leyendo», se vuelve a cargar taco.pdf: esta carga tiene las mismas
+    # partes y las lee (y borra). Se seguía ofreciendo «Seguir leyendo»
+    # esos 2 bloques: leídos dos veces, o con sus partes ya borradas.
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+
+    abierta.procesar_rutas([str(tmp_path / "taco.pdf")])
+
+    assert not abierta._cola_guardada
+    assert abierta.banda.isHidden() or abierta.banda.btn_deshacer.isHidden()
+    for _ in range(3):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    assert len(abierta._bloques) == 4 and not abierta._cola
+    assert not _partes_en_disco()
+    assert sesion.cargar() is None or not abierta._datos_sesion()["cola"]
+
+
+def test_quien_es_el_cliente_que_no_se_pregunto_al_cerrar_se_pregunta_al_volver(
+        ventana, tmp_path, monkeypatch):
+    # Un taco de un cliente nuevo: no se sabe cuál de las dos partes es el
+    # cliente y se pregunta al poner el bloque. Si el bloque llegaba en la
+    # espera del cierre se ponía sin preguntar «para decidirlo al volver»,
+    # pero al volver no se preguntaba nunca: el lote se quedaba con el
+    # cliente supuesto (en un taco de ventas, el que compra: todo al revés).
+    from facturas_excel.dialogo_cliente import DialogoCliente
+    preguntas = []
+    monkeypatch.setattr(DialogoCliente, "exec", lambda self: preguntas.append(1) or 0)
+    nuevo = ("CLIENTE NUEVO SA", "A12345674")
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a])
+    lectura = WorkerFalso.creados[-1]
+    hojas = []
+    for n in (1, 2):
+        hoja = _hoja(a, n, f"F-{n}")
+        hoja[3]["receptor_nombre"], hoja[3]["receptor_nif"] = nuevo
+        hojas.append(hoja)
+    # Llega en la espera del cierre (al cancelar la lectura).
+    lectura.cancelar = lambda: lectura.terminado.emit(
+        preparar_lote(hojas, *nuevo), *nuevo, hojas)
+
+    ventana.closeEvent(QCloseEvent())
+    assert len(ventana._bloques) == 1 and not preguntas    # al cerrar, no
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _esperar(lambda: preguntas)                             # al volver, sí
+    assert preguntas == [1]
+    abierta.closeEvent(QCloseEvent())
+    VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _app.processEvents()
+    assert preguntas == [1]                     # y una vez, no cada vez
 
 
 # n.º 30 ---------------------------------------------------------------
