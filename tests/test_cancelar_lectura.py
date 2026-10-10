@@ -116,6 +116,47 @@ def test_cancelar_antes_de_pedir_deja_las_hojas_sin_pedir(tmp_path, monkeypatch)
     assert {d["_error"] for *_, d in crudos} == {hilos.NO_LEIDA_AL_CERRAR}
 
 
+def test_una_hoja_que_esperaba_al_pdf_cerrado_queda_sin_pedir(tmp_path, monkeypatch):
+    # Cancelar suelta el PDF aunque otro hilo esté esperando al cerrojo de
+    # MuPDF para dibujar su hoja: esa hoja no está rota, se ha quedado sin
+    # pedir por cerrar (antes salía «No se pudo sacar la imagen…»).
+    worker, pedidas, _dibujadas, entregado = _lectura(
+        monkeypatch, _taco(tmp_path / "taco.pdf", 2), a_la_vez=2)
+    esperando, seguir = threading.Event(), threading.Event()
+
+    class HojasCompartidas:
+        def __init__(self, rutas, dpi=150):
+            self.lista = [(rutas[0], 1), (rutas[0], 2)]
+            self.cerrado = False
+
+        def __len__(self):
+            return 2
+
+        def imagen(self, indice):
+            if indice == 1:
+                esperando.set()                   # ya ha mirado si se cancelaba
+                seguir.wait(10)
+                if self.cerrado:
+                    raise ValueError("document closed")
+                return b"hoja 2"
+            assert esperando.wait(10)
+            worker.cancelar()                     # se cierra el programa
+            seguir.set()
+            return b"hoja 1"
+
+        def cerrar(self, espera=-1):
+            self.cerrado = True
+            return True
+    monkeypatch.setattr(hilos, "Hojas", HojasCompartidas)
+
+    worker.run()
+
+    assert pedidas == []
+    [(tipo, (_procesadas, _nombre, _nif, crudos))] = entregado
+    assert tipo == "bloque"
+    assert [d["_error"] for *_, d in crudos] == [hilos.NO_LEIDA_AL_CERRAR] * 2
+
+
 def test_sin_cancelar_cada_hoja_sale_como_antes(tmp_path, monkeypatch):
     from facturas_excel import pdf
     ruta = _taco(tmp_path / "taco.pdf", 3)

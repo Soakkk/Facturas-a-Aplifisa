@@ -121,6 +121,12 @@ class Worker(QThread):
                     # escaneo se reduce fuera (pdf.hoja_a_jpg).
                     img = hojas.imagen(idx)
                 except Exception as e:
+                    if self._cancelado.is_set():
+                        # Cancelar suelta el PDF aunque haya hojas esperando
+                        # al cerrojo para dibujarse: esas no se han roto, se
+                        # han quedado sin pedir (y así la ventana sabe que el
+                        # bloque está a medias y lo vuelve a poner en cola).
+                        return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
                     # Una hoja que no se puede sacar no tumba el bloque (ni
                     # se pierde lo ya leído y pagado de las demás).
                     return sin_imagen(idx, origen, pagina,
