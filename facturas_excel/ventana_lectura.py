@@ -224,9 +224,7 @@ class LecturaMixin:
                 # (ver _aviso_quitado): uno de una carga anterior con su aviso
                 # ya cerrado volvía al acabar cada carga, aunque no fallara
                 # nada, y la barra lo contaba.
-                de_esta = {id(e) for e in self._fallidos_cola}
-                pendientes = sum(1 for e in self._cola_guardada
-                                 if e.get("fallido") and id(e) in de_esta)
+                pendientes = self._fallidos_pendientes()
                 # El número es el del aviso (y el de Exportar): con uno de
                 # antes, la barra decía 1 y el aviso 2.
                 fallidos = sum(1 for e in self._cola_guardada if e.get("fallido"))
@@ -234,13 +232,8 @@ class LecturaMixin:
                     f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
                        if pendientes else ""))
-                if pendientes and self.banda.accion() is None:
-                    # Otro aviso lo tapó (páginas sin leer, «Lote rehecho…»:
-                    # la banda enseña uno solo): vuelve, con ése delante. Uno
-                    # con su propio botón (un «Deshacer») no se pisa.
-                    self._ofrecer_cola_guardada(
-                        antes="" if self.banda.isHidden() else self.banda.lbl.text(),
-                        tipo=ERROR)
+                if pendientes:
+                    self._volver_a_ofrecer_fallidos()
             # Lo dudoso se señala en el documento mientras se revisa lo demás.
             self._localizar_dudosas()
             return
@@ -685,16 +678,41 @@ class LecturaMixin:
                      deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
                      boton="Seguir leyendo" if de_antes else "Volver a leer")
 
+    def _fallidos_pendientes(self) -> int:
+        """Los bloques que no se pudieron leer, siguen sin leer y cuyo aviso
+        la persona no ha cerrado (ver _aviso_quitado)."""
+        de_esta = {id(e) for e in self._fallidos_cola}
+        return sum(1 for e in self._cola_guardada
+                   if e.get("fallido") and id(e) in de_esta)
+
+    def _volver_a_ofrecer_fallidos(self) -> None:
+        """Si otro aviso tapó el de los bloques que no se pudieron leer (la
+        banda enseña uno solo), vuelve: con ése delante si no tiene botón
+        (páginas sin leer, «Lote rehecho…»). Uno con su propio botón (un
+        «Deshacer») no se pisa: vuelve cuando se vaya (ver _aviso_quitado)."""
+        if not self._fallidos_pendientes():
+            return
+        visible = "" if self.banda.isHidden() else self.banda.lbl.text()
+        if visible and visible == self._texto_aviso_fallidos:
+            return                                  # ya se ve
+        if self.banda.accion() is None:
+            self._ofrecer_cola_guardada(antes=visible, tipo=ERROR)
+
     def _aviso_quitado(self, texto: str) -> None:
         """La banda quitó un aviso: lo cerró la persona, pulsó su botón o se
         acabó su tiempo (ver BandaAvisos.quitado).
 
         Si era el de los bloques que no se pudieron leer, ya lo ha visto: al
         acabar otra carga ya no vuelve. Si no lo cerró (otro aviso lo tapó),
-        sí: antes se olvidaba al empezar cada carga, la haya visto o no."""
+        sí: antes se olvidaba al empezar cada carga, la haya visto o no. Y si
+        lo tapaba uno con su botón (marcar revisadas con la cola acabando),
+        vuelve en cuanto éste se va: si no, la barra mandaba a «ver el aviso»
+        con la banda vacía."""
         if texto == self._texto_aviso_fallidos and (
                 self.banda.isHidden() or self.banda.lbl.text() != texto):
             self._fallidos_cola = []
+        elif self.banda.isHidden():
+            self._volver_a_ofrecer_fallidos()
 
     def _olvidar_cola_guardada_de(self, elementos) -> None:
         """Lo que quedó por leer la última vez de un PDF que se vuelve a

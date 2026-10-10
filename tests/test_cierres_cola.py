@@ -1400,3 +1400,45 @@ def test_la_barra_cuenta_los_mismos_bloques_sin_leer_que_el_aviso(
     monkeypatch.setattr(DialogoOrden, "exec", lambda self: 0)
     ventana._exportar_todo()
     assert textos[0].startswith("Faltan 2 bloque(s)")
+
+
+def test_el_aviso_del_fallo_vuelve_cuando_se_va_el_deshacer_que_lo_tapaba(
+        ventana, tmp_path, monkeypatch):
+    # Falla la parte 1 de un taco. Mientras se lee la última, se marcan dos
+    # líneas como revisadas («Deshacer», 10 s) y la parte llega dentro de
+    # esos 10 s: el aviso del fallo no se vuelve a ofrecer (no se pisa un
+    # «Deshacer»), y al irse éste la banda se quedaba vacía con la barra
+    # mandando a «ver el aviso».
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 75)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    assert ventana._marcar_revisada([0, 1]) is not None
+    revisadas = ventana.banda.lbl.text()
+    assert "revisada(s)" in revisadas and ventana.banda.accion() is not None
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    assert "1 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+    assert ventana.banda.lbl.text() == revisadas         # no se pisa
+
+    ventana.banda._timer.timeout.emit()                 # a los 10 s
+    assert not ventana.banda.isHidden()
+    assert "No se han podido leer 1 bloque(s) de taco.pdf" in ventana.banda.lbl.text()
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+
+    # Lo mismo si se pulsa su «Deshacer» o se cierra con la ✕.
+    for filas, quitar in (([2, 3], "_deshacer"), ([4, 5], "btn_cerrar")):
+        assert ventana._marcar_revisada(filas) is not None
+        assert "revisada(s)" in ventana.banda.lbl.text()
+        if quitar == "_deshacer":
+            ventana.banda._deshacer()
+            assert "Revisión deshecha" in ventana.banda.lbl.text()
+            ventana.banda._timer.timeout.emit()
+        else:
+            ventana.banda.btn_cerrar.click()
+        assert "No se han podido leer 1 bloque(s)" in ventana.banda.lbl.text(), quitar
+    # Y cerrado el suyo, ya no.
+    ventana.banda.btn_cerrar.click()
+    assert ventana._marcar_revisada([6, 7]) is not None
+    ventana.banda._timer.timeout.emit()
+    assert ventana.banda.isHidden()
