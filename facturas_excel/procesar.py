@@ -580,6 +580,12 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         f.base_iva = _num(linea.get("base"))
         f.pct_iva = _num(linea.get("tipo_iva"))
         f.cuota_iva = _num(linea.get("cuota_iva"))
+        # Una línea que suma varias leídas (sanear_lectura.juntar_por_tipo):
+        # validar le deja el margen del redondeo de cada una.
+        juntadas = linea.get("_juntadas")
+        if isinstance(juntadas, int) and not isinstance(juntadas, bool) \
+                and juntadas > 1:
+            f.lineas_juntadas = juntadas
         # CADA tipo de IVA lleva su propio recargo (21->5,2 / 10->1,4 / 4->0,5),
         # y su base es la de esa linea. Los campos sueltos de nivel factura son
         # el respaldo para cuando Gemini los devuelve al viejo estilo.

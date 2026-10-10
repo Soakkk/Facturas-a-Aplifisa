@@ -24,7 +24,7 @@ from facturas_excel.extraccion import _num
 from facturas_excel.modelo import Factura
 from facturas_excel.resumen import eur
 from facturas_excel.tabla_facturas import parse_numero
-from facturas_excel.validacion import ERROR, OK, validar
+from facturas_excel.validacion import ERROR, OK, REVISAR, validar
 
 _app = QApplication.instance() or QApplication([])
 
@@ -727,11 +727,62 @@ def test_muchas_lineas_del_mismo_tipo_quedan_en_una(n):
     c = combinada(lectura(0, lineas_iva=lineas(n), total=round(n * 1.21, 2)))
     assert c["lineas_iva"] == [{"base": float(n), "tipo_iva": 21.0,
                                 "cuota_iva": round(n * 0.21, 2), "pct_requiv": None,
-                                "cuota_requiv": None}]
+                                "cuota_requiv": None, "_juntadas": n}]
     pr = lote(c)[0][1]
     assert len(pr.facturas) == 1
     assert f"{n} líneas de IVA" in pr.aviso        # en ámbar, diciendo qué
     assert validar(pr.facturas[0]).estado == OK     # y cuadra
+
+
+@pytest.mark.parametrize("n, base, tipo, recargo", [
+    (30, 15.40, 4.0, 0.5),     # resumen de 30 albaranes de pan a un bar
+    (13, 10.10, 21.0, 5.2),
+], ids=["30_albaranes_al_4", "13_lineas_al_21"])
+def test_lineas_juntadas_que_redondean_quedan_en_ambar_no_en_rojo(n, base, tipo,
+                                                                 recargo):
+    # Cada línea, con su IVA y su recargo redondeados a céntimos, cuadra sola
+    # (en la 1.25 salían n filas en verde). Juntadas, la suma de las cuotas
+    # se aparta de base_total×% hasta medio céntimo por línea: en rojo no se
+    # podía «Marcar revisada» y había que teclear una cuota que no es la
+    # cobrada (30 × 15,40: IVA 18,60 frente a 18,48 y recargo 2,40 frente a
+    # 2,31).
+    juntas = lineas(n, base, tipo, recargo)
+    total = round(sum(x["base"] + x["cuota_iva"] + x["cuota_requiv"]
+                      for x in juntas), 2)
+    for segunda in (None, lectura(0, lineas_iva=lineas(n, base, tipo, recargo),
+                                  total=total)):
+        c = combinada(lectura(0, lineas_iva=juntas, total=total), segunda)
+        f = lote(c)[0][1].facturas[0]
+        assert (f.cuota_iva, f.cuota_requiv) == (
+            round(n * round(base * tipo / 100, 2), 2),
+            round(n * round(base * recargo / 100, 2), 2))   # las cobradas
+        resultado = validar(f)
+        assert resultado.estado == REVISAR, resultado.mensajes
+        assert any(f"{n} líneas" in m for m in resultado.mensajes)
+
+
+def test_la_fila_juntada_se_puede_marcar_revisada_y_exportar(ventana):
+    # 30 albaranes de 15,40 € al 4 %: IVA cobrado 18,60, base×% = 18,48.
+    juntas = lineas(30, 15.40, 4.0)
+    procesadas = lote(combinada(lectura(0, lineas_iva=juntas, total=480.6)))
+    ventana._rutas_actuales = ["taco.pdf"]
+    ventana._on_terminado(procesadas, *CLIENTE)
+    assert len(ventana.filas) == 1 and ventana.filas[0]["estado"] == REVISAR
+    assert ventana._marcar_revisada([0]) is not None
+    assert not ventana.filas[0].pendiente
+    assert ventana.filas[0].factura.cuota_iva == 18.6      # la cobrada
+
+
+def test_una_cuota_mal_leida_entre_las_juntadas_sigue_en_rojo():
+    # El margen es el del redondeo, no más: un euro de más en una línea no
+    # se disculpa por estar juntada.
+    juntas = lineas(13, 10.10, 21.0, 5.2)
+    juntas[5] = dict(juntas[5], cuota_iva=3.12, cuota_requiv=1.53)
+    f = lote(combinada(lectura(0, lineas_iva=juntas)))[0][1].facturas[0]
+    mensajes = validar(f).mensajes
+    assert validar(f).estado == ERROR
+    assert any("Cuota IVA descuadra" in m for m in mensajes)
+    assert any("Cuota del recargo descuadra" in m for m in mensajes)
 
 
 def test_se_juntan_por_tipo_de_iva_y_de_recargo():

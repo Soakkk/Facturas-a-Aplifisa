@@ -156,14 +156,19 @@ def _sumar(a, b):
 
 def juntar_por_tipo(lineas: list) -> tuple:
     """(líneas, nota): como mucho una por tipo de IVA y recargo, con la base y
-    las cuotas sumadas. Si ni así caben (tipos inventados), las primeras."""
+    las cuotas sumadas. Si ni así caben (tipos inventados), las primeras.
+
+    Cada una dice en «_juntadas» cuántas suma: sus cuotas, redondeadas línea
+    a línea, se apartan de base×% hasta medio céntimo por línea, y validar
+    tiene que saberlo para no dejarla en rojo (ver validacion)."""
     por_tipo = {}
     for linea in lineas:
         clave = (linea.get("tipo_iva"), linea.get("pct_requiv"))
         suma = por_tipo.get(clave)
         if suma is None:
-            por_tipo[clave] = dict(linea)
+            por_tipo[clave] = dict(linea, _juntadas=1)
             continue
+        suma["_juntadas"] += 1
         for campo in ("base", "cuota_iva", "cuota_requiv"):
             suma[campo] = _sumar(suma.get(campo), linea.get(campo))
     juntas = list(por_tipo.values())

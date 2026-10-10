@@ -266,6 +266,23 @@ def _margen_redondeo(base) -> float:
     return max(0.05, abs(base or 0) * 0.0001)
 
 
+def _margen_juntadas(f: Factura) -> float:
+    """Lo que puede apartarse de base×% una cuota que suma n líneas leídas,
+    cada una redondeada a céntimos: medio céntimo por línea, más el redondeo
+    de base×%. 0 si la fila es una sola línea."""
+    n = getattr(f, "lineas_juntadas", 1)
+    if not isinstance(n, int) or n < 2:
+        return 0.0
+    return 0.005 * n + 0.01
+
+
+def _aviso_juntadas(que: str, cuota, esperada, f: Factura) -> str:
+    return (f"La cuota {que} ({cuota}) difiere en {abs(cuota - esperada):.2f} € "
+            f"de base×% ({esperada}): es la suma de las {f.lineas_juntadas} "
+            "líneas que se han juntado, cada una con su redondeo. Compruébela "
+            "con el documento.")
+
+
 def porcentaje(v) -> str:
     """21, 10, 5,2... como se escribe, sin ceros de sobra."""
     v = float(v)
@@ -412,6 +429,13 @@ def validar(f: Factura) -> Resultado:
         if f.cuota_iva is None:
             marcar_revisar("Falta la cuota de IVA", "cuota_iva")
         elif abs(f.cuota_iva - esperada) > TOLERANCIA \
+                and abs(f.cuota_iva - esperada) <= _margen_juntadas(f):
+            # Las líneas juntadas al leer: su cuota es la suma de las
+            # cobradas. En rojo no se podía dar por buena y había que
+            # teclear otra (en la 1.25, cada línea suelta cuadraba).
+            marcar_revisar(_aviso_juntadas("de IVA", f.cuota_iva, esperada, f),
+                           "cuota_iva")
+        elif abs(f.cuota_iva - esperada) > TOLERANCIA \
                 and abs(f.cuota_iva - esperada) <= _margen_redondeo(f.base_iva):
             # Una factura grande que redondea el IVA línea a línea se aparta
             # unos céntimos de base×%: es la cuota impresa, no un error (antes
@@ -453,6 +477,10 @@ def validar(f: Factura) -> Resultado:
         if f.cuota_requiv is None:
             marcar_revisar("Falta la cuota del recargo de equivalencia",
                            "cuota_requiv")
+        elif abs(f.cuota_requiv - esperada) > TOLERANCIA \
+                and abs(f.cuota_requiv - esperada) <= _margen_juntadas(f):
+            marcar_revisar(_aviso_juntadas("del recargo", f.cuota_requiv,
+                                           esperada, f), "cuota_requiv")
         elif abs(f.cuota_requiv - esperada) > TOLERANCIA:
             marcar_error(
                 f"Cuota del recargo descuadra: {f.cuota_requiv} pero "
