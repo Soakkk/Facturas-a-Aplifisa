@@ -29,8 +29,10 @@ update».
   si la lectura no acaba.
 - **Registro:** al archivar se guardan todas las líneas de IVA (antes solo la
   primera; venía de antes de la 1.25).
-- Tres revisiones adversariales (por rama, final por 5 frentes y segunda
-  ronda de los arreglos).
+- Revisiones adversariales: por rama, una final por 5 frentes y tres rondas
+  más sobre sus arreglos. La última fue diferencial: 12.000 facturas
+  inventadas de 13 a 300 líneas por el camino de la 1.25 y el de la 1.26, sin
+  ninguna diferencia de gravedad en IVA, recargo ni base.
 
 **Medida final** (banco con IA falsa, `scratchpad/sintesis/res/final.md`):
 
