@@ -60,11 +60,12 @@ def nombre_factura(f) -> str:
 
 
 def _documentos(facturas_por_tipo: Dict[str, Iterable]) -> "OrderedDict":
-    """Agrupa las líneas de IVA de cada factura: {clave: (tipo, primera línea)}."""
+    """Agrupa las líneas de IVA de cada factura: {clave: [(tipo, línea), ...]}.
+    El PDF sale de la primera; al registro van todas (ver `separar`)."""
     docs: "OrderedDict" = OrderedDict()
     for tipo, facturas in facturas_por_tipo.items():
         for f in facturas:
-            docs.setdefault(clave_documento(f), (tipo, f))
+            docs.setdefault(clave_documento(f), []).append((tipo, f))
     return docs
 
 
@@ -223,7 +224,10 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
 
     Devuelve {"creados": [...], "ya_estaban": n, "sin_paginas": [...],
     "tacos": {ruta vieja: ruta nueva}, "afectados": {(ejercicio)},
-    "pdfs": [(tipo, factura, ruta del PDF)]} (también los que ya estaban).
+    "pdfs": [(tipo, línea, ruta del PDF)]} (también los que ya estaban), con
+    TODAS las líneas de IVA de cada factura: el registro (archivar) suma las
+    que recibe y pisa lo apuntado al exportar, así que con solo la primera
+    se quedaba con su base y su IVA, y el cuadre del año daba «distinta».
     """
     import fitz
 
@@ -234,7 +238,8 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
     abiertos: Dict[str, "fitz.Document"] = {}
     documentos = _documentos(facturas_por_tipo)
     try:
-        for hechas, (tipo, f) in enumerate(documentos.values()):
+        for hechas, lineas in enumerate(documentos.values()):
+            tipo, f = lineas[0]
             if progreso:
                 progreso(hechas, len(documentos))
             paginas = paginas_de(f)
@@ -280,14 +285,14 @@ def separar(facturas_por_tipo: Dict[str, Iterable], base: str,
                 if ya_estaba:
                     nuevo.close()
                     ya_estaban += 1
-                    pdfs.append((tipo, f, destino))
+                    pdfs.extend((t, linea, destino) for t, linea in lineas)
                     continue
                 temporal = destino + ".tmp"
                 nuevo.save(temporal, garbage=3, deflate=True)
                 nuevo.close()
             os.replace(temporal, destino)
             creados.append(destino)
-            pdfs.append((tipo, f, destino))
+            pdfs.extend((t, linea, destino) for t, linea in lineas)
             afectados.add(ejercicio)
             usados.update(o for o, _ in paginas)
         if progreso:
