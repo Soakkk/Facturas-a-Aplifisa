@@ -218,8 +218,11 @@ class LecturaMixin:
             self.btn_gastos.setEnabled(hay_datos)
             self.btn_registro.setEnabled(hay_datos)
             if self._cola_total:
+                fallidos = sum(1 for e in self._cola_guardada if e.get("fallido"))
                 self.lbl_estado.setText(
-                    f"Cola terminada: {self._cola_completados} bloque(s) procesado(s).")
+                    f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
+                    + (f" {fallidos} no se pudieron leer (ver el aviso)."
+                       if fallidos else ""))
             # Lo dudoso se señala en el documento mientras se revisa lo demás.
             self._localizar_dudosas()
             return
@@ -559,26 +562,39 @@ class LecturaMixin:
                           for e in elementos})
         return ", ".join(nombres[:3]) + (" y otros" if len(nombres) > 3 else "")
 
-    def _ofrecer_cola_guardada(self, antes: str = "") -> None:
+    @staticmethod
+    def _hojas_de(elementos) -> int:
+        hojas = 0
+        for elemento in elementos:
+            for ruta in elemento.get("rutas", []):
+                try:
+                    hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
+                except Exception:
+                    pass
+        return hojas
+
+    def _ofrecer_cola_guardada(self, antes: str = "", tipo: str = AVISO) -> None:
         """Ofrece seguir leyendo lo que quedó a medias, en la banda (no se
-        lee solo: cuesta dinero y puede que ya no haga falta).
+        lee solo: cuesta dinero y puede que ya no haga falta). También lo
+        que no se pudo leer ahora (ver `_on_fallo`), para volver a leerlo.
 
         `antes` es otro aviso de la apertura que va delante, en el mismo:
         la banda enseña uno solo y éste lo tapaba."""
         perdida, self._cola_perdida = getattr(self, "_cola_perdida", []), []
         textos = [antes] if antes else []
-        if self._cola_guardada:
-            hojas = 0
-            for elemento in self._cola_guardada:
-                for ruta in elemento.get("rutas", []):
-                    try:
-                        hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
-                    except Exception:
-                        pass
+        de_antes = [e for e in self._cola_guardada if not e.get("fallido")]
+        fallidos = [e for e in self._cola_guardada if e.get("fallido")]
+        if de_antes:
             textos.append(
                 f"La última vez quedó sin leer parte de "
-                f"{self._nombres_de(self._cola_guardada)}: "
-                f"{len(self._cola_guardada)} bloque(s), {hojas} hoja(s).")
+                f"{self._nombres_de(de_antes)}: "
+                f"{len(de_antes)} bloque(s), {self._hojas_de(de_antes)} hoja(s).")
+        if fallidos:
+            textos.append(
+                f"No se han podido leer {len(fallidos)} bloque(s) de "
+                f"{self._nombres_de(fallidos)} ({self._hojas_de(fallidos)} "
+                "hoja(s)): sus facturas no están en la tabla. Vuelva a "
+                "leerlos cuando se resuelva.")
         if perdida:
             cuantos = f"{len(perdida)} bloque(s) de {self._nombres_de(perdida)}"
             textos.append(
@@ -589,9 +605,9 @@ class LecturaMixin:
                 "hace falta.")
         if not textos:
             return
-        self._avisar(" ".join(textos), AVISO, segundos=0,
+        self._avisar(" ".join(textos), tipo, segundos=0,
                      deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
-                     boton="Seguir leyendo")
+                     boton="Seguir leyendo" if de_antes else "Volver a leer")
 
     def _olvidar_cola_guardada_de(self, elementos) -> None:
         """Lo que quedó por leer la última vez de un PDF que se vuelve a
@@ -706,16 +722,28 @@ class LecturaMixin:
             self._devolver_a_la_cola(elemento)
             return
         self._muestra_capturada(elemento)
-        self._limpiar_parte_interna(elemento)
         self._cola_completados += 1
         self._escaneo_reciente = False
         if self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None
+        # Sus hojas no se tiran: el bloque se queda con lo que hay por leer
+        # (va con la sesión, Exportar pregunta por él y se puede volver a
+        # leer). Antes se borraba su parte y cada fallo tapaba el aviso del
+        # anterior: con el crédito agotado a mitad de un taco solo se veía
+        # el de la última parte, y el Excel salía sin las demás sin preguntar.
+        if elemento.get("rutas") and all(map(os.path.isfile, elemento["rutas"])):
+            fallido = self._elemento_para_guardar(elemento)
+            # La marca no va con la sesión: al volver es «de la última vez».
+            fallido["fallido"] = True
+            self._cola_guardada.append(fallido)
+        else:
+            self._limpiar_parte_interna(elemento)
         # En la banda, no en una ventana: un aviso abierto paraba la cola
         # (y con otro bloque llegando mientras, el programa se cerraba).
         etiqueta = elemento.get("etiqueta") or "este bloque"
-        self._avisar(f"No se pudo leer «{etiqueta}»: {msg}. La cola sigue con "
-                     "el siguiente.", ERROR, segundos=0)
+        self._ofrecer_cola_guardada(
+            antes=f"No se pudo leer «{etiqueta}»: {str(msg).rstrip('. ')}. La "
+                  "cola sigue con el siguiente.", tipo=ERROR)
         self._iniciar_siguiente_cola()
 
     @_sin_parar_la_cola

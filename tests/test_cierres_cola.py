@@ -870,3 +870,50 @@ def test_lo_cargado_y_lo_leido_llegan_al_disco_sin_esperar(
         assert all(map(os.path.isfile, partes))
     assert con_la_pregunta == [True, True]
     assert len(_partes_en_disco()) == 1               # las puestas, ya borradas
+
+
+def _fallar(lectura, mensaje):
+    lectura.corriendo = False
+    lectura.fallo.emit(mensaje)
+
+
+def test_los_bloques_que_fallan_se_dicen_todos_y_se_pueden_volver_a_leer(
+        ventana, tmp_path, monkeypatch):
+    # Con el crédito agotado a mitad de un taco fallan enteros sus dos
+    # últimos bloques. Cada fallo tapaba el aviso del anterior (solo se veía
+    # el de la parte 4), sus partes se borraban (no se podían volver a leer)
+    # y Exportar no preguntaba nada: el Excel salía sin las hojas 51 a 100.
+    from facturas_excel.ventana_aplifisa import DialogoOrden
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    for _ in range(2):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    partes = []
+    for _ in range(2):
+        lectura = WorkerFalso.creados[-1]
+        partes.append(lectura.rutas[0])
+        _fallar(lectura, "la API key se quedó sin crédito")
+
+    assert len(ventana.filas) == 50 and not ventana._lectura_en_curso()
+    aviso = ventana.banda.lbl.text()
+    assert "taco_parte_04_de_04" in aviso
+    assert "No se han podido leer 2 bloque(s) de taco.pdf (50 hoja(s))" in aviso
+    assert all(map(os.path.isfile, partes))
+    ventana._guardar_sesion_automatica()
+    assert _en_disco() == (2, partes)            # y van con la sesión
+    preguntas = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda *a, **k: preguntas.append(a[2]) or QMessageBox.No))
+    monkeypatch.setattr(DialogoOrden, "exec", lambda self: 0)
+    ventana._exportar_todo()
+    assert len(preguntas) == 1 and "Faltan 2 bloque(s)" in preguntas[0]
+
+    # Resuelto (hay crédito otra vez), se vuelven a leer desde el aviso.
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    ventana.banda.btn_deshacer.click()
+    for parte in partes:
+        lectura = WorkerFalso.creados[-1]
+        assert lectura.rutas == [parte]
+        lectura.entregar(_bloque_de(lectura))
+    assert len(ventana.filas) == 100 and not ventana._cola_guardada
+    assert not _partes_en_disco()

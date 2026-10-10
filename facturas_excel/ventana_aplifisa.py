@@ -404,15 +404,15 @@ class AplifisaMixin:
         # el taco se apartaba con ellos aún por leer. El botón está apagado
         # mientras; Ctrl+G llega aquí igual, así que se pregunta.
         faltan = self._bloques_por_leer()
-        # Lo que quedó por leer la última vez (ver _ofrecer_cola_guardada)
-        # también es de este lote, aunque el aviso de «Seguir leyendo» ya no
-        # se vea: al decir que no, se vuelve a ofrecer.
+        # Lo que quedó por leer la última vez, o no se pudo leer (ver
+        # _ofrecer_cola_guardada), también es de este lote, aunque su aviso ya
+        # no se vea: al decir que no, se vuelve a ofrecer.
         de_antes = len(getattr(self, "_cola_guardada", []))
         if (faltan or de_antes) and QMessageBox.question(
                 self, "Faltan bloques por leer",
                 f"Faltan {faltan + de_antes} bloque(s) por leer de la cola"
-                + (f" ({de_antes} de la última vez, sin seguir todavía)"
-                   if de_antes else "")
+                + (f" ({de_antes} que quedaron sin leer: de la última vez "
+                   "o porque fallaron)" if de_antes else "")
                 + ". Si exporta ahora, sus facturas no irán en este Excel y "
                 "habría que exportarlas aparte cuando se lean.\n\n"
                 "¿Exportar ya lo leído?",
