@@ -17,6 +17,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
+from functools import reduce
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -27,7 +28,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
-from .sanear_lectura import aviso_saneado
+from .sanear_lectura import _cuota_que_cuadra, _sumar, aviso_saneado
 from .validacion import fecha_de, normalizar_fecha, validar_nif
 from .texto import limpiar, reparar, tiene_invisibles, visible
 
@@ -302,13 +303,48 @@ def _lineas_leidas(lineas, cuantas: int) -> tuple | None:
     return tuple(leidas)
 
 
+def _cuotas_que_cuadran(lineas, pct, columna: int, con_redondeo: bool):
+    """Lo que suman las cuotas de las líneas si cada una cuadra sola (ver
+    sanear_lectura._cuota_que_cuadra); None si a alguna le falta la base."""
+    suma = 0.0
+    for linea in lineas:
+        cuota = _cuota_que_cuadra(linea[0], pct, linea[columna], con_redondeo)
+        if cuota is None:
+            return None
+        suma = round(suma + cuota, 6)
+    return suma
+
+
+def _abono_linea_a_linea(f: Factura) -> tuple:
+    """Un abono: cada línea juntada en negativo ANTES de sumarla, como ponía
+    la 1.25 cada una en su fila (normalizar_importes_abono). En negativo la
+    suma, una línea a la que Gemini quitó el menos restaba de las demás en
+    vez de sumar (30 de −15,40 con una sin el menos: −431,20 en vez de
+    −462,00) y las cuotas no cuadraban con su base. Deja la fila con esas
+    sumas y devuelve (base, lo que suman sus cuotas de IVA y de recargo
+    cuando cada una cuadra sola)."""
+    f.lineas_leidas = tuple(tuple(None if v is None else -abs(v) for v in linea)
+                            for linea in f.lineas_leidas)
+    base_antes = f.base_iva
+    for i, campo in enumerate(("base_iva", "cuota_iva", "cuota_requiv")):
+        suma = reduce(_sumar, (linea[i] for linea in f.lineas_leidas), None)
+        if suma is not None:        # (un recargo suelto de la factura, no)
+            setattr(f, campo, suma)
+    if f.base_requiv is not None and f.base_requiv == base_antes:
+        f.base_requiv = f.base_iva
+    return (f.base_iva,
+            _cuotas_que_cuadran(f.lineas_leidas, f.pct_iva, 1, True),
+            _cuotas_que_cuadran(f.lineas_leidas, f.pct_requiv, 2, False))
+
+
 def apuntar_juntadas(f: Factura, linea: dict) -> None:
     """Lo que validar necesita saber de una línea de IVA que suma varias
     leídas (sanear_lectura.juntar_por_tipo): cuántas son, cada una tal como
     se leyó y el redondeo exacto de sus cuotas, línea a línea. Con una línea
     sin juntar, nada (y se olvida lo que hubiera: la fila deja de ser una
-    suma). Lo que se tecleó antes en la fila tampoco cuenta: sus cuotas
-    vuelven a ser las leídas."""
+    suma). Va con la fila ya puesta (también el recargo): en un abono la
+    rehace con cada línea en negativo. Lo que se tecleó antes en la fila
+    tampoco cuenta: sus cuotas vuelven a ser las leídas."""
     f.iva_a_mano = f.requiv_a_mano = False
     juntadas = linea.get("_juntadas")
     if not (isinstance(juntadas, int) and not isinstance(juntadas, bool)
@@ -317,13 +353,16 @@ def apuntar_juntadas(f: Factura, linea: dict) -> None:
         f.redondeo_lineas_iva = f.redondeo_lineas_requiv = 0.0
         f.lineas_leidas = None
         return
-    base = _num(linea.get("base"))
+    base, cuota_lineas, requiv_lineas = (_num(linea.get(campo)) for campo in (
+        "base", "_cuota_lineas", "_requiv_lineas"))
     f.lineas_juntadas = juntadas
     f.lineas_leidas = _lineas_leidas(linea.get("_lineas"), juntadas)
+    if f.lineas_leidas and (f.total_impreso or 0) < 0:
+        base, cuota_lineas, requiv_lineas = _abono_linea_a_linea(f)
     f.redondeo_lineas_iva = _redondeo_de_lineas(
-        base, _num(linea.get("tipo_iva")), _num(linea.get("_cuota_lineas")))
+        base, _num(linea.get("tipo_iva")), cuota_lineas)
     f.redondeo_lineas_requiv = _redondeo_de_lineas(
-        base, _num(linea.get("pct_requiv")), _num(linea.get("_requiv_lineas")))
+        base, _num(linea.get("pct_requiv")), requiv_lineas)
 
 
 def normalizar_importes_abono(facturas: List[Factura]) -> bool:
@@ -626,7 +665,6 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
         f.base_iva = _num(linea.get("base"))
         f.pct_iva = _num(linea.get("tipo_iva"))
         f.cuota_iva = _num(linea.get("cuota_iva"))
-        apuntar_juntadas(f, linea)
         # CADA tipo de IVA lleva su propio recargo (21->5,2 / 10->1,4 / 4->0,5),
         # y su base es la de esa linea. Los campos sueltos de nivel factura son
         # el respaldo para cuando Gemini los devuelve al viejo estilo.
@@ -640,6 +678,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
                 else f.base_iva
             if f.base_requiv is None:
                 f.base_requiv = f.base_iva
+        apuntar_juntadas(f, linea)
         if i == 0:
             # La retencion es una sola por factura, no por linea de IVA.
             f.base_irpf = _num(datos.get("base_irpf"))

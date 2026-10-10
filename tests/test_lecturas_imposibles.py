@@ -877,6 +877,65 @@ def test_un_abono_de_lineas_juntadas_tambien_cuadra(signo_lineas):
     assert validar(f).estado == OK, validar(f).mensajes
 
 
+def _en_negativo(juntas):
+    return [{k: (-v if k in ("base", "cuota_iva", "cuota_requiv") and v else v)
+             for k, v in x.items()} for x in juntas]
+
+
+@pytest.mark.parametrize("sin_el_menos", [("base",), ("cuota_iva",),
+                                          ("base", "cuota_iva")],
+                         ids=["la_base", "la_cuota", "las_dos"])
+def test_un_abono_con_una_linea_sin_el_menos_se_junta_en_negativo(sin_el_menos):
+    # El abono de 30 albaranes de −15,40 € al 4 % (−0,62): −480,60. Gemini
+    # pierde el menos en una línea (lo que dice normalizar_importes_abono que
+    # pasa). En la 1.25 cada línea iba en su fila y se ponía en negativo:
+    # todas en verde, −462,00 y −18,60. Juntadas, se sumaba con el signo
+    # mezclado y luego se ponía en negativo la suma: −431,20 o −17,36, y en
+    # rojo una cuota que no descuadraba.
+    juntas = _en_negativo(lineas(30, 15.40, 4.0, 0.5))
+    juntas[5] = dict(juntas[5], **{c: abs(juntas[5][c]) for c in sin_el_menos})
+    f = lote(combinada(lectura(0, lineas_iva=juntas, total=-483.0)))[0][1].facturas[0]
+    assert (f.base_iva, f.cuota_iva, f.cuota_requiv) == (-462.0, -18.6, -2.4)
+    assert f.base_requiv == -462.0
+    assert validar(f).estado == OK, validar(f).mensajes
+
+
+def test_un_abono_en_dos_hojas_con_una_linea_sin_el_menos():
+    # La 1.ª hoja no trae el total: sus 30 líneas se juntan sin saber que es
+    # un abono. Al unirla con la 2.ª (la del total en negativo), cada línea
+    # se pone en negativo antes de sumar, como en una sola hoja.
+    juntas = _en_negativo(lineas(30, 15.40, 4.0))
+    juntas[5] = dict(juntas[5], base=15.40, cuota_iva=0.62)
+    resto = [{"base": -10.0, "tipo_iva": 4.0, "cuota_iva": -0.4,
+              "pct_requiv": None, "cuota_requiv": None}]
+    h1 = lectura(0, lineas_iva=juntas, total=None, estado_pagina_factura="inicio")
+    h2 = lectura(0, lineas_iva=resto, total=-491.0, estado_pagina_factura="final",
+                 receptor_nombre=None, receptor_nif=None)
+    procesadas = lote(combinada(h1), combinada(h2))
+    assert len(procesadas) == 1
+    filas = procesadas[0][1].facturas
+    juntada = next(f for f in filas if f.lineas_juntadas == 30)
+    assert (juntada.base_iva, juntada.cuota_iva) == (-462.0, -18.6)
+    assert all(validar(f).estado == OK for f in filas), [
+        validar(f).mensajes for f in filas]
+    assert "total no cuadra" not in procesadas[0][1].aviso
+
+
+def test_usar_la_lectura_2_de_un_abono_con_una_linea_sin_el_menos(ventana):
+    # «Usar lectura 2» del desglose en un abono: la lectura 2 perdió el menos
+    # en una de sus 40 líneas. Antes, −abs de su suma: −19.000 en vez de
+    # −20.000.
+    principal = _en_negativo(lineas(40, 500.0, 21.0))
+    principal[3] = dict(principal[3], cuota_iva=-106.0)
+    segunda = _en_negativo(lineas(40, 500.0, 21.0))
+    segunda[7] = dict(segunda[7], base=500.0, cuota_iva=105.0)
+    f, mensajes = _elegir_lectura_2_del_desglose(ventana, principal, segunda,
+                                                 -24200.0)
+    assert (f.base_iva, f.cuota_iva) == (-20000.0, -4200.0)
+    assert ventana.filas[0]["estado"] != ERROR, mensajes
+    assert not any("total no cuadra" in m for m in mensajes), mensajes
+
+
 def _pan_en_la_tabla(ventana, juntas=None, total=480.6):
     """Los 30 albaranes de pan, juntados en una fila de la tabla."""
     juntas = lineas(30, 15.40, 4.0) if juntas is None else juntas
