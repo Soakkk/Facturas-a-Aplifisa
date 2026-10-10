@@ -58,6 +58,8 @@ notas_version.marcar_vistas(__version__)
 ventana_lectura.leer_api_key = lambda: "clave-de-prueba"
 ESTADO = {"cerrando": False, "vivos": 0, "max_vivos": 0, "lecturas": 0,
           "dialogos": []}
+# Las hojas que Gemini tarda más en contestar: {número de factura: segundos}.
+LENTAS = {}
 CERROJO = threading.Lock()
 T0 = time.monotonic()
 
@@ -109,7 +111,8 @@ class ExtractorFalso:
         with open(os.path.join(CARPETA, "llamadas.txt"), "a", encoding="utf-8") as fh:
             fh.write(f"{time.monotonic() - T0:.2f} {int(ESTADO['cerrando'])} "
                      f"{_numero(origen, pagina)}\n")
-        time.sleep(LATENCIA)                # la petición en vuelo no se corta
+        # La petición en vuelo no se corta.
+        time.sleep(LENTAS.get(_numero(origen, pagina), LATENCIA))
         base = 100.0 + pagina
         datos = {
             "emisor_nombre": "PROVEEDOR PRUEBA SL", "emisor_nif": "B12345674",
@@ -225,7 +228,7 @@ def fallo_y_otro(v):
     esperar(lambda: len(v._bloques) >= 2 and cola_quieta(v), 60)
 
 
-def _cerrar_a_mitad(v, salir, cuando):
+def _cerrar_a_mitad(v, salir, cuando, pdf=None):
     """Cierra (o sale, como el actualizador) a mitad de lectura y deja que el
     programa acabe como en app.main(): aboutToQuit → esperar_hilos."""
     app.aboutToQuit.connect(v.esperar_hilos)
@@ -243,7 +246,7 @@ def _cerrar_a_mitad(v, salir, cuando):
         else:
             QTimer.singleShot(20, mirar)
     QTimer.singleShot(20, mirar)
-    v.procesar_rutas([taco("taco", 30)])
+    v.procesar_rutas([pdf or taco("taco", 30)])
     app.exec()
 
 
@@ -274,6 +277,19 @@ def cerrar_dibujando(v):
     _cerrar_a_mitad(v, v.close, lambda: ESTADO["lecturas"] >= 1)
 
 
+def cerrar_con_una_hoja_lenta(v):
+    """Una hoja del 2.º bloque se queda colgada en Gemini (30 s) y las otras
+    24 ya se han leído: se cierra y se sale sin esperarla."""
+    LENTAS["TACO-026"] = 30
+
+    def apuntar(modelo, entrada, salida, *a, **k):
+        with open(os.path.join(CARPETA, "gasto.txt"), "a", encoding="utf-8") as fh:
+            fh.write(f"{modelo} {entrada} {salida}\n")
+        return 0.0
+    hilos.costes.registrar = apuntar
+    _cerrar_a_mitad(v, v.close, lambda: _llamadas() >= 50, taco("taco", 60))
+
+
 def vaciar(v):
     """«Vaciar todo» con el segundo bloque leyéndose."""
     QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.Yes)
@@ -286,7 +302,8 @@ def vaciar(v):
 
 
 ESCENARIOS = {f.__name__: f for f in (pregunta_y_escaneo, fallo_y_otro, cerrar,
-                                       salir_al_actualizar, cerrar_dibujando, vaciar)}
+                                       salir_al_actualizar, cerrar_dibujando, vaciar,
+                                       cerrar_con_una_hoja_lenta)}
 
 if __name__ == "__main__":
     hilos.hilos_lectura = lambda: 10

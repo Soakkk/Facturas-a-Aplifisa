@@ -92,6 +92,11 @@ class Worker(QThread):
         # Se crea ya, no con la lectura: cancelar mientras se dibujan las
         # hojas (antes de que exista la lectura) también tiene que valer.
         self._cancelado = threading.Event()
+        # Lo gastado en Gemini (con los tokens de cada respuesta) se apunta
+        # al acabar el bloque, una sola vez (ver apuntar_gasto_pendiente).
+        self._consumo = []
+        self._cerrojo_gasto = threading.Lock()
+        self._gasto_apuntado = False
 
     def cancelar(self) -> None:
         """Al cerrar el programa (o vaciar el lote): no se dibujan más hojas,
@@ -115,7 +120,7 @@ class Worker(QThread):
             total = len(imagenes)
             registros = [None] * total
 
-            consumo = []   # (modelo, tokens entrada, tokens salida) por llamada
+            consumo = self._consumo   # (modelo, tokens entrada, tokens salida) por llamada
             sin_credito = []
             leidas = []
 
@@ -188,12 +193,30 @@ class Worker(QThread):
 
     def _registrar_consumo(self, consumo) -> None:
         """Lo gastado en Gemini, con los tokens reales de cada respuesta."""
+        with self._cerrojo_gasto:
+            if self._gasto_apuntado:
+                return          # ya lo apuntó la salida sin esperar
+            self._gasto_apuntado = True
         modelo, coste_lote = "", 0.0
         for m, entrada, salida in consumo:
             modelo = modelo or m
             coste_lote += costes.registrar(m, entrada, salida)
         if consumo:
             self.gasto.emit(modelo, round(coste_lote, 6))
+
+    def apuntar_gasto_pendiente(self) -> None:
+        """Al salir del programa sin esperar a esta lectura (una hoja que
+        Gemini no contesta; ver app._salir_sin_esperar), lo gastado en las
+        hojas ya leídas se apunta ya: se apuntaba al acabar el bloque, al que
+        así no se llega, y lo pagado no contaba en el gasto del mes (ni para
+        el aviso del tope). La hoja que no ha contestado no se sabe."""
+        with self._cerrojo_gasto:
+            if self._gasto_apuntado:
+                return
+            self._gasto_apuntado = True
+            consumo = list(self._consumo)
+        for modelo, entrada, salida in consumo:
+            costes.registrar(modelo, entrada, salida)
 
 
 class HiloEscaneo(QThread):

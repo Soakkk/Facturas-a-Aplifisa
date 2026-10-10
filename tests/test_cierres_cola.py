@@ -122,6 +122,22 @@ def test_actualizar_a_mitad_de_lectura_tampoco_tumba_el_programa(tmp_path):
     assert len(_sesion_en_disco(carpeta)[1]) == 2
 
 
+def test_al_salir_sin_esperar_la_lectura_se_apunta_lo_ya_gastado(tmp_path):
+    # Una hoja se queda colgada en Gemini y se sale sin esperarla: lo gastado
+    # se apuntaba al acabar el bloque, al que así no se llega, y las 24 hojas
+    # ya leídas (y pagadas) del bloque no contaban en el gasto del mes.
+    codigo, _resultado, carpeta, detalle = _escenario(
+        tmp_path, "cerrar_con_una_hoja_lenta")
+    assert codigo == 0, detalle
+    with open(carpeta / "llamadas.txt", encoding="utf-8") as fh:
+        pedidas = len(fh.readlines())
+    with open(carpeta / "gasto.txt", encoding="utf-8") as fh:
+        apuntadas = len(fh.readlines())
+    assert pedidas == 50
+    assert apuntadas == pedidas - 1               # todas menos la colgada
+    assert len(_sesion_en_disco(carpeta)[1]) == 2  # y su bloque, en la cola
+
+
 def test_cerrar_mientras_se_dibujan_las_hojas_no_pide_nada_a_gemini(tmp_path):
     codigo, resultado, carpeta, detalle = _escenario(tmp_path, "cerrar_dibujando")
     assert codigo == 0, detalle

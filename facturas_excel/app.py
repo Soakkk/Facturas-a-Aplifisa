@@ -1488,6 +1488,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._guardar_sesion()
             except Exception:
                 errores.apuntar("Guardar el lote al salir:\n" + traceback.format_exc())
+        # Lo ya gastado en Gemini por las lecturas que se dejan atrás: se
+        # apuntaba al acabar su bloque, y saliendo así no se llega.
+        for hilo in vivos:
+            try:
+                getattr(hilo, "apuntar_gasto_pendiente", lambda: None)()
+            except Exception:
+                errores.apuntar("Apuntar el gasto al salir:\n" + traceback.format_exc())
         nombres = ", ".join(sorted({type(h).__name__ for h in vivos}))
         errores.apuntar(
             f"Al salir seguían trabajando {len(vivos)} hilo(s) ({nombres}): se "
