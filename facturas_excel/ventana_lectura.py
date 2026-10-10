@@ -226,8 +226,10 @@ class LecturaMixin:
                 # nada, y la barra lo contaba.
                 pendientes = self._fallidos_pendientes()
                 # El número es el del aviso (y el de Exportar): con uno de
-                # antes, la barra decía 1 y el aviso 2.
-                fallidos = sum(1 for e in self._cola_guardada if e.get("fallido"))
+                # antes, la barra decía 1 y el aviso 2. También los que ya no
+                # se pueden volver a leer (sus hojas no están).
+                fallidos = sum(1 for e in self._cola_guardada if e.get("fallido")) \
+                    + sum(1 for e in self._fallidos_cola if e.get("sin_hojas"))
                 self.lbl_estado.setText(
                     f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
@@ -631,10 +633,13 @@ class LecturaMixin:
         perdida, self._cola_perdida = getattr(self, "_cola_perdida", []), []
         de_antes = [e for e in self._cola_guardada if not e.get("fallido")]
         fallidos = [e for e in self._cola_guardada if e.get("fallido")]
+        # Los que fallaron y no se pueden volver a leer (ver _on_fallo).
+        sin_hojas = [e for e in getattr(self, "_fallidos_cola", [])
+                     if e.get("sin_hojas")]
         # Lo que el de los fallidos tapó (ver _apuntar_aviso_tapado) va
         # delante mientras éste no se cierre.
         textos = ([t for t in getattr(self, "_tapados_fallidos", []) if t != antes]
-                  if fallidos else [])
+                  if fallidos or sin_hojas else [])
         if antes:
             textos.append(antes)
         if de_antes:
@@ -667,6 +672,13 @@ class LecturaMixin:
                 f"{self._nombres_de(fallidos)} ({self._hojas_de(fallidos)} "
                 "hoja(s)): sus facturas no están en la tabla. Vuelva a "
                 "leerlos cuando se resuelva.")
+        if sin_hojas:
+            textos.append(
+                f"{'Tampoco' if fallidos else 'No'} se han podido leer "
+                f"{len(sin_hojas)} bloque(s) de {self._nombres_de(sin_hojas)}, "
+                "y ya no se pueden volver a leer: sus hojas ya no están donde "
+                "estaban (se borraron o se movieron). Sus facturas no están en "
+                "la tabla: vuelva a cargarlas si hace falta.")
         if perdida:
             cuantos = f"{len(perdida)} bloque(s) de {self._nombres_de(perdida)}"
             textos.append(
@@ -678,7 +690,8 @@ class LecturaMixin:
         if not textos:
             return
         # Para saber si es éste el que la persona cierra (ver _aviso_quitado).
-        self._texto_aviso_fallidos = " ".join(textos) if fallidos else None
+        self._texto_aviso_fallidos = (" ".join(textos) if fallidos or sin_hojas
+                                      else None)
         self._avisar(" ".join(textos), tipo, segundos=0,
                      deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
                      boton="Seguir leyendo" if de_antes else "Volver a leer")
@@ -688,7 +701,8 @@ class LecturaMixin:
         la persona no ha cerrado (ver _aviso_quitado)."""
         de_esta = {id(e) for e in self._fallidos_cola}
         return sum(1 for e in self._cola_guardada
-                   if e.get("fallido") and id(e) in de_esta)
+                   if e.get("fallido") and id(e) in de_esta) \
+            + sum(1 for e in self._fallidos_cola if e.get("sin_hojas"))
 
     def _apuntar_aviso_tapado(self) -> None:
         """El aviso fijo sin botón que se ve (las hojas en rojo de un bloque)
@@ -869,6 +883,13 @@ class LecturaMixin:
                 self._fallidos_cola.append(elemento)
         else:
             self._limpiar_parte_interna(elemento)
+            if elemento.get("rutas"):
+                # Sus hojas ya no están (se quitó el USB, se movió la foto):
+                # no se puede volver a leer, pero se dice como los demás. Su
+                # aviso lo tapaba el siguiente y al acabar no quedaba nada
+                # (en la 1.25 era una ventana que había que cerrar).
+                elemento["sin_hojas"] = True
+                self._fallidos_cola.append(elemento)
         # En la banda, no en una ventana: un aviso abierto paraba la cola
         # (y con otro bloque llegando mientras, el programa se cerraba).
         etiqueta = elemento.get("etiqueta") or "este bloque"

@@ -2502,7 +2502,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         por_leer = self._bloques_por_leer() + len(self._cola_guardada)
         # Se vacía lo que dice la pregunta: lo que llegue mientras está
         # abierta (un escaneo que acaba) no (ver _soltar_cola).
-        en_la_pregunta = self._elementos_de_la_cola()
+        # (Y los que fallaron sin sus hojas: ver _on_fallo.)
+        en_la_pregunta = [*self._elementos_de_la_cola(), *self._fallidos_cola]
         if not self._bloques and not self.filas and not por_leer:
             self._limpiar_visor()
             self.tabla_su_suma.limpiar()

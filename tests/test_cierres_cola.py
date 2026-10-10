@@ -1504,3 +1504,54 @@ def test_sin_credito_en_cascada_las_hojas_en_rojo_siguen_en_el_aviso(
     _fallar(WorkerFalso.creados[-1], "Error 503")
     assert "Páginas sin leer" not in ventana.banda.lbl.text()
     assert "No se han podido leer 4 bloque(s)" in ventana.banda.lbl.text()
+
+
+def test_un_bloque_que_falla_sin_sus_hojas_se_dice_al_acabar(
+        ventana, tmp_path, monkeypatch):
+    # Se cargan una foto y un PDF, y la foto desaparece antes de su turno (se
+    # quita el USB). Su lectura falla, el aviso de la hoja en rojo del PDF lo
+    # tapa y al acabar la barra decía «2 bloque(s) procesado(s).» sin más: en
+    # la 1.25 era una ventana que había que cerrar.
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a, _pdf(tmp_path / "b.pdf", 10)])
+    ventana._muestra_capturada(ventana._elemento_cola_actual)   # su copia, hecha
+    os.remove(a)
+    _fallar(WorkerFalso.creados[-1], "No such file or directory")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_con_hoja_en_rojo(lectura, 3, 10))
+
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 2 bloque(s) procesado(s). 1 no se pudieron leer (ver el aviso).")
+    aviso = ventana.banda.lbl.text()
+    assert "Páginas sin leer" in aviso
+    assert "No se han podido leer 1 bloque(s) de a.jpg, y ya no se pueden " \
+           "volver a leer" in aviso
+    assert not ventana._cola_guardada and ventana.banda.accion() is None
+
+    # Cerrado, ya no vuelve; y no se cuenta en la carga siguiente.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "c.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert ventana.banda.isHidden()
+
+
+def test_vaciar_todo_olvida_el_bloque_que_fallo_sin_sus_hojas(
+        ventana, tmp_path, monkeypatch):
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a, _pdf(tmp_path / "b.pdf", 10)])
+    ventana._muestra_capturada(ventana._elemento_cola_actual)   # su copia, hecha
+    os.remove(a)
+    _fallar(WorkerFalso.creados[-1], "No such file or directory")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    avisos = len(ventana.banda.historial)
+    ventana._vaciar_todo()
+    ventana.procesar_rutas([_pdf(tmp_path / "c.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert not any("a.jpg" in texto for texto in ventana.banda.historial[avisos:])
