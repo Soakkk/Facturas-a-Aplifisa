@@ -266,31 +266,104 @@ def _margen_redondeo(base) -> float:
     return max(0.05, abs(base or 0) * 0.0001)
 
 
-def _cuota_esperada(f: Factura, base, pct, cuota, redondeo,
-                    a_mano) -> tuple:
-    """(cuota esperada, de dónde sale, estricta) para comparar con la cuota.
-
-    Una fila normal: base×%, con la escala de siempre. Una que suma líneas
-    juntadas al leer: lo que suman sus cuotas cuando cada una cuadra sola
-    (base×% más el redondeo de cada línea, que se apuntó al leer:
-    procesar.apuntar_juntadas), sin más margen que TOLERANCIA (estricta):
-    una cuota mal leída en una línea, de más o de menos, aparta la suma lo
-    mismo que apartaba esa línea en su fila en la 1.25, aunque la acerque a
-    base×% o quepa en el redondeo de la base de toda la fila. Si una persona
-    ha tecleado la cuota o el tipo (`a_mano`), ya no es la suma leída: base×%
-    o esa suma, la que más se acerque, con la escala de siempre."""
+def _cuota_esperada(f: Factura, base, pct, cuota, redondeo) -> tuple:
+    """(cuota esperada, de dónde sale) para comparar con la cuota: base×%, o,
+    si la fila suma líneas juntadas al leer, lo que suman sus cuotas cuando
+    cada una cuadra sola (base×% más el redondeo de cada línea, que se apuntó
+    al leer: procesar.apuntar_juntadas), la que más se acerque. Así cuadra
+    la cuota cobrada de 30 albaranes tecleada en la fila juntada. (La cuota
+    leída de una fila juntada se comprueba línea a línea: _lineas_leidas.)"""
     esperada = round(base * pct / 100.0, 2)
     n = getattr(f, "lineas_juntadas", 1)
-    if not isinstance(n, int) or n < 2:
-        return esperada, "base×%", False
-    redondeo = redondeo or 0.0
+    if not isinstance(n, int) or n < 2 or not redondeo:
+        return esperada, "base×%"
     por_lineas = round(esperada + (-redondeo if base < 0 else redondeo), 6)
-    de_lineas = f"base×% sumado en sus {n} líneas juntadas"
-    if not a_mano:
-        return por_lineas, de_lineas if redondeo else "base×%", True
-    if redondeo and abs(cuota - por_lineas) < abs(cuota - esperada):
-        return por_lineas, de_lineas, False
-    return esperada, "base×%", False
+    if abs(cuota - por_lineas) < abs(cuota - esperada):
+        return por_lineas, f"base×% sumado en sus {n} líneas juntadas"
+    return esperada, "base×%"
+
+
+def _lineas_leidas(f: Factura, base, cuota, columna: int):
+    """[(base, cuota)] de cada línea leída que suma una fila juntada (cuota
+    de IVA: `columna` 1; recargo: 2), mientras la fila siga siendo su suma.
+    None si no lo es (una persona ha escrito la cuota o ha tecleado otra
+    base), si es una fila normal o si no se guardaron (una sesión de antes)."""
+    lineas = getattr(f, "lineas_leidas", None)
+    a_mano = getattr(f, "iva_a_mano" if columna == 1 else "requiv_a_mano", False)
+    if not lineas or a_mano or base is None or cuota is None:
+        return None
+    pares = [(linea[0], linea[columna]) for linea in lineas]
+    for leido, valor in ((math.fsum(b for b, _ in pares if b is not None), base),
+                         (math.fsum(c for _, c in pares if c is not None), cuota)):
+        if abs(leido - valor) > 0.005 + 1e-9:     # lo que se ve en la tabla
+            return None
+    return pares
+
+
+def _margen_de_la_fila(f: Factura, base, pct) -> float:
+    """El margen ámbar de la cuota de la fila: el redondeo por líneas de su
+    base. Si suma líneas juntadas que se conocen (y la base es la suya), no
+    más de lo que puede apartar de base×% el redondeo de esas líneas,
+    agrupadas como sea: con 40 líneas de 500 € al 21 % (cuotas justas), nada,
+    y 1 € de más en la cuota escrita no es «redondeo»."""
+    margen = _margen_redondeo(base)
+    lineas = getattr(f, "lineas_leidas", None)
+    bases = [linea[0] for linea in lineas or () if linea[0] is not None]
+    if not bases or abs(math.fsum(bases) - base) > 0.005 + 1e-9:
+        return margen
+    redondeo = math.fsum(abs(b * pct / 100.0 - round(b * pct / 100.0, 2))
+                         for b in bases)
+    return min(margen, redondeo + 0.005 + 1e-9)
+
+
+def _cada_linea_juntada(pares, pct, cuota, iva, marcar_revisar,
+                        marcar_error) -> None:
+    """Lo que decía la 1.25 de cada línea juntada, cuando iba en su fila (con
+    el tipo de la fila: si se corrige, vale para todas). Así la fila no tapa
+    una línea en rojo porque otra la compense o porque se aparte menos que
+    el margen de la suma, ni la pone en rojo por sumar las del redondeo."""
+    sin_base, sin_cuota, mal, redondeo = [], [], [], []
+    for base, leida in pares:
+        if base is None:
+            sin_base.append(leida)
+        elif leida is None:
+            sin_cuota.append(base)
+        else:
+            calculada = round(base * pct / 100.0, 2)
+            diferencia = abs(leida - calculada)
+            if diferencia > TOLERANCIA and (
+                    not iva or diferencia > _margen_redondeo(base)):
+                mal.append((base, leida, calculada))
+            elif diferencia > TOLERANCIA:
+                redondeo.append(base)
+    n = len(pares)
+    de = f"de las {n} líneas juntadas en esta fila"
+    if iva:
+        if sin_base:
+            marcar_error(f"Falta la base imponible en {len(sin_base)} {de}: "
+                         "compruébelas con el documento.", "base_iva")
+        if sin_cuota:
+            marcar_error(f"Falta la cuota de IVA en {len(sin_cuota)} {de} (la "
+                         f"de base {sin_cuota[0]}): compruébelas con el "
+                         "documento.", "cuota_iva")
+        if mal:
+            marcar_error(f"Cuota IVA descuadra en {len(mal)} {de}: la de base "
+                         f"{mal[0][0]} lleva {mal[0][1]} pero base×% = "
+                         f"{mal[0][2]}", "cuota_iva", "base_iva", "pct_iva")
+        if redondeo:
+            marcar_revisar(
+                f"La cuota de IVA ({cuota}) suma {n} líneas juntadas, y en "
+                f"{len(redondeo)} de ellas se aparta unos céntimos de base×%: "
+                "suele ser el redondeo por líneas. Compruébela.", "cuota_iva")
+        return
+    if sin_base or sin_cuota:
+        marcar_error(f"Recargo de equivalencia incompleto en "
+                     f"{len(sin_base) + len(sin_cuota)} {de}: compruébelas con "
+                     "el documento.", "base_requiv", "pct_requiv", "cuota_requiv")
+    if mal:
+        marcar_error(f"Cuota del recargo descuadra en {len(mal)} {de}: la de "
+                     f"base {mal[0][0]} lleva {mal[0][1]} pero base×% = "
+                     f"{mal[0][2]}", "cuota_requiv")
 
 
 def porcentaje(v) -> str:
@@ -435,23 +508,18 @@ def validar(f: Factura) -> Resultado:
 
     # Aritmetica del IVA: cuota = base * % / 100
     if f.base_iva is not None and f.pct_iva is not None:
-        esperada, de, estricta = (None, "", False) if f.cuota_iva is None \
-            else _cuota_esperada(f, f.base_iva, f.pct_iva, f.cuota_iva,
-                                 getattr(f, "redondeo_lineas_iva", 0.0),
-                                 getattr(f, "iva_a_mano", False))
+        leidas = _lineas_leidas(f, f.base_iva, f.cuota_iva, 1)
+        esperada, de = (None, "") if f.cuota_iva is None or leidas else \
+            _cuota_esperada(f, f.base_iva, f.pct_iva, f.cuota_iva,
+                            getattr(f, "redondeo_lineas_iva", 0.0))
         if f.cuota_iva is None:
             marcar_revisar("Falta la cuota de IVA", "cuota_iva")
-        elif estricta and abs(f.cuota_iva - esperada) <= TOLERANCIA \
-                and getattr(f, "lineas_ambar_iva", 0):
-            # Líneas juntadas que en la 1.25 salían en ámbar, cada una en su
-            # fila: su cuota se apartaba unos céntimos de su base×%.
-            marcar_revisar(
-                f"La cuota de IVA ({f.cuota_iva}) suma {f.lineas_juntadas} "
-                f"líneas juntadas, y en {f.lineas_ambar_iva} de ellas se "
-                "aparta unos céntimos de base×%: suele ser el redondeo por "
-                "líneas. Compruébela.", "cuota_iva")
-        elif abs(f.cuota_iva - esperada) > TOLERANCIA and not estricta \
-                and abs(f.cuota_iva - esperada) <= _margen_redondeo(f.base_iva):
+        elif leidas:
+            _cada_linea_juntada(leidas, f.pct_iva, f.cuota_iva, True,
+                                marcar_revisar, marcar_error)
+        elif abs(f.cuota_iva - esperada) > TOLERANCIA and abs(
+                f.cuota_iva - esperada) <= _margen_de_la_fila(f, f.base_iva,
+                                                               f.pct_iva):
             # Una factura grande que redondea el IVA línea a línea se aparta
             # unos céntimos de base×%: es la cuota impresa, no un error (antes
             # quedaba en rojo sin salida y había que teclear otra cuota).
@@ -491,11 +559,13 @@ def validar(f: Factura) -> Resultado:
         if f.cuota_requiv is None:
             marcar_revisar("Falta la cuota del recargo de equivalencia",
                            "cuota_requiv")
+        elif leidas := _lineas_leidas(f, f.base_requiv, f.cuota_requiv, 2):
+            _cada_linea_juntada(leidas, f.pct_requiv, f.cuota_requiv, False,
+                                marcar_revisar, marcar_error)
         else:
             esperada, de = _cuota_esperada(
                 f, f.base_requiv, f.pct_requiv, f.cuota_requiv,
-                getattr(f, "redondeo_lineas_requiv", 0.0),
-                getattr(f, "requiv_a_mano", False))[:2]
+                getattr(f, "redondeo_lineas_requiv", 0.0))
             if abs(f.cuota_requiv - esperada) > TOLERANCIA:
                 marcar_error(
                     f"Cuota del recargo descuadra: {f.cuota_requiv} pero "

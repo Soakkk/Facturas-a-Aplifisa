@@ -728,8 +728,9 @@ def test_muchas_lineas_del_mismo_tipo_quedan_en_una(n):
     assert c["lineas_iva"] == [{"base": float(n), "tipo_iva": 21.0,
                                 "cuota_iva": round(n * 0.21, 2), "pct_requiv": None,
                                 "cuota_requiv": None, "_juntadas": n,
+                                "_lineas": [[1.0, 0.21, None]] * n,
                                 "_cuota_lineas": round(n * 0.21, 2),
-                                "_requiv_lineas": None, "_lineas_ambar": 0}]
+                                "_requiv_lineas": None}]
     pr = lote(c)[0][1]
     assert len(pr.facturas) == 1
     assert f"{n} líneas de IVA" in pr.aviso        # en ámbar, diciendo qué
@@ -1004,6 +1005,155 @@ def test_la_cuota_tecleada_en_la_fila_juntada_puede_ser_base_por_tipo(ventana):
     assert any("total no cuadra" in str(m) for m in validar(f).mensajes)
     mensajes = _teclear(ventana, C_CUOTA, "18,48")
     assert validar(f).estado == OK, mensajes
+
+
+def _juntada(juntas, total=None, segunda=None):
+    """La fila de las líneas juntadas, por el camino real."""
+    total = round(sum(x["base"] + (x["cuota_iva"] or 0) + (x["cuota_requiv"] or 0)
+                      for x in juntas), 2) if total is None else total
+    c = combinada(lectura(0, lineas_iva=juntas, total=total),
+                  None if segunda is None else lectura(0, lineas_iva=segunda,
+                                                       total=total))
+    pr = lote(c)[0][1]
+    assert len(pr.facturas) == 1 and pr.facturas[0].lineas_juntadas == len(juntas)
+    return pr.facturas[0]
+
+
+@pytest.mark.parametrize("caso", ["recargo_de_0_01", "iva_de_0_01", "iva_al_0"])
+def test_una_cuota_perdida_de_un_centimo_entre_las_juntadas_sigue_en_rojo(caso):
+    # En la 1.25 esa línea iba en su fila en rojo («Recargo de equivalencia
+    # incompleto», «Falta la cuota de IVA»). Juntadas, la suma se aparta solo
+    # un céntimo (o nada, al 0 %) y salía en verde: el rojo se perdía.
+    if caso == "recargo_de_0_01":        # 20 panes de 1,10 € al 4 % + 0,5 %
+        juntas = lineas(20, 1.10, 4.0, 0.5)
+        total = round(sum(x["base"] + x["cuota_iva"] + x["cuota_requiv"]
+                          for x in juntas), 2)
+        juntas[7] = dict(juntas[7], cuota_requiv=None)
+        aviso = "Recargo de equivalencia incompleto"
+    elif caso == "iva_de_0_01":          # una línea de 0,05 € al 21 %
+        juntas = lineas(13, 12.0, 21.0) + [dict(lineas(1, 0.05, 21.0)[0],
+                                                cuota_iva=None)]
+        total = round(sum(x["base"] + (x["cuota_iva"] or 0) for x in juntas)
+                      + 0.01, 2)
+        aviso = "Falta la cuota de IVA"
+    else:                                # exentas, una con la cuota en blanco
+        juntas = lineas(15, 10.0, 0.0)
+        total = 150.0
+        juntas[3] = dict(juntas[3], cuota_iva=None)
+        aviso = "Falta la cuota de IVA"
+    resultado = validar(_juntada(juntas, total))
+    mensajes = [str(m) for m in resultado.mensajes]
+    assert resultado.estado == ERROR, mensajes
+    assert any(m.startswith(aviso) and "1 de las" in m for m in mensajes), mensajes
+
+
+@pytest.mark.parametrize("caso", ["iva", "recargo", "doble_lectura"])
+def test_dos_cuotas_mal_leidas_que_se_compensan_siguen_en_rojo(caso):
+    # 30 albaranes de pan de 15,40 € al 4 % (0,62): uno leído 0,72 y otro
+    # 0,52. La suma cuadra, pero en la 1.25 esas dos filas iban en rojo.
+    if caso == "recargo":                # 30 × 24 € al 4 % + 0,5 % (0,12)
+        juntas = lineas(30, 24.0, 4.0, 0.5)
+        juntas[3] = dict(juntas[3], cuota_requiv=0.17)
+        juntas[9] = dict(juntas[9], cuota_requiv=0.07)
+        aviso = "Cuota del recargo descuadra en 2 de las 30"
+    else:
+        juntas = lineas(30, 15.40, 4.0)
+        juntas[3] = dict(juntas[3], cuota_iva=0.72)
+        juntas[9] = dict(juntas[9], cuota_iva=0.52)
+        aviso = "Cuota IVA descuadra en 2 de las 30"
+    segunda = lineas(30, 15.40, 4.0) if caso == "doble_lectura" else None
+    resultado = validar(_juntada(juntas, segunda=segunda))
+    mensajes = [str(m) for m in resultado.mensajes]
+    assert resultado.estado == ERROR, mensajes
+    assert any(m.startswith(aviso) for m in mensajes), mensajes
+
+
+def test_un_recargo_desviado_dos_centimos_sale_como_en_la_1_25():
+    # 13 × 5,20 € al 4 % + 0,5 % (recargo 0,03), uno leído 0,05: en la 1.25,
+    # abs(0,05 − 0,03) es algo más de 0,02 por la coma flotante y esa fila
+    # iba en rojo. La suma (0,41 frente a 0,39) cuadraba.
+    juntas = lineas(13, 5.20, 4.0, 0.5)
+    juntas[3] = dict(juntas[3], cuota_requiv=0.05)
+    resultado = validar(_juntada(juntas))
+    assert resultado.estado == ERROR, resultado.mensajes
+    assert any(str(m).startswith("Cuota del recargo descuadra")
+               for m in resultado.mensajes)
+
+
+def test_corregir_el_tipo_de_la_fila_juntada_deja_en_rojo_la_cuota_mal_leida(ventana):
+    # 40 × 500 € leídos al 10 % con las cuotas del 21 % (105,00), una 106,00.
+    # En la 1.25, al teclear 21 en cada fila, la de 106,00 seguía en rojo.
+    # Aquí pasaba a ámbar «redondeo por líneas» (el margen de 20.000 €: 2 €).
+    from facturas_excel.tabla_facturas import C_PCT
+    juntas = [dict(x, tipo_iva=10.0, cuota_iva=105.0) for x in lineas(40, 500.0, 21.0)]
+    juntas[3] = dict(juntas[3], cuota_iva=106.0)
+    f = _pan_en_la_tabla(ventana, juntas, total=24200.0)
+    assert validar(f).estado == ERROR
+    mensajes = _teclear(ventana, C_PCT, "21")
+    assert validar(f).estado == ERROR, mensajes
+    assert any(m.startswith("Cuota IVA descuadra en 1 de las 40") for m in mensajes)
+    assert not any("redondeo" in m for m in mensajes)
+
+
+def test_teclear_otra_cuota_y_volver_a_la_leida_no_la_disculpa(ventana):
+    # La misma cuota leída (4201,00, con una línea de 106,00 por 105,00)
+    # tecleada otra vez: sigue siendo la suma de las líneas leídas.
+    from facturas_excel.tabla_facturas import C_CUOTA
+    juntas = lineas(40, 500.0, 21.0)
+    juntas[3] = dict(juntas[3], cuota_iva=106.0)
+    f = _pan_en_la_tabla(ventana, juntas, total=24200.0)
+    assert validar(f).estado == ERROR
+    _teclear(ventana, C_CUOTA, "1")
+    mensajes = _teclear(ventana, C_CUOTA, "4201,00")
+    assert validar(f).estado == ERROR, mensajes
+    assert not any("redondeo" in m for m in mensajes)
+    mensajes = _teclear(ventana, C_CUOTA, "4200,00")       # la buena
+    assert validar(f).estado == OK, mensajes
+
+
+@pytest.mark.parametrize("caso", ["iva_al_0", "compensan"])
+def test_la_cuota_leida_de_la_fila_juntada_se_da_por_buena_escribiendola(ventana, caso):
+    # Una línea en rojo que no se ve en la tabla (las juntadas no se corrigen
+    # una a una) y la suma buena: la exenta sin cuota (0,00) o dos cuotas que
+    # se compensan (18,60). Escribir esa cuota en la fila la da por buena,
+    # aunque sea la leída; si no, quedaba en rojo sin salida.
+    from facturas_excel.tabla_facturas import C_CUOTA
+    if caso == "iva_al_0":
+        juntas, total, buena = lineas(15, 10.0, 0.0), 150.0, "0"
+        juntas[3] = dict(juntas[3], cuota_iva=None)
+    else:
+        juntas, total, buena = lineas(30, 15.40, 4.0), 480.6, "18,6"
+        juntas[3] = dict(juntas[3], cuota_iva=0.72)
+        juntas[9] = dict(juntas[9], cuota_iva=0.52)
+    f = _pan_en_la_tabla(ventana, juntas, total=total)
+    assert validar(f).estado == ERROR
+    mensajes = _teclear(ventana, C_CUOTA, buena)
+    assert validar(f).estado == OK, mensajes
+
+
+@pytest.mark.parametrize("vieja", [
+    # 13 × 2.000 € al 21 %, tres con 420,10 (su redondeo): 5.460,30.
+    {"base": 26000.0, "tipo_iva": 21.0, "cuota_iva": 5460.3, "pct_requiv": None,
+     "cuota_requiv": None, "_juntadas": 13, "_cuota_lineas": 5460.0,
+     "_requiv_lineas": None},
+    # 30 albaranes de pan de 15,40 € al 4 %, uno con 0,66 por 0,62.
+    {"base": 462.0, "tipo_iva": 4.0, "cuota_iva": 18.64, "pct_requiv": None,
+     "cuota_requiv": None, "_juntadas": 30, "_cuota_lineas": 18.6,
+     "_requiv_lineas": None},
+], ids=["13_de_2000", "30_panes"])
+def test_una_fila_juntada_de_una_sesion_de_antes_se_valida_como_entonces(vieja):
+    # Una sesión de una 1.26 de pruebas, guardada antes de que se guardaran
+    # las líneas leídas: su crudo trae solo la suma (y su redondeo, como se
+    # calculaba entonces) y la fila guardada tampoco las tiene. En ámbar, como
+    # entonces (y como sus líneas en la 1.25), no en rojo al abrirla.
+    total = round(vieja["base"] + vieja["cuota_iva"], 2)
+    pr = lote(dict(combinada(lectura(0, total=total)), lineas_iva=[vieja]))[0][1]
+    f = pr.facturas[0]                   # rehecha desde el crudo («Cambiar cliente»)
+    assert f.lineas_juntadas == vieja["_juntadas"]
+    assert validar(f).estado == REVISAR, validar(f).mensajes
+    for nueva in ("lineas_leidas", "lineas_ambar_iva", "iva_a_mano"):
+        f.__dict__.pop(nueva, None)      # la fila guardada entonces
+    assert validar(f).estado == REVISAR, validar(f).mensajes
 
 
 def test_se_juntan_por_tipo_de_iva_y_de_recargo():

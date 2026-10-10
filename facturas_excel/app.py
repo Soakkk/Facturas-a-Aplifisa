@@ -2861,12 +2861,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 factura = registro.factura
                 cambiado = getattr(factura, campo, None) != valor
                 setattr(factura, campo, valor)
-                if cambiado and campo in ("cuota_iva", "pct_iva"):
-                    # Una fila de líneas juntadas deja de ser la suma leída
-                    # (validacion la compara con base×% o con esa suma).
-                    factura.iva_a_mano = True
-                elif cambiado and campo in ("cuota_requiv", "pct_requiv"):
-                    factura.requiv_a_mano = True
+                if campo in ("cuota_iva", "cuota_requiv"):
+                    # Escrita a mano (aunque sea la leída, para darla por
+                    # buena), la cuota de una fila de líneas juntadas ya no
+                    # se comprueba línea a línea (validacion).
+                    setattr(factura, "iva_a_mano" if campo == "cuota_iva"
+                            else "requiv_a_mano", True)
                 fuentes = registro.get("fuentes") or []
                 if not any(x is factura for x in fuentes):
                     # Recargo «por el total»: la línea a la vista es un

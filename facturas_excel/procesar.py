@@ -289,25 +289,37 @@ def _redondeo_de_lineas(base, pct, suma) -> float:
                  * (-1 if base < 0 else 1), 6)
 
 
+def _lineas_leidas(lineas, cuantas: int) -> tuple | None:
+    """(base, cuota de IVA, recargo) de cada línea juntada, o None si no
+    vienen o no tienen esa forma (un crudo de antes de guardarlas)."""
+    if not isinstance(lineas, list) or len(lineas) != cuantas:
+        return None
+    leidas = []
+    for linea in lineas:
+        if not isinstance(linea, (list, tuple)) or len(linea) != 3:
+            return None
+        leidas.append(tuple(_num(valor) for valor in linea))
+    return tuple(leidas)
+
+
 def apuntar_juntadas(f: Factura, linea: dict) -> None:
     """Lo que validar necesita saber de una línea de IVA que suma varias
-    leídas (sanear_lectura.juntar_por_tipo): cuántas son y el redondeo exacto
-    de sus cuotas, línea a línea. Con una línea sin juntar, nada (y se olvida
-    lo que hubiera: la fila deja de ser una suma). Lo que se tecleó antes en
-    la fila tampoco cuenta: sus cuotas vuelven a ser las leídas."""
+    leídas (sanear_lectura.juntar_por_tipo): cuántas son, cada una tal como
+    se leyó y el redondeo exacto de sus cuotas, línea a línea. Con una línea
+    sin juntar, nada (y se olvida lo que hubiera: la fila deja de ser una
+    suma). Lo que se tecleó antes en la fila tampoco cuenta: sus cuotas
+    vuelven a ser las leídas."""
     f.iva_a_mano = f.requiv_a_mano = False
     juntadas = linea.get("_juntadas")
     if not (isinstance(juntadas, int) and not isinstance(juntadas, bool)
             and juntadas > 1):
         f.lineas_juntadas = 1
         f.redondeo_lineas_iva = f.redondeo_lineas_requiv = 0.0
-        f.lineas_ambar_iva = 0
+        f.lineas_leidas = None
         return
     base = _num(linea.get("base"))
     f.lineas_juntadas = juntadas
-    ambar = linea.get("_lineas_ambar")
-    f.lineas_ambar_iva = (ambar if isinstance(ambar, int)
-                          and not isinstance(ambar, bool) and ambar > 0 else 0)
+    f.lineas_leidas = _lineas_leidas(linea.get("_lineas"), juntadas)
     f.redondeo_lineas_iva = _redondeo_de_lineas(
         base, _num(linea.get("tipo_iva")), _num(linea.get("_cuota_lineas")))
     f.redondeo_lineas_requiv = _redondeo_de_lineas(
