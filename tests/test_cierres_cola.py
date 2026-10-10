@@ -1020,3 +1020,30 @@ def test_los_bloques_que_fallan_se_dicen_todos_y_se_pueden_volver_a_leer(
         lectura.entregar(_bloque_de(lectura))
     assert len(ventana.filas) == 100 and not ventana._cola_guardada
     assert not _partes_en_disco()
+
+
+def test_recoger_sueltos_no_se_lleva_lo_que_queda_por_leer(
+        ventana, tmp_path, monkeypatch):
+    # Se cargan dos PDF de Descargas y se cierra antes de que llegue el
+    # primer bloque. Por la mañana, «Recoger facturas sueltas» los proponía
+    # (solo miraba lo ya leído) y, si se recogían, al seguir leyendo no se
+    # archivaban y sus facturas apuntaban a donde ya no estaban. Igual con
+    # la cola en marcha.
+    from facturas_excel import archivo, recoger
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    descargas = tmp_path / "casa" / "Descargas"
+    descargas.mkdir(parents=True, exist_ok=True)
+    marzo = _pdf(descargas / "facturas_marzo.pdf", 60)
+    abril = _pdf(descargas / "facturas_abril.pdf", 10)
+    suelta = _pdf(descargas / "suelta.pdf", 1)
+
+    def sueltos(v):
+        return [c.ruta for c in recoger.buscar(
+            recoger.carpetas_origen(), archivo.carpeta_escaneos(), v._rutas_del_lote())]
+
+    ventana.procesar_rutas([marzo, abril])
+    assert sueltos(ventana) == [suelta]                 # con la cola en marcha
+    ventana.closeEvent(QCloseEvent())
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert len(abierta._cola_guardada) == 4
+    assert sueltos(abierta) == [suelta]                 # y lo de la última vez
