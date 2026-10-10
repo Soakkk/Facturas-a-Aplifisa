@@ -15,7 +15,9 @@ from contextlib import contextmanager
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
 
-from facturas_excel import almacen, archivo, costes, imagen_hoja, muestras_revision
+from facturas_excel import (
+    almacen, archivo, costes, imagen_hoja, muestras_revision, sesion,
+)
 from facturas_excel.banda_avisos import AVISO, ERROR, INFO
 from facturas_excel.claves import leer_api_key
 from facturas_excel.dialogo_cliente import DialogoCliente
@@ -415,22 +417,40 @@ class LecturaMixin:
 
     def _guardar_lo_puesto(self) -> None:
         """Un bloque recién puesto (lectura ya pagada) va al disco ya, y solo
-        después se borran las partes de lo puesto.
+        cuando está escrito se borran las partes de lo puesto.
 
         Antes se esperaba al guardado de cada poco (3 s), que cada bloque
         volvía a retrasar: con fotos sueltas de 2 s no saltaba nunca, y un
         corte justo después perdía el bloque. Y su parte se borraba antes
-        (incluso con una pregunta abierta, que puede durar un rato), con la
-        sesión del disco aún contándola por leer: al volver, «ya no está».
-        Al cerrar no hace falta: se guarda enseguida (ver closeEvent)."""
+        (incluso con una pregunta abierta, que puede durar un rato, o con el
+        guardado aún escribiéndose aparte), con la sesión del disco aún
+        contándola por leer: al volver, «ya no está».
+        Al cerrar no se guarda aquí: se guarda enseguida (ver closeEvent)."""
         if self._incorporando:
             return      # dentro de otro bloque: lo hace ése al acabar
-        if not self._cerrando:
-            # (El de cada poco sigue armado: si nada cambia, no escribe.)
-            self._guardar_sesion_automatica()
+        # (El de cada poco sigue armado: si nada cambia, no escribe.)
+        numero = None if self._cerrando else self._guardar_sesion_automatica()
         partes, self._partes_por_borrar = self._partes_por_borrar, []
-        for elemento in partes:
-            self._limpiar_parte_interna(elemento)
+        if partes:
+            # Si no se ha pedido ahora (al cerrar, o no se pudo), con la
+            # próxima foto que llegue al disco.
+            self._partes_sin_guardar.append(
+                (sesion.proxima() if numero is None else numero, partes))
+            self._borrar_partes_guardadas()
+
+    def _borrar_partes_guardadas(self, todas: bool = False) -> None:
+        """Borra las partes de lo puesto cuya foto ya está en el disco (todas,
+        tras guardar al cerrar); las demás esperan a que se escriba."""
+        quedan = []
+        for numero, elementos in self._partes_sin_guardar:
+            if todas or sesion.escrita(numero):
+                for elemento in elementos:
+                    self._limpiar_parte_interna(elemento)
+            else:
+                quedan.append((numero, elementos))
+        self._partes_sin_guardar = quedan
+        if quedan and not self._cerrado:
+            self._timer_partes.start()
 
     def _seguir_tras_un_fallo(self, elemento) -> None:
         """La cola tras un bloque que no ha entrado entero en el lote, como
@@ -1060,8 +1080,12 @@ class LecturaMixin:
         nuevo, que luego no se podía leer («no such file»)."""
         if int(elemento.get("partes", 1) or 1) <= 1:
             return
+        # (También lo que quedó por leer: la de un bloque ya puesto se borra
+        # cuando su foto llega al disco, y entretanto el mismo PDF vuelto a
+        # cargar pudo fallar con esa parte.)
         en_uso = {os.path.normcase(os.path.abspath(ruta))
-                  for otro in [self._elemento_cola_actual, *self._cola]
+                  for otro in [self._elemento_cola_actual, *self._cola,
+                               *self._cola_guardada]
                   if otro and otro is not elemento
                   for ruta in otro.get("rutas", [])}
         raiz = os.path.abspath(os.path.join(dir_datos(), "cola_pdf"))

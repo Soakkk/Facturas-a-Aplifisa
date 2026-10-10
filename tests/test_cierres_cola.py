@@ -466,7 +466,7 @@ def test_vaciar_y_volver_a_cargar_el_mismo_pdf_no_borra_sus_partes(
         assert os.path.exists(lectura.rutas[0])
         lectura.entregar(_bloque_de(lectura))
     assert len(ventana._bloques) == 3
-    assert not _partes_en_disco()                 # y no quedan huérfanas
+    _esperar(lambda: not _partes_en_disco())      # y no quedan huérfanas
 
 
 def test_vaciar_con_el_mismo_pdf_cargado_dos_veces_no_deja_partes(
@@ -745,7 +745,7 @@ def test_volver_a_cargar_el_pdf_que_quedo_a_medias_no_lo_lee_dos_veces(
         lectura = WorkerFalso.creados[-1]
         lectura.entregar(_bloque_de(lectura))
     assert len(abierta._bloques) == 4 and not abierta._cola
-    assert not _partes_en_disco()
+    _esperar(lambda: not _partes_en_disco())
     assert sesion.cargar() is None or not abierta._datos_sesion()["cola"]
 
 
@@ -1059,7 +1059,8 @@ def test_lo_cargado_y_lo_leido_llegan_al_disco_sin_esperar(
         assert bloques == puestos and len(partes) == 3 - puestos
         assert all(map(os.path.isfile, partes))
     assert con_la_pregunta == [True, True]
-    assert len(_partes_en_disco()) == 1               # las puestas, ya borradas
+    # Las puestas, borradas en cuanto el disco ya no las cuenta por leer.
+    _esperar(lambda: len(_partes_en_disco()) == 1)
 
 
 def _fallar(lectura, mensaje):
@@ -1106,7 +1107,7 @@ def test_los_bloques_que_fallan_se_dicen_todos_y_se_pueden_volver_a_leer(
         assert lectura.rutas == [parte]
         lectura.entregar(_bloque_de(lectura))
     assert len(ventana.filas) == 100 and not ventana._cola_guardada
-    assert not _partes_en_disco()
+    _esperar(lambda: not _partes_en_disco())
 
 
 def test_recoger_sueltos_no_se_lleva_lo_que_queda_por_leer(
@@ -1161,7 +1162,7 @@ def test_vaciar_todo_vacia_tambien_lo_que_falla_con_la_pregunta_abierta(
     assert not ventana._bloques and not ventana.filas
     assert not ventana._cola_guardada and not ventana._cola
     assert ventana.banda.accion() != ventana._seguir_cola_guardada
-    assert not _partes_en_disco()
+    _esperar(lambda: not _partes_en_disco())
     ventana._guardar_sesion_automatica()
     assert sesion.cargar() is None
 
@@ -1265,3 +1266,39 @@ def test_el_aviso_de_los_bloques_que_fallan_vuelve_al_acabar_la_cola(
     assert "No se han podido leer 1 bloque(s) de taco.pdf" in aviso   # …y éste
     assert ventana.banda.accion() == ventana._seguir_cola_guardada
     assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+
+
+def test_la_parte_de_lo_puesto_no_se_borra_hasta_que_el_disco_lo_tiene(
+        ventana, tmp_path, monkeypatch):
+    # El guardado tras poner un bloque se escribe aparte, y con un lote
+    # grande (o el antivirus) tarda: la parte del bloque se borraba al
+    # pedirlo, con el disco aún contándola por leer. Un corte de luz justo
+    # entonces dejaba al volver 0 líneas y «ya no están» (lectura pagada).
+    import threading
+    ventana._timer_sesion.setInterval(60_000)      # sin el de cada poco
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    sesion.esperar()
+    parte = ventana._elemento_cola_actual["rutas"][0]
+    escribir, sigue = sesion._escribir, threading.Event()
+
+    def lento(paquete, numero):
+        sigue.wait(10)
+        escribir(paquete, numero)
+    monkeypatch.setattr(sesion, "_escribir", lento)
+
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    import time
+    fin = time.monotonic() + 0.5       # el guardado sigue escribiéndose…
+    while time.monotonic() < fin:
+        _app.processEvents()
+        time.sleep(0.02)
+    import gzip
+    import pickle
+    with gzip.open(sesion._ruta(), "rb") as fh:      # (sin esperar al guardado)
+        cola = pickle.load(fh)["datos"]["cola"]
+    assert cola[0]["rutas"] == [parte]  # …y la parte que el disco cuenta…
+    assert os.path.isfile(parte)        # …sigue ahí
+    sigue.set()
+    _esperar(lambda: not os.path.exists(parte))     # escrito: ya sobra
+    assert _en_disco() == (1, [ventana._elemento_cola_actual["rutas"][0]])

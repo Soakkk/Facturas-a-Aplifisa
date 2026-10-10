@@ -92,8 +92,13 @@ def _escribir(paquete: bytes, numero: int) -> None:
                           "apartar, y no se pisa")
         temporal = ruta + ".tmp"
         try:
-            with gzip.open(temporal, "wb", compresslevel=3) as fh:
-                fh.write(paquete)
+            with open(temporal, "wb") as crudo:
+                with gzip.GzipFile(fileobj=crudo, mode="wb", compresslevel=3) as fh:
+                    fh.write(paquete)
+                # En el disco de verdad antes de sustituir al anterior: tras
+                # un corte de luz, el nuevo entero o el de antes, no a medias.
+                crudo.flush()
+                os.fsync(crudo.fileno())
             os.replace(temporal, ruta)
             _escrita = numero
             _huella_escrita = _huella(paquete)
@@ -133,25 +138,40 @@ def _pedida(huella: bytes, numero: int) -> None:
             _huella_pedida, _numero_pedido = huella, numero
 
 
-def guardar_en_segundo_plano(datos: dict) -> None:
+def guardar_en_segundo_plano(datos: dict) -> int:
     """Guardado automático: la foto del lote se toma ahora (en este hilo) y
-    se comprime y escribe aparte, para no parar la pantalla."""
+    se comprime y escribe aparte, para no parar la pantalla.
+
+    Devuelve el número de la foto que lleva esto, para saber cuándo está en
+    el disco (ver `escrita`)."""
     global _pendiente, _escribiendo, _huella_pedida, _numero_pedido
     paquete = _empaquetar(datos)
     huella = _huella(paquete)
     with _cerrojo_pendiente:
         if huella == _huella_pedida and (_pendiente is not None or _escribiendo
                                          or os.path.exists(_ruta())):
-            return          # nada ha cambiado desde la última foto
+            return _numero_pedido   # nada ha cambiado desde la última foto
         numero = _siguiente()
         _huella_pedida, _numero_pedido = huella, numero
         _pendiente = (paquete, numero, huella)
         if _escribiendo:
-            return          # el hilo que escribe la recoge al acabar
+            return numero   # el hilo que escribe la recoge al acabar
         _escribiendo = True
         hilo = threading.Thread(target=_escritor, name="guardar-sesion", daemon=True)
         _hilos[:] = [h for h in _hilos if h.is_alive()] + [hilo]
     hilo.start()
+    return numero
+
+
+def escrita(numero: int) -> bool:
+    """Si la foto `numero` (o una más nueva, o el borrado) ya está en el disco."""
+    return _escrita >= numero
+
+
+def proxima() -> int:
+    """El número que llevará la próxima foto que se pida."""
+    with _cerrojo_numeros:
+        return _pedidas + 1
 
 
 def _escritor() -> None:

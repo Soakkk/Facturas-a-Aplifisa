@@ -164,9 +164,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._incorporando = 0
         self._preguntas_abiertas = 0
         self._lectura_aplazada = None
-        # Las partes de lo que se está poniendo: se borran tras guardarlo
-        # (ver _guardar_lo_puesto).
+        # Las partes de lo que se está poniendo: se borran cuando el disco ya
+        # no las cuenta por leer (ver _guardar_lo_puesto).
         self._partes_por_borrar = []
+        self._partes_sin_guardar = []       # [(número de su foto, elementos)]
+        self._timer_partes = QTimer(self)
+        self._timer_partes.setSingleShot(True)
+        self._timer_partes.setInterval(200)
+        self._timer_partes.timeout.connect(self._borrar_partes_guardadas)
         # Cambia con «Vaciar todo»: lo que se leía antes ya no es del lote.
         self._generacion_cola = 0
         self._cerrando = False
@@ -1883,22 +1888,27 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._guardar_muestra_revision()
         sesion.guardar(datos)
 
-    def _guardar_sesion_automatica(self) -> None:
+    def _guardar_sesion_automatica(self) -> int | None:
         """El guardado de cada poco: la foto del lote se toma aquí y se
-        escribe aparte, sin parar la pantalla. Si falla, se avisa una vez."""
+        escribe aparte, sin parar la pantalla. Si falla, se avisa una vez.
+
+        Devuelve el número de su foto (ver sesion.escrita), o None si no se
+        ha pedido."""
         if self._incorporando:
             # Un bloque a medio poner (ya en los bloques, con la tabla aún
             # sin rehacer, y quizá una pregunta abierta): guardar ahora dejaba
             # facturas fuera de las filas. Se guarda al acabar de ponerlo.
             self._timer_sesion.start()
-            return
+            return None
         error = sesion.ultimo_error()
+        numero = None
         try:
             datos = self._datos_sesion()
             if datos is None:
                 sesion.borrar()
+                numero = 0
             else:
-                sesion.guardar_en_segundo_plano(datos)
+                numero = sesion.guardar_en_segundo_plano(datos)
         except Exception as fallo:     # p. ej. algo del lote que no se guarda
             error = str(fallo) or type(fallo).__name__
             errores.apuntar("Guardado automático del lote:\n"
@@ -1909,6 +1919,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                          f"({error}). Se intentará otra vez al cerrar; "
                          "exporte lo revisado en cuanto pueda.", AVISO,
                          segundos=0)
+        return numero
 
     def _datos_sesion(self) -> dict | None:
         """Lo que se guarda del lote (None si está vacío).
@@ -2187,6 +2198,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._cerrando = False
                 self._iniciar_siguiente_cola()     # la cola sigue donde estaba
                 return
+        else:
+            # Ya en el disco: las partes de lo puesto sobran.
+            self._borrar_partes_guardadas(todas=True)
         self._cerrado = True
         super().closeEvent(ev)
 
