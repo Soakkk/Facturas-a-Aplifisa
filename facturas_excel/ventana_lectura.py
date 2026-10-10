@@ -176,7 +176,6 @@ class LecturaMixin:
         if not en_curso and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
-            self._fallidos_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         # Lo que queda por leer va con la sesión ya: el guardado solo se
@@ -221,9 +220,10 @@ class LecturaMixin:
             self.btn_gastos.setEnabled(hay_datos)
             self.btn_registro.setEnabled(hay_datos)
             if self._cola_total:
-                # Solo los de esta cola que siguen sin leer: uno de una carga
-                # anterior (con su aviso ya cerrado) volvía al acabar cada
-                # carga, aunque no fallara nada, y la barra lo contaba.
+                # Solo los que siguen sin leer y cuyo aviso no se ha cerrado
+                # (ver _aviso_quitado): uno de una carga anterior con su aviso
+                # ya cerrado volvía al acabar cada carga, aunque no fallara
+                # nada, y la barra lo contaba.
                 de_esta = {id(e) for e in self._fallidos_cola}
                 fallidos = sum(1 for e in self._cola_guardada
                                if e.get("fallido") and id(e) in de_esta)
@@ -676,9 +676,22 @@ class LecturaMixin:
                 "hace falta.")
         if not textos:
             return
+        # Para saber si es éste el que la persona cierra (ver _aviso_quitado).
+        self._texto_aviso_fallidos = " ".join(textos) if fallidos else None
         self._avisar(" ".join(textos), tipo, segundos=0,
                      deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
                      boton="Seguir leyendo" if de_antes else "Volver a leer")
+
+    def _aviso_quitado(self, texto: str) -> None:
+        """La banda quitó un aviso: lo cerró la persona, pulsó su botón o se
+        acabó su tiempo (ver BandaAvisos.quitado).
+
+        Si era el de los bloques que no se pudieron leer, ya lo ha visto: al
+        acabar otra carga ya no vuelve. Si no lo cerró (otro aviso lo tapó),
+        sí: antes se olvidaba al empezar cada carga, la haya visto o no."""
+        if texto == self._texto_aviso_fallidos and (
+                self.banda.isHidden() or self.banda.lbl.text() != texto):
+            self._fallidos_cola = []
 
     def _olvidar_cola_guardada_de(self, elementos) -> None:
         """Lo que quedó por leer la última vez de un PDF que se vuelve a
@@ -719,7 +732,6 @@ class LecturaMixin:
         if not self._lectura_en_curso() and not self._cola:
             self._cola_total = 0
             self._cola_completados = 0
-            self._fallidos_cola = []
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
         self.btn_gastos.setEnabled(False)
@@ -812,7 +824,8 @@ class LecturaMixin:
             # La marca no va con la sesión: al volver es «de la última vez».
             elemento["fallido"] = True
             self._cola_guardada.append(elemento)
-            self._fallidos_cola.append(elemento)
+            if not any(e is elemento for e in self._fallidos_cola):
+                self._fallidos_cola.append(elemento)
         else:
             self._limpiar_parte_interna(elemento)
         # En la banda, no en una ventana: un aviso abierto paraba la cola

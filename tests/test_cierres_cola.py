@@ -1334,3 +1334,44 @@ def test_la_parte_de_lo_puesto_no_se_borra_hasta_que_el_disco_lo_tiene(
     sigue.set()
     _esperar(lambda: not os.path.exists(parte))     # escrito: ya sobra
     assert _en_disco() == (1, [ventana._elemento_cola_actual["rutas"][0]])
+
+
+def _con_hoja_en_rojo(lectura, hoja, hasta=25):
+    """Lo que lee `lectura`, con la hoja `hoja` sin leer (sale en rojo)."""
+    lectura.fallos = [(lectura.rutas[0], hoja, "Error 500 en esta hoja")]
+    hojas = _bloque_de(lectura, 1, hasta)
+    hojas[hoja - 1] = (*hojas[hoja - 1][:3], {"emisor_nombre": None,
+                                              "lineas_iva": [{}],
+                                              "_error": "Error 500"})
+    return hojas
+
+
+def test_el_aviso_de_un_fallo_tapado_sin_cerrar_vuelve_al_acabar_otra_carga(
+        ventana, tmp_path, monkeypatch):
+    # Falla la última parte de un taco y, sin cerrar su aviso, se carga el
+    # siguiente, que llega con una hoja en rojo: su aviso tapaba el del fallo
+    # y al acabar ya no volvía (se olvidaba al empezar cada carga, se hubiera
+    # cerrado o no). Solo Exportar lo recordaba.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_con_hoja_en_rojo(lectura, 4, 10))
+    aviso = ventana.banda.lbl.text()
+    assert "Páginas sin leer" in aviso
+    assert "No se han podido leer 1 bloque(s) de taco.pdf" in aviso
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    assert "1 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+
+    # Cerrado, ya no vuelve.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "tercero.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert ventana.banda.isHidden() or "No se han podido" not in ventana.banda.lbl.text()
+    assert len(ventana._cola_guardada) == 1      # sigue por leer (Exportar lo dice)

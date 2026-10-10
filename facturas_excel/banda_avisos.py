@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
 INFO, EXITO, AVISO, ERROR = "info", "exito", "aviso", "error"
@@ -34,6 +34,10 @@ def fuera_del_lote(accion: Callable) -> Callable:
 
 
 class BandaAvisos(QFrame):
+    # El aviso se ha ido porque la persona lo cerró o pulsó su botón, o por el
+    # tiempo (no cuando el programa lo quita con `ocultar`). Lleva su texto.
+    quitado = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("bandaAvisos")
@@ -52,12 +56,12 @@ class BandaAvisos(QFrame):
         self.btn_cerrar.setObjectName("bandaCerrar")
         self.btn_cerrar.setToolTip("Cerrar el aviso")
         self.btn_cerrar.setFixedWidth(28)
-        self.btn_cerrar.clicked.connect(self.ocultar)
+        self.btn_cerrar.clicked.connect(self._quitar)
         fila.addWidget(self.btn_cerrar)
         self._accion_deshacer: Optional[Callable] = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.ocultar)
+        self._timer.timeout.connect(self._quitar)
         self.historial: list[str] = []      # para pruebas y diagnóstico
         self.hide()
 
@@ -108,8 +112,15 @@ class BandaAvisos(QFrame):
         if accion is not None and not getattr(accion, "fuera_del_lote", False):
             self.ocultar()
 
+    def _quitar(self) -> None:
+        texto = self.lbl.text()
+        self.ocultar()
+        self.quitado.emit(texto)
+
     def _deshacer(self) -> None:
+        texto = self.lbl.text()
         accion = self._accion_deshacer
         self.ocultar()
         if accion:
             accion()
+        self.quitado.emit(texto)

@@ -151,8 +151,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola = []
         self._cola_total = 0
         self._cola_completados = 0
-        # Los bloques de esta cola que no se pudieron leer (ver _on_fallo).
+        # Los bloques que no se pudieron leer (ver _on_fallo) y cuyo aviso
+        # la persona aún no ha cerrado (ver _aviso_quitado); y ese aviso.
         self._fallidos_cola = []
+        self._texto_aviso_fallidos = None
         self._elemento_cola_actual = None
         # La lectura de la cola (ver LecturaMixin): la de ahora, las que aún
         # están acabando (un QThread que Python suelta mientras trabaja tumba
@@ -487,6 +489,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             capa_tipo.addWidget(boton)
         cuerpo.addWidget(self.alerta)
         self.banda = BandaAvisos(self)
+        self.banda.quitado.connect(self._aviso_quitado)
         cuerpo.addWidget(self.banda)
         self.combo_filtro_registro = ComboSinRueda()
         self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
