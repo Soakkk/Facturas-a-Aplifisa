@@ -176,6 +176,10 @@ class LecturaMixin:
             self._cola_completados = 0
         self._cola.extend(elementos)
         self._cola_total += len(elementos)
+        # Lo que queda por leer va con la sesión ya: el guardado solo se
+        # armaba al poner un bloque, y un corte mientras se leía el primero
+        # olvidaba el PDF entero (al volver no se ofrecía seguir).
+        self._guardar_sesion_automatica()
         self.btn_gastos.setEnabled(False)
         self.btn_ventas.setEnabled(False)
         self.progreso.setVisible(True)
@@ -368,7 +372,8 @@ class LecturaMixin:
           reintenta: un bloque que llegaba con «¿Unir?» abierto rehacía la
           tabla y la unión borraba otras facturas.
         - El guardado automático no salta mientras: la sesión llegaba a
-          guardarse con el bloque en el lote y la tabla sin rehacer."""
+          guardarse con el bloque en el lote y la tabla sin rehacer. Al
+          acabar se guarda ya (ver `_guardar_lo_puesto`)."""
         elemento = self._elemento_cola_actual
         if self._lectura_descartada(elemento):
             self._descartar_lectura(elemento)
@@ -390,12 +395,32 @@ class LecturaMixin:
             entero = self._on_terminado(*datos) is not False
         finally:
             self._incorporando -= 1
-            self._timer_sesion.start()
+            self._timer_sesion.start()      # por si lo de abajo se corta
             if not entero or (elemento is not None
                               and self._elemento_cola_actual is elemento):
                 # Se cortó a medias (un fallo poniéndolo en la tabla): la
                 # cola no se queda parada.
                 self._seguir_tras_un_fallo(elemento)
+            self._guardar_lo_puesto()
+
+    def _guardar_lo_puesto(self) -> None:
+        """Un bloque recién puesto (lectura ya pagada) va al disco ya, y solo
+        después se borran las partes de lo puesto.
+
+        Antes se esperaba al guardado de cada poco (3 s), que cada bloque
+        volvía a retrasar: con fotos sueltas de 2 s no saltaba nunca, y un
+        corte justo después perdía el bloque. Y su parte se borraba antes
+        (incluso con una pregunta abierta, que puede durar un rato), con la
+        sesión del disco aún contándola por leer: al volver, «ya no está».
+        Al cerrar no hace falta: se guarda enseguida (ver closeEvent)."""
+        if self._incorporando:
+            return      # dentro de otro bloque: lo hace ése al acabar
+        if not self._cerrando:
+            # (El de cada poco sigue armado: si nada cambia, no escribe.)
+            self._guardar_sesion_automatica()
+        partes, self._partes_por_borrar = self._partes_por_borrar, []
+        for elemento in partes:
+            self._limpiar_parte_interna(elemento)
 
     def _seguir_tras_un_fallo(self, elemento) -> None:
         """La cola tras un bloque que no ha entrado entero en el lote, como
@@ -617,8 +642,14 @@ class LecturaMixin:
     def _pasar_al_siguiente_bloque(self, elemento) -> None:
         """El bloque ya está en el lote: su parte temporal sobra y la cola
         sigue con el siguiente, que se pone a leer ya (aunque aún haya que
-        preguntar algo de éste: su bloque esperará a la respuesta)."""
-        self._limpiar_parte_interna(elemento)
+        preguntar algo de éste: su bloque esperará a la respuesta).
+
+        Poniéndolo en el lote, la parte se borra al acabar, tras guardarlo
+        (ver `_guardar_lo_puesto`)."""
+        if self._incorporando:
+            self._partes_por_borrar.append(elemento)
+        else:
+            self._limpiar_parte_interna(elemento)
         self._cola_completados += 1
         if elemento and self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None

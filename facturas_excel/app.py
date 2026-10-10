@@ -164,6 +164,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._incorporando = 0
         self._preguntas_abiertas = 0
         self._lectura_aplazada = None
+        # Las partes de lo que se está poniendo: se borran tras guardarlo
+        # (ver _guardar_lo_puesto).
+        self._partes_por_borrar = []
         # Cambia con «Vaciar todo»: lo que se leía antes ya no es del lote.
         self._generacion_cola = 0
         self._cerrando = False

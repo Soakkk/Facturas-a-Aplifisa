@@ -823,3 +823,50 @@ def test_un_fallo_al_poner_el_ultimo_bloque_acaba_la_cola(ventana, tmp_path, mon
     assert ventana._timer_sesion.isActive() and ventana._timer_muestras.isActive()
     with open(os.path.join(dir_datos(), errores.FICHERO), encoding="utf-8") as fh:
         assert "fallo inventado al revalidar" in fh.read()
+
+
+# Un corte de luz con la cola en marcha ---------------------------------
+def _en_disco():
+    """Lo que hay en la sesión del disco: (bloques, partes de la cola)."""
+    import gzip
+    import pickle
+    sesion.esperar()
+    if not os.path.exists(sesion._ruta()):
+        return 0, []
+    with gzip.open(sesion._ruta(), "rb") as fh:
+        datos = pickle.load(fh)["datos"]
+    return len(datos["bloques"]), [r for e in datos.get("cola") or []
+                                   for r in e["rutas"]]
+
+
+def test_lo_cargado_y_lo_leido_llegan_al_disco_sin_esperar(
+        ventana, tmp_path, monkeypatch):
+    # Un corte justo después de cargar un PDF, o de poner uno de sus bloques,
+    # perdía la cola (al cargar no se armaba el guardado) o el bloque ya
+    # pagado (se guardaba 3 s después, y cada bloque lo volvía a retrasar:
+    # con fotos sueltas de 2 s no se guardaba nunca). Y su parte se borraba
+    # antes, también con una pregunta abierta, con el disco aún contándola
+    # por leer: al volver, «ya no está, vuelva a cargarla».
+    ventana._timer_sesion.setInterval(60_000)      # sin el de cada poco
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 75)])
+    assert _en_disco() == (0, [e["rutas"][0] for e in
+                               [ventana._elemento_cola_actual, *ventana._cola]])
+    con_la_pregunta = []
+    original = VentanaPrincipal._resolver_conflictos_nif
+
+    def pregunta(self):
+        # Como si se fuera la luz con una pregunta del bloque abierta: lo que
+        # el disco dice que queda por leer tiene que estar para leerlo.
+        _bloques, partes = _en_disco()
+        con_la_pregunta.append(bool(partes) and all(map(os.path.isfile, partes)))
+        return original(self)
+    monkeypatch.setattr(VentanaPrincipal, "_resolver_conflictos_nif", pregunta)
+
+    for puestos in (1, 2):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+        bloques, partes = _en_disco()
+        assert bloques == puestos and len(partes) == 3 - puestos
+        assert all(map(os.path.isfile, partes))
+    assert con_la_pregunta == [True, True]
+    assert len(_partes_en_disco()) == 1               # las puestas, ya borradas
