@@ -13,7 +13,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from facturas_excel import extraccion
 from facturas_excel.app import VentanaPrincipal
@@ -77,22 +77,18 @@ def test_se_dice_que_paginas_no_se_han_leido(monkeypatch):
     v.worker = SimpleNamespace(fallos=[
         (r"C:\facturas\bloque 1.pdf", 17, "Gemini no contestó en 90 segundos"),
     ])
-    dicho = []
-    monkeypatch.setattr(QMessageBox, "warning",
-                        staticmethod(lambda *a, **k: dicho.append(a[2])))
 
     v._avisar_paginas_no_leidas()
 
-    assert dicho and "bloque 1.pdf" in dicho[0] and "17" in dicho[0]
+    # En la banda, sin una ventana que pare la cola hasta que se cierre.
+    dicho = v.banda.historial
+    assert dicho and "bloque 1.pdf" in dicho[-1] and "17" in dicho[-1]
 
 
 def test_si_todo_se_leyo_no_molesta(monkeypatch):
     v = VentanaPrincipal(comprobar_updates=False)
     v.worker = SimpleNamespace(fallos=[])
-    dicho = []
-    monkeypatch.setattr(QMessageBox, "warning",
-                        staticmethod(lambda *a, **k: dicho.append(a[2])))
 
     v._avisar_paginas_no_leidas()
 
-    assert not dicho
+    assert not any("sin leer" in t for t in v.banda.historial)

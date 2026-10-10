@@ -107,21 +107,12 @@ def marcar_cliente(nif, nombre: str = "") -> None:
 
 def es_cliente_confirmado(nif) -> bool:
     """Confirmado aqui por una persona, o cliente del directorio de la suite."""
-    from . import suite
-    nif = _normaliza(nif)
-    return bool(nif and (_leer_todo().get(nif, {}).get("confirmado")
-                         or suite.es_cliente(nif)))
+    return Directorio().es_confirmado(nif)
 
 
 def nombre_confirmado(nif) -> str:
     """El nombre con el que la asesoria conoce a este cliente."""
-    from . import suite
-    nif = _normaliza(nif)
-    ficha = _leer_todo().get(nif, {}) if nif else {}
-    if (isinstance(ficha, dict) and ficha.get("confirmado") and ficha.get("nombre")
-            and not _roto(ficha["nombre"])):
-        return str(ficha["nombre"]).strip()
-    return suite.nombre_de(nif)
+    return Directorio().nombre_confirmado(nif)
 
 
 def nombre_guardado(nif) -> str:
@@ -154,20 +145,79 @@ def _clave_nombre(nombre) -> str:
 
 def buscar_confirmado_por_nombre(nombre: str) -> tuple[str, str] | None:
     """Cliente confirmado cuyo nombre coincide con el leído en la factura."""
-    clave = _clave_nombre(nombre)
-    if not clave:
-        return None
+    return Directorio().buscar_por_nombre(nombre)
+
+
+class Directorio:
+    """Los clientes tal como están ahora, leídos una sola vez.
+
+    Para analizar un lote entero: se preguntaba por cada nombre y cada NIF
+    leídos (dos por hoja) y cada pregunta abría la base de datos y, para
+    buscar por nombre, normalizaba los nombres de todos los clientes. Con
+    450 hojas era casi un segundo por bloque, y más cuantos más clientes
+    tuviera la asesoría. Las respuestas son las de siempre."""
+
+    def __init__(self):
+        from . import suite
+        self._todo = _leer_todo()
+        self._suite = suite.nombres_por_nif()
+        self._por_nombre = None
+
+    def es_confirmado(self, nif) -> bool:
+        nif = _normaliza(nif)
+        return bool(nif and (self._todo.get(nif, {}).get("confirmado")
+                             or _normaliza_suite(nif) in self._suite))
+
+    def nombre_confirmado(self, nif) -> str:
+        nif = _normaliza(nif)
+        ficha = self._todo.get(nif, {}) if nif else {}
+        if (isinstance(ficha, dict) and ficha.get("confirmado") and ficha.get("nombre")
+                and not _roto(ficha["nombre"])):
+            return str(ficha["nombre"]).strip()
+        return self._suite.get(_normaliza_suite(nif), "")
+
+    def buscar_por_nombre(self, nombre) -> tuple[str, str] | None:
+        clave = _clave_nombre(nombre)
+        if not clave:
+            return None
+        if self._por_nombre is None:
+            self._por_nombre = _indice_por_nombre(self._todo, self._suite)
+        coincidencias = self._por_nombre.get(clave)
+        return next(iter(coincidencias.items())) if coincidencias and \
+            len(coincidencias) == 1 else None
+
+
+def _normaliza_suite(nif) -> str:
     from . import suite
-    coincidencias = {}
-    for nif, ficha in _leer_todo().items():
-        if (isinstance(ficha, dict) and ficha.get("confirmado")
-                and _clave_nombre(ficha.get("nombre")) == clave):
-            coincidencias[_normaliza(nif)] = ficha.get("nombre", "")
-    for nif in suite.clientes():
-        nombre = suite.nombre_de(nif)
-        if nombre and _clave_nombre(nombre) == clave:
-            coincidencias.setdefault(nif, nombre)
-    return next(iter(coincidencias.items())) if len(coincidencias) == 1 else None
+    return suite._normaliza(nif)
+
+
+# El índice {nombre comparable: {NIF: nombre}} de los clientes confirmados
+# (aquí y en el directorio de la suite), con lo que lo decide: solo se rehace
+# si cambian sus nombres o cuáles están confirmados.
+_indice: dict = {"firma": None, "por_nombre": {}}
+
+
+def _indice_por_nombre(todo: dict, suite_nombres: dict) -> dict:
+    confirmados = [(nif, ficha.get("nombre", "")) for nif, ficha in todo.items()
+                   if isinstance(ficha, dict) and ficha.get("confirmado")]
+    global _indice
+    firma = (tuple(confirmados), tuple(suite_nombres.items()))
+    recordado = _indice
+    if recordado["firma"] == firma:
+        return recordado["por_nombre"]
+    por_nombre: dict = {}
+    for nif, nombre in confirmados:
+        clave = _clave_nombre(nombre)
+        if clave:
+            por_nombre.setdefault(clave, {})[_normaliza(nif)] = nombre
+    for nif, nombre in suite_nombres.items():
+        clave = _clave_nombre(nombre) if nombre else ""
+        if clave:
+            por_nombre.setdefault(clave, {}).setdefault(nif, nombre)
+    # De una vez (lo puede leer a la vez el hilo de la lectura).
+    _indice = {"firma": firma, "por_nombre": por_nombre}
+    return por_nombre
 
 
 # --------------------------------------------------- regimen de recargo

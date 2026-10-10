@@ -1,9 +1,34 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 5 de octubre de 2026 (versión 1.25.0). Apunta abajo lo que
+Actualizado el 10 de octubre de 2026 (versión 1.26.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.26: PDF pesados sin miedo
+
+**Memoria y rapidez.** Con un paquete de 450 hojas, el programa usa un tercio
+de la memoria (de unos 1.060 MB a unos 400 MB), la ventana ya no se queda
+parada mientras lee (el parón más largo pasa de 18 s a menos de 1), prepara
+las hojas tres veces más rápido, exporta al momento y cierra en un instante.
+Con tus 16 GB vas muy sobrado incluso con PDF de 200 MB.
+
+**Lectura más nítida.** La hoja escaneada se manda a Gemini tal como sale del
+escáner, sin volver a dibujarla, y en mejor calidad (también las de HP Scan).
+
+**La cola, sin perder nada.** Si cierras o se actualiza a mitad de lectura, lo
+que queda por leer se guarda y al volver la banda ofrece «Seguir leyendo».
+Lo cargado se guarda en el acto (un apagón ya no se lo lleva). Un bloque que
+no se puede leer se dice y se puede volver a leer. «Vaciar todo» leyendo la
+para de verdad, y Exportar se apaga mientras quedan bloques por leer.
+
+**Lecturas absurdas de la IA.** Un importe imposible sale en rojo en vez de
+parar la cola, una hoja rara ya no tira el bloque, y una factura con
+muchísimas líneas se resume por tipo de IVA (en ámbar).
+
+**Arreglo en el registro.** Al archivar una factura con varios tipos de IVA,
+el registro se quedaba solo con la primera línea (el Cuadre del año salía
+mal). Ya no pasa; las que se archivaron así antes no se corrigen solas.
 
 ### Lo nuevo de la 1.25: memoria y lectura
 

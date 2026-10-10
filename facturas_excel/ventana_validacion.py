@@ -93,6 +93,16 @@ def _otro_nombre_del_mismo_nif(facturas) -> dict:
     return otro
 
 
+def aviso_sin_calculados(aviso: str) -> str:
+    """El aviso de una línea sin lo que ya calcula cada revisión.
+
+    Las sesiones de versiones anteriores guardaron un aviso de ejercicio en
+    TODAS las filas; ahora se señala únicamente la factura cuya fecha no
+    pertenece al ejercicio predominante. Y el total que no cuadra, que trae
+    la lectura, lo vuelve a decir la validación con lo que haya ahora."""
+    return sin_cuadre_antiguo(_sin_aviso_ejercicios_antiguo(aviso))
+
+
 class ValidacionMixin:
     def _revalidar_fila(self, r):
         if r < 0 or r >= len(self.filas):
@@ -112,11 +122,7 @@ class ValidacionMixin:
             elif estado == OK:
                 estado = REVISAR
 
-        # Las sesiones de versiones anteriores guardaron un aviso de ejercicio
-        # en TODAS las filas. Se limpia al abrirlas; ahora se señala únicamente
-        # la factura cuya fecha no pertenece al ejercicio predominante.
-        aviso_guardado = sin_cuadre_antiguo(_sin_aviso_ejercicios_antiguo(
-            registro["aviso"]))
+        aviso_guardado = aviso_sin_calculados(registro["aviso"])
         registro["aviso"] = aviso_guardado
         if aviso_guardado:
             msgs.append(aviso_guardado)

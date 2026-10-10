@@ -66,6 +66,30 @@ def sin_ventanas_que_esperan(monkeypatch):
                           f"preverla en la prueba: {', '.join(abiertas)}")
 
 
+@pytest.fixture
+def hojas_dibujadas():
+    """Para dar al Worker (hilos.Hojas) hojas ya dibujadas, sin PDF:
+    `monkeypatch.setattr(hilos, "Hojas", hojas_dibujadas([(origen, página,
+    imagen), ...]))`."""
+    def hacer(imagenes):
+        imagenes = list(imagenes)
+
+        class HojasDibujadas:
+            def __init__(self, rutas, dpi=150):
+                self.lista = [(origen, pagina) for origen, pagina, _ in imagenes]
+
+            def __len__(self):
+                return len(imagenes)
+
+            def imagen(self, indice):
+                return imagenes[indice][2]
+
+            def cerrar(self):
+                pass
+        return HojasDibujadas
+    return hacer
+
+
 @pytest.fixture(autouse=True)
 def perfil_aislado(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'perfil'))
@@ -73,8 +97,13 @@ def perfil_aislado(tmp_path, monkeypatch):
     # Tampoco el Escritorio real: ahí van los Excel y el archivo documental.
     monkeypatch.setenv('HOME', str(tmp_path / 'casa'))
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'casa'))
-    from facturas_excel import __version__, localizar, notas_version
+    from facturas_excel import __version__, localizar, notas_version, sesion
     notas_version.marcar_vistas(__version__)
+    # La sesión apartada (o que no se pudo tocar) es «de esta ejecución»:
+    # cada prueba, con su perfil, es una ejecución nueva. Si no, la que
+    # apartaba una prueba de la cola se colaba en las de lecturas.
+    monkeypatch.setattr(sesion, "_apartada", "")
+    monkeypatch.setattr(sesion, "_intocable", "")
 
     # Ninguna prueba llama de verdad a Gemini para señalar datos.
     def sin_red(*_a, **_k):
@@ -87,7 +116,16 @@ def perfil_aislado(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
     if QApplication.instance():
         for ventana in QApplication.topLevelWidgets():
+            # Lo que se archiva en segundo plano tras exportar acaba aquí,
+            # con el perfil de la prueba todavía puesto.
+            if hasattr(ventana, '_esperar_archivo'):
+                ventana._esperar_archivo()
             if hasattr(ventana, '_timer_muestras'):
                 ventana._timer_muestras.stop()
             ventana.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    # Y los hilos del archivo cuya ventana ya no está.
+    from facturas_excel import hilos
+    for hilo in list(hilos.VIVOS):
+        hilo.wait()
+        hilos.soltar_hilo(hilo)

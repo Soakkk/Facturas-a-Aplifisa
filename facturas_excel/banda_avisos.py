@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
 INFO, EXITO, AVISO, ERROR = "info", "exito", "aviso", "error"
@@ -24,7 +24,20 @@ _ESTILOS = {
 }
 
 
+def fuera_del_lote(accion: Callable) -> Callable:
+    """Marca un «Deshacer» que no toca el lote: devolver a su sitio los PDF
+    de una recogida, volver a apuntar una exportación olvidada. «Vaciar
+    todo» no lo quita (el aviso de una recogida se queda fijo, con lo que no
+    se pudo mover)."""
+    accion.fuera_del_lote = True
+    return accion
+
+
 class BandaAvisos(QFrame):
+    # El aviso se ha ido porque la persona lo cerró o pulsó su botón, o por el
+    # tiempo (no cuando el programa lo quita con `ocultar`). Lleva su texto.
+    quitado = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("bandaAvisos")
@@ -43,18 +56,22 @@ class BandaAvisos(QFrame):
         self.btn_cerrar.setObjectName("bandaCerrar")
         self.btn_cerrar.setToolTip("Cerrar el aviso")
         self.btn_cerrar.setFixedWidth(28)
-        self.btn_cerrar.clicked.connect(self.ocultar)
+        self.btn_cerrar.clicked.connect(self._quitar)
         fila.addWidget(self.btn_cerrar)
         self._accion_deshacer: Optional[Callable] = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.ocultar)
+        self._timer.timeout.connect(self._quitar)
         self.historial: list[str] = []      # para pruebas y diagnóstico
         self.hide()
 
     def mostrar(self, texto: str, tipo: str = INFO,
-                deshacer: Optional[Callable] = None, segundos: int = 10) -> None:
-        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo."""
+                deshacer: Optional[Callable] = None, segundos: int = 10,
+                boton: str = "Deshacer") -> None:
+        """Enseña el aviso. `segundos=0` lo deja fijo hasta cerrarlo.
+
+        `boton` es el texto del botón de `deshacer`, que también vale para
+        ofrecer otra acción («Seguir leyendo»)."""
         fondo, borde, tinta = _ESTILOS.get(tipo, _ESTILOS[INFO])
         self.setStyleSheet(
             f"QFrame#bandaAvisos {{ background: {fondo}; border: 1px solid {borde};"
@@ -69,6 +86,7 @@ class BandaAvisos(QFrame):
         self.lbl.setText(texto)
         self.historial.append(texto)
         self._accion_deshacer = deshacer
+        self.btn_deshacer.setText(boton)
         self.btn_deshacer.setVisible(deshacer is not None)
         self.show()
         if segundos:
@@ -81,8 +99,32 @@ class BandaAvisos(QFrame):
         self._accion_deshacer = None
         self.hide()
 
+    def fijo(self) -> bool:
+        """Si el aviso que se ve se queda hasta cerrarlo (`segundos=0`)."""
+        return not self.isHidden() and not self._timer.isActive()
+
+    def accion(self) -> Optional[Callable]:
+        """Lo que hace el botón del aviso que se ve ahora (None si no hay)."""
+        return self._accion_deshacer
+
+    def olvidar_deshacer(self) -> None:
+        """El «Deshacer» del aviso ya no vale (se ha vaciado el lote): se
+        quita ese aviso, que además retenía todo lo que deshacía. Los que no
+        deshacen nada del lote (ver `fuera_del_lote`) siguen valiendo y se
+        quedan, como antes de vaciar."""
+        accion = self._accion_deshacer
+        if accion is not None and not getattr(accion, "fuera_del_lote", False):
+            self.ocultar()
+
+    def _quitar(self) -> None:
+        texto = self.lbl.text()
+        self.ocultar()
+        self.quitado.emit(texto)
+
     def _deshacer(self) -> None:
+        texto = self.lbl.text()
         accion = self._accion_deshacer
         self.ocultar()
         if accion:
             accion()
+        self.quitado.emit(texto)

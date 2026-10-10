@@ -9,7 +9,8 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QApplication, QComboBox, QHeaderView, QTableWidget,
+    QTableWidgetItem,
 )
 
 from .conceptos import SUBCLAVES_628
@@ -86,9 +87,13 @@ def parse_numero(texto):
     ):
         t = t.replace(".", "")
     try:
-        return float(t)
+        numero = float(t)
     except ValueError:
         return None
+    # «nan», «inf» o «1e999» escritos en una celda no son un importe: con
+    # uno así se paraba todo y el lote no se podía recuperar al reabrir.
+    from .validacion import importe_posible
+    return numero if importe_posible(numero) else None
 
 
 def fmt(v):
@@ -146,6 +151,16 @@ AYUDA_GXX = ("Subclave del suministro. En Aplifisa la 628 NO puede ir sin ella:\
              + "\n".join(f"  {g} = {d}" for g, d in SUBCLAVES_628.items()))
 AYUDA_SUPLIDO = ("SUPLIDO: se registra como una línea de base más del mismo "
                  "apunte, sin IVA (así lo pide Aplifisa).")
+# Lo último que se pintó del estado y de los avisos de cada fila, guardado en
+# su celda de estado: si una revisión del lote no cambia nada de una línea,
+# no se vuelve a pintar (con 800 líneas, repintarlas todas en cada
+# corrección era casi medio segundo). Una celda nueva no lo trae: se pinta.
+_PINTADO_ESTADO = Qt.UserRole + 50
+_PINTADO_AVISOS = Qt.UserRole + 51
+
+
+def _nombre_color(color) -> str:
+    return color.name(QColor.HexArgb) if isinstance(color, QColor) else str(color)
 
 
 class TablaFacturas(QTableWidget):
@@ -186,6 +201,9 @@ class TablaFacturas(QTableWidget):
         self._timer_medir.setInterval(0)
         self._timer_medir.timeout.connect(self.medir)
         self.model().rowsRemoved.connect(lambda *_: self._medida_pendiente())
+        # Lo que se escribe a mano en una celda también se mide (lo demás
+        # llega pintado por `pintar`, que ya pide la medida).
+        self.itemChanged.connect(lambda *_: self._medida_pendiente())
         cabecera = self.horizontalHeader()
         cabecera.setSectionResizeMode(QHeaderView.Interactive)
         cabecera.setSectionsClickable(True)
@@ -375,6 +393,67 @@ class TablaFacturas(QTableWidget):
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         self.insertRow(r)
+        self._llenar_fila(r, fila, al_cambiar_tipo)
+        self.blockSignals(bloqueadas)
+
+    def poner_filas(self, filas, al_cambiar_tipo) -> None:
+        """Pone estas filas en la tabla en lugar de las que había.
+
+        Las filas que ya hay se aprovechan: se vuelven a pintar con su línea
+        nueva (los datos y el desplegable; el estado y los avisos los pinta
+        la revisión del lote que viene después, solo donde cambian), y solo
+        se crean las que faltan, todas a la vez, o se quitan las que sobran.
+        Antes se creaban todas otra vez, de una en una, con sus 19 celdas y
+        su desplegable: con 800 líneas, rehacer la tabla (otro bloque leído,
+        ordenar, «por el total», cambiar de cliente…) tardaba de 4 a 6
+        segundos.
+
+        Queda como una tabla recién hecha: sin selección ni fila actual y
+        arriba del todo. Si se estaba escribiendo en una celda, se rehace de
+        verdad: lo escrito se descarta como siempre, sin apuntarse a medias."""
+        bloqueadas = self.signalsBlocked()
+        self.blockSignals(True)
+        # Sin repintar mientras se llenan: se pinta una vez, al final.
+        repintar = self.updatesEnabled()
+        self.setUpdatesEnabled(False)
+        try:
+            if self.editando():
+                self.setRowCount(0)
+            self.selectionModel().clear()
+            hechas = min(self.rowCount(), len(filas))
+            self._soltar_desplegables(hechas)
+            self.setRowCount(len(filas))
+            for r in range(hechas):
+                self.pintar(r, filas[r])
+            for r in range(hechas, len(filas)):
+                self._llenar_fila(r, filas[r], al_cambiar_tipo)
+            self.verticalScrollBar().setValue(0)
+        finally:
+            self.setUpdatesEnabled(repintar)
+            self.blockSignals(bloqueadas)
+
+    def _soltar_desplegables(self, hasta: int) -> None:
+        """Un desplegable Gasto/Ingreso abierto, o con el foco, es de la línea
+        que había en su fila. Al rehacer la tabla ese desplegable desaparecía
+        y lo que se eligiera o se tecleara en él ya no cambiaba nada. Ahora
+        la fila se aprovecha para otra línea (otro bloque leído con la tabla
+        ordenada, ordenar…): se cierra y suelta el foco, para que no cambie
+        en silencio el tipo de la factura que ocupa ahora esa fila."""
+        foco = QApplication.focusWidget()
+        if QApplication.activePopupWidget() is None \
+                and not isinstance(foco, ComboSinRueda):
+            return
+        for r in range(hasta):
+            combo = self.cellWidget(r, C_TIPO)
+            if combo is None:
+                continue
+            if combo.view().isVisible():
+                combo.hidePopup()
+            if combo is foco:
+                combo.clearFocus()
+
+    def _llenar_fila(self, r: int, fila: Fila, al_cambiar_tipo) -> None:
+        """Las celdas y el desplegable de una fila ya creada (vacía)."""
         est = QTableWidgetItem("")
         est.setFlags(Qt.ItemIsEnabled)
         est.setTextAlignment(Qt.AlignCenter)
@@ -399,7 +478,6 @@ class TablaFacturas(QTableWidget):
             self.setItem(r, columna, item)
         self.setRowHeight(r, 34)
         self.pintar(r, fila)
-        self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
     def pintar(self, r: int, fila: Fila, columnas=None) -> None:
@@ -417,13 +495,19 @@ class TablaFacturas(QTableWidget):
                 combo.setCurrentIndex(max(0, combo.findData(fila.tipo)))
                 combo.blockSignals(False)
                 aviso = (fila.aviso or "").lower()
-                combo.setToolTip(
+                ayuda = (
                     "Clasificación dudosa: compruebe si corresponde a Gasto o Ingreso."
                     if "dudoso" in aviso or "confirma" in aviso else
                     "Clasificación automática según el NIF y el papel del "
                     "cliente en la factura.")
+                if combo.toolTip() != ayuda:
+                    combo.setToolTip(ayuda)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
+
+    def editando(self) -> bool:
+        """Si hay una celda abierta escribiendo en ella."""
+        return self.state() == QAbstractItemView.EditingState
 
     def fila_del_combo(self, control) -> int:
         for r in range(self.rowCount()):
@@ -437,6 +521,9 @@ class TablaFacturas(QTableWidget):
         celda = self.item(r, C_ESTADO)
         if celda is None:
             return
+        firma = repr((texto, _nombre_color(color), fondo, ayuda))
+        if celda.data(_PINTADO_ESTADO) == firma:
+            return                      # ya está así
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         celda.setText(texto)
@@ -446,11 +533,20 @@ class TablaFacturas(QTableWidget):
         fuente.setBold(True)
         celda.setFont(fuente)
         celda.setToolTip(ayuda)
+        celda.setData(_PINTADO_ESTADO, firma)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 
     def resaltar(self, r: int, fila: Fila, estado: str, mensajes) -> None:
         """Colorea el dato concreto que explica el semáforo de la fila."""
+        estado_celda = self.item(r, C_ESTADO)
+        # Todo lo que decide cómo se pinta: el estado, si es un suplido y
+        # cada aviso con su dato y su gravedad (o texto suelto, sin dato).
+        firma = repr((estado, bool(getattr(fila.factura, "es_suplido", False)),
+                      [(str(m), getattr(m, "campos", None), getattr(m, "gravedad", None))
+                       for m in mensajes]))
+        if estado_celda is not None and estado_celda.data(_PINTADO_AVISOS) == firma:
+            return                      # ya está así
         bloqueadas = self.signalsBlocked()
         self.blockSignals(True)
         for columna in COLUMNAS_DATO:
@@ -465,12 +561,15 @@ class TablaFacturas(QTableWidget):
             fuente = item.font()
             fuente.setBold(False)
             item.setFont(fuente)
-            # Ayudas permanentes: cuenta, GXX y suplido.
+            # Ayudas permanentes: GXX y suplido. Las demás, desde cero en cada
+            # pintado (la cuenta se dejaba como estaba y cada revisión le
+            # volvía a añadir su aviso: salía repetido y no se iba al
+            # corregirla).
             if columna == C_GXX:
                 item.setToolTip(AYUDA_GXX)
             elif columna == C_BASE and getattr(fila.factura, "es_suplido", False):
                 item.setToolTip(AYUDA_SUPLIDO)
-            elif columna != C_CUENTA:
+            else:
                 item.setToolTip("")
 
         por_columna = {}
@@ -520,6 +619,8 @@ class TablaFacturas(QTableWidget):
             ayuda = "\n".join(dict.fromkeys(detalles))
             item.setToolTip(
                 f"{ayuda_anterior}\n\n{ayuda}" if ayuda_anterior else ayuda)
+        if estado_celda is not None:
+            estado_celda.setData(_PINTADO_AVISOS, firma)
         self.blockSignals(bloqueadas)
         self._medida_pendiente()
 

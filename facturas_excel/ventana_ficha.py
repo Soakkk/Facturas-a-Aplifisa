@@ -12,12 +12,12 @@ import os
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QImage, QPixmap
 
-from facturas_excel import ajustes, imagen_visor, localizar
+from facturas_excel import ajustes, imagen_hoja, imagen_visor, localizar
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO
 from facturas_excel.conceptos import descripcion_de
 from facturas_excel.control_facturas import clave_documento
 from facturas_excel.ficha_incidencias import FichaIncidencias
-from facturas_excel.procesar import normaliza_nif
+from facturas_excel.procesar import apuntar_juntadas, normaliza_nif
 from facturas_excel.resumen import eur
 from facturas_excel.texto import limpiar
 from facturas_excel.lote import CAMPOS_NUMERO, CORREGIDA, PENDIENTES, REVISADA
@@ -298,7 +298,9 @@ class FichaMixin:
                   if factura.origen_imagen else None)
         if png is not getattr(self, "_png_visor", None) or self._pixmap_documento.isNull():
             pix = QPixmap()
-            pix.loadFromData(png)
+            # La imagen se lee del disco (el lote solo guarda su asa). Si ya
+            # no está, queda vacía: «Vista previa no disponible».
+            pix.loadFromData(imagen_hoja.como_bytes(png))
             if pix.isNull():
                 self._limpiar_visor()
                 self.lbl_origen.setText(origen or "Documento cargado")
@@ -323,6 +325,17 @@ class FichaMixin:
         clave = clave_documento(self.filas[fila]["factura"])
         return [r for r in range(len(self.filas))
                 if clave_documento(self.filas[r]["factura"]) == clave]
+
+    def _filas_de_los_documentos(self, filas) -> list[int]:
+        """Todas las líneas de las facturas de esas filas, en orden.
+
+        De una pasada por el lote: con todo seleccionado, buscar las de cada
+        fila por separado recorría el lote entero por cada una (800 × 800)."""
+        por_documento = {}
+        for r, registro in enumerate(self.filas):
+            por_documento.setdefault(clave_documento(registro["factura"]), []).append(r)
+        return sorted({r for fila in filas
+                       for r in por_documento[clave_documento(self.filas[fila]["factura"])]})
 
     def _datos_ficha(self, fila: int) -> dict:
         """Lo que enseña la ficha, a partir de la fila y de sus avisos."""
@@ -637,6 +650,10 @@ class FichaMixin:
                 setattr(self.filas[r].factura, campo,
                         self._con_signo_del_documento(campo, valor, filas_doc))
                 self.tabla.pintar(r, self.filas[r], (COLUMNA_DE_CAMPO[campo],))
+            if d.get("campo") == "lineas_iva":
+                # Si la línea de la lectura 2 suma varias juntadas, la fila
+                # pasa a ser esa suma (con su redondeo); si no, deja de serlo.
+                apuntar_juntadas(self.filas[destino[0]].factura, linea)
             self._invalidar_contraste_registro()
             if d.get("campo_factura") == "nif":
                 self._nif_escrito_a_mano(fila)

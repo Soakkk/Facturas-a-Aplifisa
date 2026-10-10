@@ -6,6 +6,78 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.26.0": """
+<h2>Novedades de la versión 1.26.0: PDF pesados sin miedo</h2>
+<p>Esta versión está hecha para trabajar con paquetes escaneados grandes (de
+100 a 200 MB) sin que el programa se ahogue, y para que nada se pierda pase lo
+que pase con la cola.</p>
+<p><b>Memoria y rapidez</b> (medido con un paquete de 450 hojas)</p>
+<ul>
+  <li><b>Un tercio de la memoria.</b> De unos 1.060 MB a unos 400 MB: la
+      imagen de cada hoja se guarda en el disco y no en la memoria. Con dos
+      PDF grandes a la vez, de 1.260 MB a 430 MB.</li>
+  <li><b>La ventana ya no se queda parada</b> mientras se lee: el parón más
+      largo baja de 18 segundos a menos de 1.</li>
+  <li><b>Preparar las hojas, tres veces más rápido</b>, y la lectura empieza
+      antes: cada hoja se prepara justo antes de mandarla a leer.</li>
+  <li><b>Exportar, al momento</b> (800 líneas: de 17 s a poco más de 1 s). El
+      archivo del cliente (mover los PDF y el Excel a su carpeta) se hace en
+      segundo plano.</li>
+  <li>Ordenar, filtrar, marcar revisada y eliminar filas, sin esperas. Cerrar
+      el programa, en un instante. El expediente del año se hace sin abrir
+      todos los PDF a la vez.</li>
+</ul>
+<p><b>Lectura más nítida</b></p>
+<ul>
+  <li>La hoja escaneada se manda a Gemini sacando directamente la foto del
+      escáner, sin volver a dibujarla (eso la emborronaba), y en mejor
+      calidad. Vale también para las hojas de HP Scan.</li>
+  <li>Una foto de móvil metida en un PDF o una hoja gigante ya no se come la
+      memoria ni tira el bloque.</li>
+  <li>Al escanear, el blanco y negro avisa de que no sirve para tiques ni letra
+      fina.</li>
+</ul>
+<p><b>La cola, sin perder nada</b></p>
+<ul>
+  <li><b>Cerrar o actualizar a mitad de lectura</b> guarda lo leído y lo que
+      queda por leer. Al volver a abrir, la banda ofrece <b>«Seguir
+      leyendo»</b>. Después de cerrar no se pide (ni se paga) nada más a
+      Gemini.</li>
+  <li>Lo cargado y cada bloque leído se guardan en el acto: un apagón ya no se
+      lleva la cola ni lecturas pagadas.</li>
+  <li><b>Un bloque que no se puede leer</b> (sin crédito, Gemini caído) ya no
+      se pierde: se dice cuántos fueron y se pueden volver a leer.</li>
+  <li><b>«Vaciar todo» mientras se lee</b> la para de verdad: no aparecen
+      facturas fantasma.</li>
+  <li><b>Exportar</b> se apaga mientras quedan bloques por leer (con Ctrl+G se
+      pregunta).</li>
+  <li>Los avisos de fin de bloque van a la banda y no paran la cola; solo se
+      sigue preguntando quién es el cliente.</li>
+  <li>«Unir hojas» con la tabla ordenada ya no confunde facturas, y «Recoger
+      sueltos» no se lleva un PDF que está por leer.</li>
+</ul>
+<p><b>Lecturas absurdas de la IA</b></p>
+<ul>
+  <li>Un importe imposible (infinito, «nan», miles de millones) ya no para la
+      cola ni llega al Excel: la factura sale en rojo con «importe
+      imposible».</li>
+  <li>Una hoja rara ya no tira el bloque entero: esa hoja sale en rojo y las
+      demás siguen.</li>
+  <li>Una factura con muchísimas líneas se resume por tipo de IVA (en ámbar,
+      diciéndolo) y la ficha no se congela.</li>
+  <li>Los NIF con cifras «anchas» (copiados de algunos PDF) se entienden, y un
+      tipo de documento desconocido sale en ámbar.</li>
+  <li>Si Gemini corta una respuesta muy larga, se vuelve a pedir con más
+      sitio.</li>
+</ul>
+<p><b>Arreglo en el registro</b></p>
+<ul>
+  <li>Al archivar una factura con varios tipos de IVA, el registro se quedaba
+      solo con la primera línea, y el Cuadre del año y el Resumen del
+      expediente salían mal. Ahora se guardan todas. (Las ya archivadas así
+      no se corrigen solas.)</li>
+</ul>
+""",
     "1.25.0": """
 <h2>Novedades de la versión 1.25.0: memoria y lectura</h2>
 <p><b>Arreglos importantes</b></p>

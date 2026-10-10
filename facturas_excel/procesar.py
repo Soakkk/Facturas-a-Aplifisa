@@ -14,8 +14,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
+from functools import reduce
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -26,6 +28,7 @@ from .conceptos import (
 )
 from .extraccion import _num
 from .modelo import Factura
+from .sanear_lectura import _cuota_que_cuadra, _sumar, aviso_saneado
 from .validacion import fecha_de, normalizar_fecha, validar_nif
 from .texto import limpiar, reparar, tiene_invisibles, visible
 
@@ -33,11 +36,14 @@ from .texto import limpiar, reparar, tiene_invisibles, visible
 def normaliza_nif(nif) -> str:
     if not nif:
         return ""
-    return str(nif).strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+    # NFKC: las cifras y letras «de ancho completo» (１２３４５６７８Ｚ, de un PDF
+    # asiático o una lectura rara) pasan a las normales. Si no, el DNI pasaba
+    # el control de la letra y llegaba así al Excel, en verde.
+    nif = unicodedata.normalize("NFKC", str(nif))
+    return nif.strip().upper().replace(".", "").replace(" ", "").replace("-", "")
 
 
 def _tokens_nombre(nombre) -> set:
-    import unicodedata
     if not nombre:
         return set()
     t = "".join(c for c in unicodedata.normalize("NFD", str(nombre))
@@ -117,7 +123,13 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     cuenta: Dict[str, Candidato] = {}
     nombres: Dict[str, list] = defaultdict(list)
     homonimo = False
+    # Los clientes y los proveedores, leídos una vez para todo el lote (no
+    # por cada nombre o NIF leído: con 450 hojas era casi un segundo por
+    # bloque, y más cuantos más clientes y proveedores hubiera guardados).
+    directorio = clientes.Directorio()
     for d in lista_datos:
+        # Solo los NIF y nombres que son texto (ver _partes_de).
+        d = _partes_de(d)
         for campo_nif, campo_nom, papel in (
                 ("emisor_nif", "emisor_nombre", "e"),
                 ("receptor_nif", "receptor_nombre", "r")):
@@ -127,7 +139,7 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
             # Para elegir el nombre, el roto tal cual: así gana una lectura
             # buena y, si no la hay, se intenta recuperar la letra.
             para_elegir = str(d.get(campo_nom)) if roto else nombre_leido
-            conocido = clientes.buscar_confirmado_por_nombre(nombre_leido)
+            conocido = directorio.buscar_por_nombre(nombre_leido)
             if conocido and validar_nif(leido) and leido != conocido[0]:
                 # El nombre de un cliente confirmado con OTRO NIF válido: o es
                 # su NIF mal leído, o es otra persona que se llama igual (un
@@ -155,15 +167,16 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
             elif nombre_leido:
                 nombres[nif].append(para_elegir)
 
+    nifs_proveedores = _nifs_de_proveedores() if cuenta else set()
     for nif, c in cuenta.items():
         c.nombre, c.nombre_roto = _nombre_leido_de(nif, nombres.get(nif, []))
-        c.cliente_confirmado = clientes.es_cliente_confirmado(nif)
+        c.cliente_confirmado = directorio.es_confirmado(nif)
         # El nombre con el que ya se le conoce (aqui o en la suite) manda
         # sobre las variantes leidas en las facturas.
-        confirmado = clientes.nombre_confirmado(nif)
+        confirmado = directorio.nombre_confirmado(nif)
         if confirmado:
             c.nombre, c.nombre_roto = confirmado, False
-        c.proveedor_conocido = _es_proveedor_conocido(nif, c.nombre)
+        c.proveedor_conocido = nif in nifs_proveedores
 
     # Con empate se propone al que RECIBE las facturas: un taco de facturas
     # iguales suele ser de compras (gasolinera, proveedor de la tienda...). Es
@@ -173,6 +186,18 @@ def analizar_cliente(lista_datos: List[dict]) -> Analisis:
     empate = len(orden) > 1 and orden[0].puntos == orden[1].puntos
     return Analisis(candidatos=orden, dudoso=homonimo or empate,
                     homonimo=homonimo, empate=empate)
+
+
+def _partes_de(datos) -> dict:
+    """Los NIF y nombres de una hoja, solo si son texto: una lista, un número
+    o un dict (lectura rara de una sesión vieja) no cuentan para decidir el
+    cliente. Una lista rompía después el recuento de nombres y se perdía el
+    bloque entero."""
+    if not isinstance(datos, dict):
+        return {}
+    return {campo: datos[campo] for campo in (
+        "emisor_nif", "emisor_nombre", "receptor_nif", "receptor_nombre")
+        if isinstance(datos.get(campo), str)}
 
 
 def _nombre_leido_de(nif: str, lista: list) -> tuple:
@@ -189,19 +214,34 @@ def _nombre_leido_de(nif: str, lista: list) -> tuple:
     return (recuperado, False) if recuperado else (limpiar(roto)[0], True)
 
 
-def _es_proveedor_conocido(nif: str, nombre: str) -> bool:
-    """Si ya se le ha comprado alguna vez, no es el cliente de la asesoria."""
-    ficha = proveedores.leer(clave_proveedor(nombre)) if nombre else None
-    if ficha and normaliza_nif(ficha.get("nif")) == nif:
-        return True
-    return any(normaliza_nif(f.get("nif")) == nif
-               for f in proveedores.leer_todo().values() if isinstance(f, dict))
+def _nifs_de_proveedores() -> set:
+    """Los NIF de todos los proveedores guardados: si ya se le ha comprado
+    alguna vez, no es el cliente de la asesoria. (Antes se miraba por cada
+    candidato, primero la ficha de su nombre y luego todas, leyendo la base
+    dos veces; la de su nombre es una de todas: sale lo mismo.)"""
+    return {normaliza_nif(f.get("nif")) for f in proveedores.leer_todo().values()
+            if isinstance(f, dict)}
 
 
 def detectar_cliente(lista_datos: List[dict]) -> Tuple[str, str]:
     """(nombre, nif) del cliente del lote. Compatible con lo de siempre."""
-    mejor = analizar_cliente(lista_datos).mejor
+    try:
+        mejor = analizar_cliente(lista_datos).mejor
+    except Exception:
+        # Una hoja rara no tira el bloque (25 hojas ya pagadas): se busca
+        # el cliente con las hojas que se pueden analizar, una a una.
+        _apuntar_hoja_rara("buscar el cliente del bloque")
+        mejor = analizar_cliente(
+            [d for d in lista_datos if _se_puede_analizar(d)]).mejor
     return (mejor.nombre, mejor.nif) if mejor else ("", "")
+
+
+def _se_puede_analizar(datos) -> bool:
+    try:
+        analizar_cliente([datos])
+        return True
+    except Exception:
+        return False
 
 
 @dataclass
@@ -239,6 +279,90 @@ def _cuadre_factura(facturas: List[Factura]) -> str:
         return ""
     return (f"El total no cuadra: la factura pone {total:.2f} y sus "
             f"{len(facturas)} líneas de IVA suman {suma:.2f}.")
+
+
+def _redondeo_de_lineas(base, pct, suma) -> float:
+    """Lo que `suma` (las cuotas de las líneas juntadas, cada una cuadrando
+    sola) se aparta de base×% de la fila, en el sentido de la base."""
+    if base is None or pct is None or suma is None:
+        return 0.0
+    return round((suma - round(base * pct / 100.0, 2))
+                 * (-1 if base < 0 else 1), 6)
+
+
+def _lineas_leidas(lineas, cuantas: int) -> tuple | None:
+    """(base, cuota de IVA, recargo) de cada línea juntada, o None si no
+    vienen o no tienen esa forma (un crudo de antes de guardarlas)."""
+    if not isinstance(lineas, list) or len(lineas) != cuantas:
+        return None
+    leidas = []
+    for linea in lineas:
+        if not isinstance(linea, (list, tuple)) or len(linea) != 3:
+            return None
+        leidas.append(tuple(_num(valor) for valor in linea))
+    return tuple(leidas)
+
+
+def _cuotas_que_cuadran(lineas, pct, columna: int, con_redondeo: bool):
+    """Lo que suman las cuotas de las líneas si cada una cuadra sola (ver
+    sanear_lectura._cuota_que_cuadra); None si a alguna le falta la base."""
+    suma = 0.0
+    for linea in lineas:
+        cuota = _cuota_que_cuadra(linea[0], pct, linea[columna], con_redondeo)
+        if cuota is None:
+            return None
+        suma = round(suma + cuota, 6)
+    return suma
+
+
+def _abono_linea_a_linea(f: Factura) -> tuple:
+    """Un abono: cada línea juntada en negativo ANTES de sumarla, como ponía
+    la 1.25 cada una en su fila (normalizar_importes_abono). En negativo la
+    suma, una línea a la que Gemini quitó el menos restaba de las demás en
+    vez de sumar (30 de −15,40 con una sin el menos: −431,20 en vez de
+    −462,00) y las cuotas no cuadraban con su base. Deja la fila con esas
+    sumas y devuelve (base, lo que suman sus cuotas de IVA y de recargo
+    cuando cada una cuadra sola)."""
+    f.lineas_leidas = tuple(tuple(None if v is None else -abs(v) for v in linea)
+                            for linea in f.lineas_leidas)
+    base_antes = f.base_iva
+    for i, campo in enumerate(("base_iva", "cuota_iva", "cuota_requiv")):
+        suma = reduce(_sumar, (linea[i] for linea in f.lineas_leidas), None)
+        if suma is not None:        # (un recargo suelto de la factura, no)
+            setattr(f, campo, suma)
+    if f.base_requiv is not None and f.base_requiv == base_antes:
+        f.base_requiv = f.base_iva
+    return (f.base_iva,
+            _cuotas_que_cuadran(f.lineas_leidas, f.pct_iva, 1, True),
+            _cuotas_que_cuadran(f.lineas_leidas, f.pct_requiv, 2, False))
+
+
+def apuntar_juntadas(f: Factura, linea: dict) -> None:
+    """Lo que validar necesita saber de una línea de IVA que suma varias
+    leídas (sanear_lectura.juntar_por_tipo): cuántas son, cada una tal como
+    se leyó y el redondeo exacto de sus cuotas, línea a línea. Con una línea
+    sin juntar, nada (y se olvida lo que hubiera: la fila deja de ser una
+    suma). Va con la fila ya puesta (también el recargo): en un abono la
+    rehace con cada línea en negativo. Lo que se tecleó antes en la fila
+    tampoco cuenta: sus cuotas vuelven a ser las leídas."""
+    f.iva_a_mano = f.requiv_a_mano = False
+    juntadas = linea.get("_juntadas")
+    if not (isinstance(juntadas, int) and not isinstance(juntadas, bool)
+            and juntadas > 1):
+        f.lineas_juntadas = 1
+        f.redondeo_lineas_iva = f.redondeo_lineas_requiv = 0.0
+        f.lineas_leidas = None
+        return
+    base, cuota_lineas, requiv_lineas = (_num(linea.get(campo)) for campo in (
+        "base", "_cuota_lineas", "_requiv_lineas"))
+    f.lineas_juntadas = juntadas
+    f.lineas_leidas = _lineas_leidas(linea.get("_lineas"), juntadas)
+    if f.lineas_leidas and (f.total_impreso or 0) < 0:
+        base, cuota_lineas, requiv_lineas = _abono_linea_a_linea(f)
+    f.redondeo_lineas_iva = _redondeo_de_lineas(
+        base, _num(linea.get("tipo_iva")), cuota_lineas)
+    f.redondeo_lineas_requiv = _redondeo_de_lineas(
+        base, _num(linea.get("pct_requiv")), requiv_lineas)
 
 
 def normalizar_importes_abono(facturas: List[Factura]) -> bool:
@@ -460,6 +584,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    aviso = f"{aviso} {aviso_saneado(datos)}".strip()
     if datos.get("_error"):
         aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
                 "esta hoja; no se ha rellenado ningún dato.".strip()
@@ -553,6 +678,7 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
                 else f.base_iva
             if f.base_requiv is None:
                 f.base_requiv = f.base_iva
+        apuntar_juntadas(f, linea)
         if i == 0:
             # La retencion es una sola por factura, no por linea de IVA.
             f.base_irpf = _num(datos.get("base_irpf"))
@@ -957,6 +1083,30 @@ def propagar_nifs(procesadas: List[FacturaProcesada]) -> int:
     return completados
 
 
+def _apuntar_hoja_rara(que: str) -> None:
+    import traceback
+    from . import errores
+    errores.apuntar(f"Lectura rara al {que}; las demás hojas siguen:\n"
+                    + traceback.format_exc())
+
+
+def _construir_sin_tumbar(datos, cliente_nif, cliente_nombre, origen, pagina):
+    """construir(), pero una hoja rara no se lleva el bloque entero.
+
+    Una lista donde va un nombre o un texto donde van las líneas de IVA (lo
+    que trae una lectura sin esquema o desbocada) lanzaba aquí y se perdían
+    las 25 hojas del bloque, ya pagadas. Ahora esa hoja queda en rojo con su
+    motivo, como una hoja que no se pudo leer, y las demás siguen.
+    """
+    try:
+        return construir(datos, cliente_nif, cliente_nombre, origen, pagina)
+    except Exception as error:
+        _apuntar_hoja_rara(f"construir la hoja {pagina}")
+        motivo = f"lectura que no se pudo interpretar ({type(error).__name__})"
+        return construir({"emisor_nombre": None, "lineas_iva": [{}], "_error": motivo},
+                         cliente_nif, cliente_nombre, origen, pagina)
+
+
 def preparar_lote(registros: List[tuple], cliente_nombre: str,
                   cliente_nif: str) -> List[tuple]:
     """De lo leido por Gemini a las facturas listas para la tabla.
@@ -970,8 +1120,14 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
     # ambas acababan como apuntes incompletos distintos. Se juntan primero los
     # fragmentos consecutivos de la misma factura y despues se construye el
     # unico apunte, con todas sus lineas de IVA y recargo.
-    consolidados = consolidar_paginas_factura(registros)
-    procesadas = [(img, construir(datos, cliente_nif, cliente_nombre, origen, pag))
+    try:
+        consolidados = consolidar_paginas_factura(registros)
+    except Exception:
+        # Una lectura que no deja ni comparar las hojas: cada una por su lado.
+        _apuntar_hoja_rara("unir las hojas del bloque")
+        consolidados = list(registros)
+    procesadas = [(img, _construir_sin_tumbar(datos, cliente_nif, cliente_nombre,
+                                              origen, pag))
                   for img, origen, pag, datos in consolidados]
     solo = [pr for _, pr in procesadas]
     propagar_nifs(solo)              # 1º la prueba del propio lote

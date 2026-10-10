@@ -58,15 +58,13 @@ def reparar(roto, candidatos):
     solo se diferencian en la tilde son el mismo: gana el que la lleva."""
     if not tiene_invisibles(roto):
         return None
-    # Cada tanda de invisibles seguidos, un solo hueco de «ninguna a n
-    # letras»: un «.?» por cada uno hacía la búsqueda exponencial (un nombre
-    # entero sin tabla de caracteres dejaba la lectura parada).
-    patron = "".join(
-        f".{{0,{len(trozo)}}}" if invisible else re.escape(trozo)
-        for invisible, trozo in (
-            (k, "".join(g)) for k, g in groupby(
-                _sin_tildes(_COMO_ESPACIO.sub(" ", str(roto))),
-                key=lambda c: _INVISIBLES.match(c) is not None)))
+    # Cada tanda de invisibles seguidos es un hueco de «ninguna a n letras»;
+    # lo demás, tal cual. Ver _encaja.
+    trozos = [(len(trozo), "") if invisible else (0, trozo)
+              for invisible, trozo in (
+                  (k, "".join(g)) for k, g in groupby(
+                      _sin_tildes(_COMO_ESPACIO.sub(" ", str(roto))),
+                      key=lambda c: _INVISIBLES.match(c) is not None))]
     # El propio roto sin el carácter no es «el bueno»: es el nombre al que le
     # falta la letra (aprendido, por ejemplo, al exportar esa misma fila).
     sin_letra = " ".join(sin_invisibles(str(roto)).split()).upper()
@@ -78,12 +76,43 @@ def reparar(roto, candidatos):
         if " ".join(candidato.split()).upper() == sin_letra:
             continue
         base = _sin_tildes(candidato)
-        if re.fullmatch(patron, base):
+        if _encaja(trozos, base):
             actual = buenos.get(base)
             tildes = sum(1 for c in candidato if ord(c) > 127)
             if actual is None or tildes > sum(1 for c in actual if ord(c) > 127):
                 buenos[base] = candidato
     return next(iter(buenos.values())) if len(buenos) == 1 else None
+
+
+def _encaja(trozos, texto: str) -> bool:
+    """Si `texto` es la sucesión de los trozos: un literal, o un hueco de 0 a
+    n letras (que no sean un salto de línea, como el «.» de antes).
+
+    Antes era una expresión regular con un «.{0,n}» por tanda, y con nombres
+    como «A·A·A·…» frente a un candidato «AAAA…B» retrocedía de forma
+    exponencial: con 28 tandas, 5 s parado (fuzzing, 09/10/2026). Aquí se
+    lleva el conjunto de posiciones a las que se puede llegar, que nunca pasa
+    de len(texto) + 1: el coste es como mucho letras × huecos."""
+    largo = len(texto)
+    if sum(len(literal) for _hueco, literal in trozos) > largo:
+        return False
+    posiciones = {0}
+    for hueco, literal in trozos:
+        if literal:
+            posiciones = {p + len(literal) for p in posiciones
+                          if texto.startswith(literal, p)}
+        else:
+            nuevas = set()
+            for p in posiciones:
+                nuevas.add(p)
+                for q in range(p, min(p + hueco, largo)):
+                    if texto[q] == "\n":
+                        break
+                    nuevas.add(q + 1)
+            posiciones = nuevas
+        if not posiciones:
+            return False
+    return largo in posiciones
 
 
 def escapar_invisibles(texto: str) -> str:

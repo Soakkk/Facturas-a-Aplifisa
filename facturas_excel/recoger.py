@@ -288,7 +288,7 @@ def leer_con_gemini(candidatos: List[Candidato], base: str, api_key: str,
     import fitz
     from . import costes
     from .extraccion import DOBLE_NO, Extractor
-    from .pdf import CALIDAD
+    from .pdf import CALIDAD, pixmap_lectura
 
     conocidos = clientes_conocidos(base)
     extractor = Extractor(api_key, modo_doble=DOBLE_NO)
@@ -297,7 +297,7 @@ def leer_con_gemini(candidatos: List[Candidato], base: str, api_key: str,
     for i, c in enumerate(pendientes):
         try:
             with fitz.open(c.ruta) as doc:
-                img = doc[0].get_pixmap(dpi=150).pil_tobytes(
+                img = pixmap_lectura(doc[0], 150).pil_tobytes(
                     format="JPEG", quality=CALIDAD)
             leido = extractor.extraer(img, c.ruta, 1)
             for modelo, entrada, salida in leido.consumos:

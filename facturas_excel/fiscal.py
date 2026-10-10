@@ -28,6 +28,10 @@ NO_ES_FACTURA = {
     "pedido": "un PEDIDO",
 }
 
+# Los que se le piden a Gemini (extraccion.TIPOS_DOCUMENTO).
+_TIPOS_DOCUMENTO = {"factura", "factura_simplificada", "rectificativa", "proforma",
+                    "albaran", "presupuesto", "pedido", "recibo", "copia", "otro"}
+
 _MENCION = {
     ("gasto", "inversion_sujeto_pasivo"):
         "Inversión del sujeto pasivo: el proveedor no cobra el IVA; lo declara "
@@ -117,6 +121,13 @@ def avisos(f: Factura, tipo: str, sin_deducir: bool = False) -> List[Aviso]:
             and not getattr(f, "rectifica_a", ""):
         anadir("Factura rectificativa con importes en positivo: si es un abono "
                "(devolución, descuento), van en negativo.", "base_iva")
+    elif documento and documento not in _TIPOS_DOCUMENTO:
+        # Un tipo que no es ninguno de los que se le piden a Gemini (una
+        # lectura sin esquema o de una sesión vieja) salía en verde.
+        from .texto import visible
+        anadir(f"La IA dice que el documento es «{visible(documento[:40])}», que "
+               "no es ningún tipo conocido (factura, tique, abono, albarán…): "
+               "compruebe qué es y márquela revisada.", "num_factura")
 
     moneda = str(getattr(f, "moneda", "") or "EUR").strip().upper()
     if not (moneda.startswith("EUR") or "€" in moneda):
