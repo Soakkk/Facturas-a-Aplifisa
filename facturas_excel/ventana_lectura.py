@@ -223,6 +223,13 @@ class LecturaMixin:
                     f"Cola terminada: {self._cola_completados} bloque(s) procesado(s)."
                     + (f" {fallidos} no se pudieron leer (ver el aviso)."
                        if fallidos else ""))
+                if fallidos and self.banda.accion() is None:
+                    # Otro aviso lo tapó (páginas sin leer, «Lote rehecho…»:
+                    # la banda enseña uno solo): vuelve, con ése delante. Uno
+                    # con su propio botón (un «Deshacer») no se pisa.
+                    self._ofrecer_cola_guardada(
+                        antes="" if self.banda.isHidden() else self.banda.lbl.text(),
+                        tipo=ERROR)
             # Lo dudoso se señala en el documento mientras se revisa lo demás.
             self._localizar_dudosas()
             return

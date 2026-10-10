@@ -1243,3 +1243,25 @@ def test_al_volver_el_recargo_se_pregunta_despues_de_quien_es_el_cliente(
     _app.processEvents()
     assert orden == ["abre cliente", "cierra cliente", "recargo"]
     assert not abierta._recargo_por_decidir and not abierta._cliente_por_decidir
+
+
+def test_el_aviso_de_los_bloques_que_fallan_vuelve_al_acabar_la_cola(
+        ventana, tmp_path, monkeypatch):
+    # Falla el primer bloque (se ofrece «Volver a leer») y el segundo llega
+    # con una hoja en rojo: su aviso tapaba el del fallo (la banda enseña uno
+    # solo) y la barra mandaba a «ver el aviso», que ya no estaba.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    segunda = WorkerFalso.creados[-1]
+    segunda.fallos = [(segunda.rutas[0], 7, "Error 500 en esta hoja")]
+    hojas = _bloque_de(segunda)
+    hojas[6] = (*hojas[6][:3], {"emisor_nombre": None, "lineas_iva": [{}],
+                                "_error": "Error 500"})
+    segunda.entregar(hojas)
+
+    assert "ver el aviso" in ventana.lbl_estado.text()
+    aviso = ventana.banda.lbl.text()
+    assert "Páginas sin leer" in aviso                   # el de la hoja en rojo…
+    assert "No se han podido leer 1 bloque(s) de taco.pdf" in aviso   # …y éste
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
