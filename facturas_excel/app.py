@@ -169,8 +169,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cerrando = False
         self._cerrado = False
         # Lo que quedó por leer la última vez (de la sesión), hasta que se
-        # pide seguir leyéndolo: ver _ofrecer_cola_guardada.
+        # pide seguir leyéndolo: ver _ofrecer_cola_guardada. Y la que ya no se
+        # puede leer (sus hojas no están), para decirlo al abrir.
         self._cola_guardada = []
+        self._cola_perdida = []
         self._decisiones_conflicto_nif = {}
         # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
         self._localizaciones = {}
@@ -2023,13 +2025,14 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f"{self.tabla.rowCount()} línea(s)."
                 + (f"  {n_nombres} línea(s) con el nombre unificado por NIF."
                    if n_nombres else ""))
-            if fuera:
-                self._avisar(
-                    f"El lote de la última vez tenía {fuera} factura(s) leídas "
-                    "que no estaban en la tabla (se guardó mientras se ponía un "
-                    "bloque). Se han vuelto a poner: revíselas antes de exportar.",
-                    AVISO, segundos=0)
-            self._ofrecer_cola_guardada()
+            # En un solo aviso con el de seguir leyendo (que casi siempre
+            # hay: se guardó así al cerrar con un bloque a medio poner), que
+            # si no lo tapaba nada más abrir.
+            self._ofrecer_cola_guardada(antes=(
+                f"El lote de la última vez tenía {fuera} factura(s) leídas "
+                "que no estaban en la tabla (se guardó mientras se ponía un "
+                "bloque). Se han vuelto a poner: revíselas antes de exportar."
+                if fuera else ""))
         except Exception:
             # Una sesión antigua o dañada nunca debe impedir abrir el programa,
             # pero tampoco se pierde: se aparta y se avisa.

@@ -463,32 +463,57 @@ class LecturaMixin:
 
     def _recuperar_cola_guardada(self, cola) -> None:
         """La cola que se guardó con la sesión (solo lo que aún se puede leer:
-        sus partes tienen que seguir ahí)."""
-        self._cola_guardada = [
-            dict(elemento) for elemento in (cola or [])
-            if isinstance(elemento, dict) and elemento.get("rutas")
-            and all(os.path.isfile(ruta) for ruta in elemento["rutas"])]
+        sus partes tienen que seguir ahí). Lo que ya no está (se borraron sus
+        hojas, o el PDF o la imagen suelta) se dice al ofrecerla: antes se
+        olvidaba sin decir nada."""
+        self._cola_guardada, self._cola_perdida = [], []
+        for elemento in cola or []:
+            if not isinstance(elemento, dict) or not elemento.get("rutas"):
+                continue
+            if all(os.path.isfile(ruta) for ruta in elemento["rutas"]):
+                self._cola_guardada.append(dict(elemento))
+            else:
+                self._cola_perdida.append(elemento)
 
-    def _ofrecer_cola_guardada(self) -> None:
-        """Ofrece seguir leyendo lo que quedó a medias, en la banda (no se
-        lee solo: cuesta dinero y puede que ya no haga falta)."""
-        if not self._cola_guardada:
-            return
-        hojas = 0
-        for elemento in self._cola_guardada:
-            for ruta in elemento.get("rutas", []):
-                try:
-                    hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
-                except Exception:
-                    pass
+    @staticmethod
+    def _nombres_de(elementos) -> str:
         nombres = sorted({os.path.basename(e.get("original") or e["rutas"][0])
-                          for e in self._cola_guardada})
-        self._avisar(
-            f"La última vez quedó sin leer parte de {', '.join(nombres[:3])}"
-            f"{' y otros' if len(nombres) > 3 else ''}: "
-            f"{len(self._cola_guardada)} bloque(s), {hojas} hoja(s).",
-            AVISO, deshacer=self._seguir_cola_guardada, segundos=0,
-            boton="Seguir leyendo")
+                          for e in elementos})
+        return ", ".join(nombres[:3]) + (" y otros" if len(nombres) > 3 else "")
+
+    def _ofrecer_cola_guardada(self, antes: str = "") -> None:
+        """Ofrece seguir leyendo lo que quedó a medias, en la banda (no se
+        lee solo: cuesta dinero y puede que ya no haga falta).
+
+        `antes` es otro aviso de la apertura que va delante, en el mismo:
+        la banda enseña uno solo y éste lo tapaba."""
+        perdida, self._cola_perdida = getattr(self, "_cola_perdida", []), []
+        textos = [antes] if antes else []
+        if self._cola_guardada:
+            hojas = 0
+            for elemento in self._cola_guardada:
+                for ruta in elemento.get("rutas", []):
+                    try:
+                        hojas += numero_paginas(ruta) if ruta.lower().endswith(".pdf") else 1
+                    except Exception:
+                        pass
+            textos.append(
+                f"La última vez quedó sin leer parte de "
+                f"{self._nombres_de(self._cola_guardada)}: "
+                f"{len(self._cola_guardada)} bloque(s), {hojas} hoja(s).")
+        if perdida:
+            cuantos = f"{len(perdida)} bloque(s) de {self._nombres_de(perdida)}"
+            textos.append(
+                (f"Además, {cuantos} que quedaban por leer ya no están"
+                 if self._cola_guardada else
+                 f"La última vez quedaron sin leer {cuantos}, pero ya no están")
+                + " (se borraron o se movieron sus hojas): vuelva a cargarlas si "
+                "hace falta.")
+        if not textos:
+            return
+        self._avisar(" ".join(textos), AVISO, segundos=0,
+                     deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
+                     boton="Seguir leyendo")
 
     def _seguir_cola_guardada(self) -> None:
         """Pone en la cola lo que quedó por leer la última vez."""

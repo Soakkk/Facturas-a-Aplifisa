@@ -596,6 +596,60 @@ def test_exportar_con_lo_que_quedo_por_leer_la_ultima_vez_pregunta(
     assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
 
 
+def test_si_lo_que_quedo_por_leer_ya_no_esta_se_dice_al_abrir(
+        ventana, tmp_path, monkeypatch):
+    # Las hojas de la cola guardada (sus partes, o el PDF o la imagen suelta)
+    # ya no están: las borró otra versión del programa al arrancar, o se
+    # limpió la carpeta. Antes se olvidaban sin decir nada.
+    import shutil
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    abierta.close()
+    shutil.rmtree(os.path.join(dir_datos(), "cola_pdf"))
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert not otra._cola_guardada
+    aviso = otra.banda.historial[-1]
+    assert "2 bloque(s) de taco.pdf" in aviso and "ya no están" in aviso
+    assert otra.banda.btn_deshacer.isHidden()        # no hay nada que seguir
+
+
+def test_si_falta_una_parte_se_ofrece_el_resto_y_se_dice_la_que_falta(
+        ventana, tmp_path, monkeypatch):
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    ultima = abierta._cola_guardada[-1]["rutas"][0]
+    abierta.close()
+    os.remove(ultima)
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert len(otra._cola_guardada) == 1
+    aviso = otra.banda.historial[-1]
+    assert "1 bloque(s), 25 hoja(s)" in aviso
+    assert "Además, 1 bloque(s) de taco.pdf" in aviso and "ya no están" in aviso
+    assert otra.banda.btn_deshacer.text() == "Seguir leyendo"
+    assert not otra.banda.btn_deshacer.isHidden()
+
+
+def test_el_aviso_de_facturas_recuperadas_no_lo_tapa_el_de_seguir_leyendo(
+        ventana, tmp_path, monkeypatch):
+    # Cerrar con un bloque a medio poner (una pregunta abierta) guarda sus
+    # facturas fuera de las filas y, casi siempre, una cola: al abrir, el
+    # aviso de «Seguir leyendo» tapaba enseguida al de las recuperadas.
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    datos = abierta._datos_sesion()
+    datos["filas"] = datos["filas"][:20]      # como guardado a medio poner
+    sesion.guardar(datos)
+
+    otra = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    assert len(otra.filas) == 25
+    aviso = otra.banda.historial[-1]
+    assert "5 factura(s) leídas que no estaban en la tabla" in aviso
+    assert "quedó sin leer parte de taco.pdf" in aviso
+    assert otra.banda.btn_deshacer.text() == "Seguir leyendo"
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace
