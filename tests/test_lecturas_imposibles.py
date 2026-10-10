@@ -213,14 +213,26 @@ def _recuperar(tmp_path):
     return VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
 
 
+def _entregar(lectura_falsa, crudos):
+    """El bloque leído llega como de verdad: por la señal de su lectura, y
+    de ahí a la cola (ventana_lectura._incorporar)."""
+    lectura_falsa._corriendo = False
+    lectura_falsa.terminado.emit(procesar.preparar_lote(crudos, *CLIENTE),
+                                 *CLIENTE, crudos)
+
+
 def test_un_bloque_con_suplidos_nan_no_para_la_cola(ventana, tmp_path):
     _dos_tacos_en_cola(ventana, tmp_path)
     crudos = crudos_de(lectura(0, suplidos=NAN), lectura(1))
-    ventana._on_terminado(procesar.preparar_lote(crudos, *CLIENTE), *CLIENTE, crudos)
+    _entregar(WorkerFalso.creados[0], crudos)
 
     assert len(WorkerFalso.creados) == 2          # la cola sigue con el 2.º
     assert ventana._cola_completados == 1
-    assert ventana.btn_gastos.isEnabled()          # Exportar vuelve
+    # Exportar sigue apagado mientras se lee el 2.º (saldría un Excel a
+    # medias) y vuelve en cuanto acaba la cola.
+    assert not ventana.btn_gastos.isEnabled()
+    _entregar(WorkerFalso.creados[1], crudos_de(lectura(2), origen="taco 2.jpg"))
+    assert ventana.btn_gastos.isEnabled()
     assert ventana._timer_sesion.isActive()        # el guardado automático, armado
     assert not any(math.isnan(x) for fila in ventana.filas
                    for x in (fila.factura.base_iva, fila.factura.suplidos)
@@ -263,14 +275,18 @@ def test_si_poner_un_bloque_falla_la_cola_sigue_y_queda_apuntado(
     monkeypatch.setattr(type(ventana), "_revalidar_todo", revalidar_que_falla)
     crudos = crudos_de(lectura(0), lectura(1))
 
-    ventana._on_terminado(procesar.preparar_lote(crudos, *CLIENTE), *CLIENTE, crudos)
+    _entregar(WorkerFalso.creados[0], crudos)
 
     assert len(WorkerFalso.creados) == 2           # pasa al bloque siguiente
     assert ventana._cola_completados == 1
-    assert ventana.btn_gastos.isEnabled()
+    # Con el 2.º leyéndose, Exportar no vuelve todavía (antes la red lo
+    # encendía con bloques por leer).
+    assert not ventana.btn_gastos.isEnabled()
     assert ventana._timer_sesion.isActive() and ventana._timer_muestras.isActive()
     with open(os.path.join(dir_datos(), errores.FICHERO), encoding="utf-8") as fh:
         assert "fallo inventado al pintar el resumen" in fh.read()
+    _entregar(WorkerFalso.creados[1], crudos_de(lectura(2), origen="taco 2.jpg"))
+    assert ventana._cola_completados == 2 and ventana.btn_gastos.isEnabled()
 
 
 def test_un_fallo_despues_de_pasar_al_siguiente_no_arranca_otro(
@@ -278,13 +294,17 @@ def test_un_fallo_despues_de_pasar_al_siguiente_no_arranca_otro(
     _dos_tacos_en_cola(ventana, tmp_path)
     original = type(ventana)._iniciar_siguiente_cola
 
+    veces = []
+
     def iniciar_y_fallar(self, *a, **k):
         original(self, *a, **k)
-        raise RuntimeError("fallo inventado al final")
+        veces.append(1)
+        if len(veces) == 1:
+            raise RuntimeError("fallo inventado al final")
     monkeypatch.setattr(type(ventana), "_iniciar_siguiente_cola", iniciar_y_fallar)
     crudos = crudos_de(lectura(0))
 
-    ventana._on_terminado(procesar.preparar_lote(crudos, *CLIENTE), *CLIENTE, crudos)
+    _entregar(WorkerFalso.creados[0], crudos)
 
     assert len(WorkerFalso.creados) == 2           # uno solo más, no dos
     assert ventana._cola_completados == 1

@@ -226,10 +226,10 @@ def test_el_pdf_esta_cerrado_cuando_la_ventana_se_entera(tmp_path, monkeypatch, 
 
 
 def test_al_cerrar_el_pdf_se_suelta_sin_esperar_a_gemini(tmp_path, monkeypatch):
-    """Al cerrar el programa la ventana espera 5 s a la lectura y luego
-    borra la parte de la cola. Una petición a Gemini tarda más que eso: si el
-    PDF siguiera abierto hasta que contestara, en Windows la parte no se
-    podría borrar (antes se cerraba nada más dibujar el bloque)."""
+    """Al cerrar el programa la ventana espera 5 s como mucho a la lectura y
+    luego la deja atrás. Una petición a Gemini tarda más que eso: si el PDF
+    siguiera abierto hasta que contestara, en Windows la parte de la cola no
+    se podría mover ni borrar (antes se cerraba nada más dibujar el bloque)."""
     from facturas_excel import pdf
 
     abiertas = []

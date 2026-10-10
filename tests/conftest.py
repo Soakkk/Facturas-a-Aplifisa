@@ -97,8 +97,13 @@ def perfil_aislado(tmp_path, monkeypatch):
     # Tampoco el Escritorio real: ahí van los Excel y el archivo documental.
     monkeypatch.setenv('HOME', str(tmp_path / 'casa'))
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'casa'))
-    from facturas_excel import __version__, localizar, notas_version
+    from facturas_excel import __version__, localizar, notas_version, sesion
     notas_version.marcar_vistas(__version__)
+    # La sesión apartada (o que no se pudo tocar) es «de esta ejecución»:
+    # cada prueba, con su perfil, es una ejecución nueva. Si no, la que
+    # apartaba una prueba de la cola se colaba en las de lecturas.
+    monkeypatch.setattr(sesion, "_apartada", "")
+    monkeypatch.setattr(sesion, "_intocable", "")
 
     # Ninguna prueba llama de verdad a Gemini para señalar datos.
     def sin_red(*_a, **_k):

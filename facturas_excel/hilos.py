@@ -14,6 +14,10 @@ from facturas_excel.procesar import detectar_cliente, preparar_lote
 
 
 HILOS = 10  # hojas leidas a la vez (con la clave de pago de Gemini)
+# Lo que dice una hoja que no se ha pedido porque se cerró el programa (o se
+# vació el lote) mientras se leía. Es el mismo texto que pone la lectura
+# (extraccion.Extractor) cuando la cancelan con la hoja esperando turno: la
+# ventana lo usa para saber que el bloque se quedó a medias.
 NO_LEIDA_AL_CERRAR = "No leída: se cerró el programa mientras se leía."
 
 
@@ -39,17 +43,21 @@ class Worker(QThread):
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
         self._extractor = None
         self._hojas = None
+        # Se crea ya, no con la lectura: cancelar mientras se cuentan o se
+        # dibujan las hojas (antes de que exista la lectura) también vale.
         self._cancelado = threading.Event()
 
     def cancelar(self) -> None:
-        """Al cerrar el programa: no se espera a Google ni se piden más hojas."""
+        """Al cerrar el programa (o vaciar el lote): no se dibujan más hojas,
+        no se espera a Google ni se piden más."""
         self._cancelado.set()
         cancelado = getattr(self._extractor, "cancelado", None)
         if cancelado is not None:
             cancelado.set()
-        # El PDF se suelta ya, sin esperar a que Gemini conteste: la ventana
-        # espera a la lectura solo 5 s y luego borra la parte de la cola (en
-        # Windows, abierta no se puede). Ya no se dibuja ninguna hoja más.
+        # El PDF se suelta ya, sin esperar a que Gemini conteste: ya no se
+        # dibuja ninguna hoja más, y la parte de la cola queda libre aunque
+        # la lectura tarde (la ventana la espera como mucho 5 s y luego la
+        # deja atrás; en Windows, abierta no se puede mover ni borrar).
         hojas = self._hojas
         if hojas is not None and not hojas.cerrar(espera=0.5):
             # El cerrojo de MuPDF lo puede tener un buen rato el archivo de
@@ -117,6 +125,10 @@ class Worker(QThread):
                     # se pierde lo ya leído y pagado de las demás).
                     return sin_imagen(idx, origen, pagina,
                                       f"No se pudo sacar la imagen de la hoja: {e}"[:120])
+                if self._cancelado.is_set():
+                    # Se canceló mientras se dibujaba esta hoja: ya no se
+                    # pide (con la ventana cerrada se seguía pagando).
+                    return sin_imagen(idx, origen, pagina, NO_LEIDA_AL_CERRAR)
                 if sin_credito:
                     # Se acabó el crédito en otra hoja: no se pide nada más.
                     # La imagen sí se queda, para leerla cuando haya saldo.

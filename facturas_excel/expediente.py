@@ -90,6 +90,25 @@ def listar(base: str) -> List[Ejercicio]:
 
 
 FILAS_POR_PAGINA_INDICE = 50
+# Lo que se junta en memoria al unir los PDF del ejercicio antes de volcarlo
+# al disco (lo que pesan los PDF ya insertados). Se abrían todos a la vez y
+# el PDF unido crecía entero en memoria: tanta como todo lo archivado del
+# año (557 MB de pico con 404 MB de PDF). Ahora cada PDF se abre, se inserta
+# y se cierra, y lo unido se vuelca al disco al pasar de esto.
+TOPE_UNIR_EN_MEMORIA = 64 * 2 ** 20
+
+
+def _volcar(salida, temporal: str, ya_en_disco: bool):
+    """Escribe lo unido hasta ahora en `temporal` (la primera vez entero y
+    después solo lo añadido) y lo vuelve a abrir: así lo ya escrito deja de
+    ocupar memoria. Solo con el CERROJO cogido."""
+    import fitz
+    if ya_en_disco:
+        salida.saveIncr()
+    else:
+        salida.save(temporal, garbage=3, deflate=True)
+    salida.close()
+    return fitz.open(temporal)
 
 
 def _unir(pdfs: List[str], destino: str, titulo: str) -> int:
@@ -97,65 +116,87 @@ def _unir(pdfs: List[str], destino: str, titulo: str) -> int:
 
     El expediente se puede hacer en un hilo aparte mientras el visor dibuja
     una hoja, y PyMuPDF no admite dos hilos a la vez (ver pdf.CERROJO): el
-    cerrojo se coge archivo a archivo, no durante todo el expediente."""
+    cerrojo se coge archivo a archivo, no durante todo el expediente.
+
+    La memoria no crece con lo archivado del año: como mucho están abiertos
+    el PDF unido y uno de los de origen, y lo unido se vuelca al disco cada
+    TOPE_UNIR_EN_MEMORIA (ver _volcar)."""
     import fitz
-    # 1º cuántas páginas tiene cada uno, para saber cuántas ocupa el índice.
-    abiertos = []
+    # 1º cuántas páginas tiene cada uno (de uno en uno), para saber cuántas
+    # ocupa el índice.
+    paginas = []
     for ruta in pdfs:
         try:
             with CERROJO:
-                abiertos.append((ruta, fitz.open(ruta)))
+                with fitz.open(ruta) as doc:
+                    paginas.append(doc.page_count)
         except Exception:
-            abiertos.append((ruta, None))
-    hojas_indice = max(1, -(-len(abiertos) // FILAS_POR_PAGINA_INDICE))
+            paginas.append(None)
+    hojas_indice = max(1, -(-len(pdfs) // FILAS_POR_PAGINA_INDICE))
+    temporal = destino + ".tmp"
     with CERROJO:
         salida = fitz.open()
         for _ in range(hojas_indice):
             salida.new_page(width=595, height=842)
     marcadores = [[1, "Índice", 1]]
     filas = []
+    en_disco = False          # si lo unido ya está (en parte) en `temporal`
+    en_memoria = 0
     try:
-        for ruta, doc in abiertos:
+        for ruta, total in zip(pdfs, paginas):
             nombre = os.path.basename(ruta)
-            if doc is None:
+            inicio = None
+            if total is not None:
+                try:
+                    with CERROJO:
+                        with fitz.open(ruta) as doc:
+                            inicio = salida.page_count + 1
+                            salida.insert_pdf(doc)
+                except Exception:
+                    inicio = None
+            if inicio is None:
                 filas.append((nombre, None, "no se pudo abrir"))
                 continue
-            with CERROJO:
-                inicio = salida.page_count + 1
-                salida.insert_pdf(doc)
-                marcadores.append([1, nombre, inicio])
-                filas.append((nombre, inicio, f"{doc.page_count} pág."))
-    finally:
-        for _ruta, doc in abiertos:
-            if doc is not None:
+            marcadores.append([1, nombre, inicio])
+            filas.append((nombre, inicio, f"{total} pág."))
+            try:
+                en_memoria += os.path.getsize(ruta)
+            except OSError:
+                pass
+            if en_memoria >= TOPE_UNIR_EN_MEMORIA:
                 with CERROJO:
-                    doc.close()
-    for n in range(hojas_indice):
+                    salida = _volcar(salida, temporal, en_disco)
+                en_disco, en_memoria = True, 0
+        for n in range(hojas_indice):
+            with CERROJO:
+                pagina = salida[n]
+                y = 60
+                if n == 0:
+                    pagina.insert_text((50, y), titulo, fontsize=15, fontname="helv")
+                    y += 20
+                    pagina.insert_text(
+                        (50, y), f"{len(pdfs)} documento(s) · generado el "
+                        f"{datetime.now():%d/%m/%Y %H:%M}", fontsize=9, fontname="helv")
+                    y += 24
+                tramo = filas[n * FILAS_POR_PAGINA_INDICE:(n + 1) * FILAS_POR_PAGINA_INDICE]
+                for nombre, inicio, detalle in tramo:
+                    pagina.insert_text((50, y), nombre[:72], fontsize=9, fontname="helv")
+                    pagina.insert_text(
+                        (440, y), f"pág. {inicio}  ({detalle})" if inicio else detalle,
+                        fontsize=9, fontname="helv")
+                    y += 14
         with CERROJO:
-            pagina = salida[n]
-            y = 60
-            if n == 0:
-                pagina.insert_text((50, y), titulo, fontsize=15, fontname="helv")
-                y += 20
-                pagina.insert_text(
-                    (50, y), f"{len(pdfs)} documento(s) · generado el "
-                    f"{datetime.now():%d/%m/%Y %H:%M}", fontsize=9, fontname="helv")
-                y += 24
-            tramo = filas[n * FILAS_POR_PAGINA_INDICE:(n + 1) * FILAS_POR_PAGINA_INDICE]
-            for nombre, inicio, detalle in tramo:
-                pagina.insert_text((50, y), nombre[:72], fontsize=9, fontname="helv")
-                pagina.insert_text(
-                    (440, y), f"pág. {inicio}  ({detalle})" if inicio else detalle,
-                    fontsize=9, fontname="helv")
-                y += 14
-    temporal = destino + ".tmp"
-    with CERROJO:
-        salida.set_toc(marcadores)
-        salida.save(temporal, garbage=3, deflate=True)
-        paginas = salida.page_count
-        salida.close()
+            salida.set_toc(marcadores)
+            if en_disco:
+                salida.saveIncr()
+            else:
+                salida.save(temporal, garbage=3, deflate=True)
+            total_paginas = salida.page_count
+    finally:
+        with CERROJO:
+            salida.close()
     os.replace(temporal, destino)
-    return paginas
+    return total_paginas
 
 
 def _html_resumen(e: Ejercicio, documentos: dict, facturas: list) -> str:

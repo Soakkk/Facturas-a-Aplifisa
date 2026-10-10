@@ -110,6 +110,10 @@ from facturas_excel.ventana_validacion import ValidacionMixin
 
 # Como mucho, una muestra de revisión automática por minuto (segundos).
 MUESTRA_CADA_S = 60
+# Al cerrar y al salir, lo que se espera (entre todos) a los hilos que sigan
+# trabajando antes de salir sin ellos (segundos). A la lectura en marcha se
+# la espera antes: ver ventana_lectura.ESPERA_LECTURA_AL_CERRAR_S.
+ESPERA_HILOS_AL_SALIR_S = 2
 
 
 class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixin,
@@ -148,6 +152,25 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola_total = 0
         self._cola_completados = 0
         self._elemento_cola_actual = None
+        # La lectura de la cola (ver LecturaMixin): la de ahora, las que aún
+        # están acabando (un QThread que Python suelta mientras trabaja tumba
+        # el programa) y las que se dejaron atrás al cerrar sin esperarlas.
+        self.worker = None
+        self._lecturas_vivas = []
+        self._lecturas_abandonadas = []
+        self._iniciando_cola = False
+        # Un bloque leído no se pone en el lote mientras se pone otro o hay
+        # una pregunta abierta: espera aquí y se reintenta (ver _incorporar).
+        self._incorporando = 0
+        self._preguntas_abiertas = 0
+        self._lectura_aplazada = None
+        # Cambia con «Vaciar todo»: lo que se leía antes ya no es del lote.
+        self._generacion_cola = 0
+        self._cerrando = False
+        self._cerrado = False
+        # Lo que quedó por leer la última vez (de la sesión), hasta que se
+        # pide seguir leyéndolo: ver _ofrecer_cola_guardada.
+        self._cola_guardada = []
         self._decisiones_conflicto_nif = {}
         # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
         self._localizaciones = {}
@@ -181,9 +204,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._pintar_gasto()
         if restaurar_sesion:
             self._restaurar_sesion()
-        # Las partes de la cola de otra vez (se cerró a mitad) ya no sirven.
+        # Las partes de la cola de otra vez (se cerró a mitad) ya no sirven,
+        # salvo las de la cola guardada con la sesión (ver _ofrecer_cola_guardada).
         try:
-            pdf.limpiar_partes_huerfanas()
+            pdf.limpiar_partes_huerfanas(conservar=self._partes_de_la_cola())
         except OSError:
             pass
         QTimer.singleShot(500, self._mostrar_notas_version_al_arrancar)
@@ -1409,18 +1433,70 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             pass
 
     def esperar_hilos(self):
-        """Espera a que terminen los hilos vivos (evita abortar al salir)."""
-        # El archivo del cliente, entero: cortarlo a medias dejaría facturas
-        # sin su PDF o el expediente sin poner al día.
+        """Al salir del programa (aboutToQuit): espera a los hilos que quedan.
+
+        Si alguno sigue trabajando pasado un rato (una petición a Gemini en
+        vuelo, que no se puede cortar; un escáner que no contesta), se sale
+        sin él: lo leído y la cola ya se guardaron al cerrar la ventana.
+        Dejar que Python soltara el hilo vivo cerraba el programa de golpe
+        («QThread: Destroyed while thread is still running»)."""
+        vivos = self._esperar_hilos_un_rato(ESPERA_HILOS_AL_SALIR_S)
+        if vivos:
+            self._salir_sin_esperar(vivos)
+
+    def _esperar_hilos_un_rato(self, segundos: float,
+                               con_lecturas: bool = True) -> list:
+        """Espera a los hilos vivos, como mucho `segundos` entre todos, y
+        devuelve los que siguen trabajando. El archivo de una exportación se
+        espera entero: cortarlo a medias dejaría facturas sin su PDF o el
+        expediente sin poner al día."""
         self._esperar_archivo()
+        limite = time.monotonic() + segundos
+        lecturas = (getattr(self, "worker", None),
+                    *getattr(self, "_lecturas_vivas", []),
+                    *getattr(self, "_lecturas_abandonadas", [])) if con_lecturas else ()
+        vivos = []
         for hilo in (
             getattr(self, "_hilo_update", None),
             getattr(self, "_hilo_descarga_update", None),
             getattr(self, "_hilo_escaneo", None),
-            getattr(self, "worker", None),
+            *lecturas,
         ):
-            if hilo and hilo.isRunning():
-                hilo.wait(5000)
+            if hilo is None or not hasattr(hilo, "wait") or any(
+                    hilo is visto for visto in vivos):
+                continue
+            if not hilo.isRunning():
+                continue
+            resto = max(0, int((limite - time.monotonic()) * 1000))
+            if not hilo.wait(resto) and hilo.isRunning():
+                vivos.append(hilo)
+        return vivos
+
+    def _salir_sin_esperar(self, vivos) -> None:
+        """Sale del programa sin esperar a los hilos que siguen trabajando.
+
+        Solo después de guardar: si no se pasó por cerrar la ventana (que
+        guarda lo leído y la cola), se guarda aquí."""
+        if not self._cerrado:
+            self._cerrando = True
+            try:
+                self._guardar_sesion()
+            except Exception:
+                errores.apuntar("Guardar el lote al salir:\n" + traceback.format_exc())
+        nombres = ", ".join(sorted({type(h).__name__ for h in vivos}))
+        errores.apuntar(
+            f"Al salir seguían trabajando {len(vivos)} hilo(s) ({nombres}): se "
+            "sale sin esperarlos. Lo leído y la cola ya estaban guardados.")
+        try:
+            sesion.esperar(5)
+        except Exception:
+            pass
+        for flujo in (sys.stdout, sys.stderr):
+            try:
+                flujo.flush()
+            except Exception:
+                pass
+        os._exit(0)
 
     def _crear_atajos(self):
         """Lo que se usa cada dia, a un tecleo. No se tocan Supr ni Ctrl+Z:
@@ -1544,10 +1620,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         crear_cinta(self)
 
     def _avisar(self, texto: str, tipo: str = INFO, deshacer=None,
-                segundos: int = 10) -> None:
+                segundos: int = 10, boton: str = "Deshacer") -> None:
         """Aviso dentro de la ventana, sin bloquear (ver banda_avisos)."""
         if hasattr(self, "banda"):
-            self.banda.mostrar(texto, tipo, deshacer=deshacer, segundos=segundos)
+            self.banda.mostrar(texto, tipo, deshacer=deshacer, segundos=segundos,
+                               boton=boton)
 
     def _copia_diaria(self) -> None:
         """Una copia de seguridad al día de lo que el programa recuerda.
@@ -1582,6 +1659,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         DialogoCopias(self).exec()
 
     def _mostrar_notas_version_al_arrancar(self):
+        if self._cerrando:
+            return      # se cerró enseguida (mientras esperaba lo leído)
         self._mostrar_notas_version(forzar=False)
 
     def _preparar_revision_gemini(self):
@@ -1625,7 +1704,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Actualizaciones: github.com/Soakkk/Facturas-a-Aplifisa/releases")
 
     def _comprobar_actualizaciones(self, silencioso: bool):
-        if self._hilo_update and self._hilo_update.isRunning():
+        if self._cerrando or (self._hilo_update and self._hilo_update.isRunning()):
             return
         self._update_silencioso = silencioso
         self._hilo_update = HiloActualizacion()
@@ -1634,6 +1713,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._hilo_update.start()
 
     def _on_update(self, act):
+        if self._cerrando:
+            return      # llega mientras se cierra: ya no se pregunta nada
         if act is None:
             if not getattr(self, "_update_silencioso", True):
                 QMessageBox.information(self, "Actualizaciones",
@@ -1782,6 +1863,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _guardar_sesion_automatica(self) -> None:
         """El guardado de cada poco: la foto del lote se toma aquí y se
         escribe aparte, sin parar la pantalla. Si falla, se avisa una vez."""
+        if self._incorporando:
+            # Un bloque a medio poner (ya en los bloques, con la tabla aún
+            # sin rehacer, y quizá una pregunta abierta): guardar ahora dejaba
+            # facturas fuera de las filas. Se guarda al acabar de ponerlo.
+            self._timer_sesion.start()
+            return
         error = sesion.ultimo_error()
         try:
             datos = self._datos_sesion()
@@ -1801,8 +1888,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                          segundos=0)
 
     def _datos_sesion(self) -> dict | None:
-        """Lo que se guarda del lote (None si está vacío)."""
-        if not self._bloques and not self.filas:
+        """Lo que se guarda del lote (None si está vacío).
+
+        También la cola por leer (y el bloque que se está leyendo): tras
+        cerrar a mitad, o un corte, el resto del PDF no se olvida."""
+        cola = self._cola_para_guardar()
+        if not self._bloques and not self.filas and not cola:
             return None
         filas = [{
             "png": registro.png, "factura": registro.factura,
@@ -1822,6 +1913,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "localizaciones": {clave: localizar.a_guardar(cajas) for clave, cajas
                                in self._localizaciones.items()},
             "su_suma": self.tabla_su_suma.valores(),
+            "cola": cola,
         }
 
     def _avisar_sesion_apartada(self, ruta: str) -> None:
@@ -1843,7 +1935,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     "está bloqueado (¿otra copia del programa abierta, o el "
                     "antivirus?). No se toca: cierre el programa y vuelva a "
                     "abrirlo.", AVISO, segundos=0)
-        if not datos or not datos.get("bloques"):
+        if not datos:
+            return
+        # Lo que quedaba por leer de la última vez se ofrece en la banda.
+        self._recuperar_cola_guardada(datos.get("cola"))
+        if not datos.get("bloques"):
+            self._ofrecer_cola_guardada()
             return
         try:
             self._bloques = datos["bloques"]
@@ -1899,7 +1996,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     fila["cuenta"], fila["gxx"], fila.get("aviso", ""),
                     fila.get("bloque", ""), fila.get("fuentes"))
                 for fila in datos.get("filas", [])])
-            if self._por_el_total() != antes_por_el_total:
+            # Un guardado que saltó a medias (con un bloque ya en el lote y la
+            # tabla aún sin rehacer) dejaba facturas leídas fuera de las
+            # filas: no se veían ni se exportaban. Se vuelven a poner.
+            fuera = self._facturas_fuera_de_las_filas(datos.get("filas", []))
+            if self._por_el_total() != antes_por_el_total or fuera:
                 self._rellenar_tabla()
             self._pintar_cliente()
             self._revalidar_todo()
@@ -1922,6 +2023,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 f"{self.tabla.rowCount()} línea(s)."
                 + (f"  {n_nombres} línea(s) con el nombre unificado por NIF."
                    if n_nombres else ""))
+            if fuera:
+                self._avisar(
+                    f"El lote de la última vez tenía {fuera} factura(s) leídas "
+                    "que no estaban en la tabla (se guardó mientras se ponía un "
+                    "bloque). Se han vuelto a poner: revíselas antes de exportar.",
+                    AVISO, segundos=0)
+            self._ofrecer_cola_guardada()
         except Exception:
             # Una sesión antigua o dañada nunca debe impedir abrir el programa,
             # pero tampoco se pierde: se aparta y se avisa.
@@ -1930,8 +2038,29 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._bloques = []
             self.tabla.setRowCount(0)
             self.filas = []
+            self._cliente_nif = self._cliente_nombre = ""
             self._limpiar_visor()
             self._avisar_sesion_apartada(sesion.apartar())
+            # Lo que se llegó a pintar de esa sesión («31 líneas…», su
+            # cliente) no se queda en la barra con la tabla vacía.
+            try:
+                self._poner_cliente("Pendiente de detectar")
+                self._resumen()
+                self._pintar_alerta()
+            except Exception:
+                errores.apuntar("Pintar el lote vacío tras apartar la sesión:\n"
+                                + traceback.format_exc())
+
+    def _facturas_fuera_de_las_filas(self, filas_guardadas) -> int:
+        """Cuántas facturas de los bloques restaurados no están en ninguna de
+        las filas guardadas (sin contar las eliminadas a mano). Los bloques
+        y las filas se guardan juntos: la misma factura es el mismo objeto."""
+        en_filas = {id(f) for fila in filas_guardadas
+                    for f in (fila["factura"], *(fila.get("fuentes") or ()))}
+        return sum(1 for bloque in self._bloques
+                   for _png, pr in bloque.get("procesadas", [])
+                   for f in pr.facturas
+                   if not getattr(f, "eliminada", False) and id(f) not in en_filas)
 
     @staticmethod
     def _numero_guardado(valor) -> str:
@@ -1983,27 +2112,55 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                     linea.concepto, linea.subclave = correcta.cuenta, correcta.gxx
 
     def closeEvent(self, ev):
+        """Cerrar (también al actualizar: QApplication.quit pasa por aquí).
+
+        A mitad de lectura no se sigue leyendo ni pagando con la ventana
+        cerrada: se cancela, se pone en el lote lo que llegue a tiempo y lo
+        demás se guarda como cola con la sesión (ver _parar_lectura_al_cerrar).
+        Cada guardado va por su lado, y si el del lote falla se pregunta."""
+        # Desde aquí no se empieza a leer nada ni se pregunta nada de la
+        # lectura, y lo que llegue tarde no toca el lote.
+        self._cerrando = True
         # Lo que se estaba señalando en el documento no hace falta ya.
         if getattr(self, "_hilo_localizar", None):
             self._hilo_localizar.cancelar()
-        # Una lectura esperando a Gemini (pide ir más despacio) deja de
-        # esperar: si no, la ventana se quedaba colgada al cerrar.
-        worker = getattr(self, "worker", None)
-        if worker is not None and worker.isRunning() and hasattr(worker, "cancelar"):
-            worker.cancelar()
-        # No destruir QThreads vivos (abortaria el proceso)
-        self.esperar_hilos()
         try:
-            # Lo que quedaba en la cola no se va a leer (la cola no se
-            # guarda): sus partes temporales no se quedan ocupando disco.
-            for elemento in [self._elemento_cola_actual, *self._cola]:
-                if elemento:
-                    self._limpiar_parte_interna(elemento)
-            self._guardar_divisores()
-            self._guardar_sesion()
+            self._parar_lectura_al_cerrar()
         except Exception:
-            pass
+            errores.apuntar("Parar la lectura al cerrar:\n" + traceback.format_exc())
+        # Los demás hilos, un rato (y el archivo de una exportación, entero);
+        # a la lectura ya se la ha esperado. Si alguno sigue vivo, al salir se
+        # sale sin él (ver esperar_hilos).
+        self._esperar_hilos_un_rato(ESPERA_HILOS_AL_SALIR_S, con_lecturas=False)
+        # Antes un fallo al guardar la distribución se saltaba el guardado del
+        # lote, y ninguno se avisaba ni se apuntaba.
+        try:
+            self._guardar_divisores()
+        except Exception:
+            errores.apuntar("Guardar la distribución al cerrar:\n"
+                            + traceback.format_exc())
+        try:
+            self._guardar_sesion()
+        except Exception as error:
+            errores.apuntar("Guardar el lote al cerrar:\n" + traceback.format_exc())
+            if not self._cerrar_sin_guardar(error):
+                ev.ignore()
+                self._cerrando = False
+                self._iniciar_siguiente_cola()     # la cola sigue donde estaba
+                return
+        self._cerrado = True
         super().closeEvent(ev)
+
+    def _cerrar_sin_guardar(self, error) -> bool:
+        """El lote no se ha podido guardar al cerrar: ¿se cierra igualmente?"""
+        return QMessageBox.question(
+            self, "No se ha podido guardar el lote",
+            "No se ha podido guardar el lote para la próxima vez:\n\n"
+            f"{error}\n\nSi cierra ahora, se perderá lo leído y corregido que "
+            "no esté exportado, y lo que quedaba por leer. El detalle queda en "
+            f"{errores.FICHERO}, en la carpeta de datos del programa.\n\n"
+            "¿Cerrar igualmente?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
 
     def dragEnterEvent(self, event):
         if rutas_factura_de_mime(event.mimeData()):
@@ -2265,7 +2422,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._rellenar_tabla()
         self._revalidar_todo()
         hay_datos = self.tabla.rowCount() > 0
-        self.btn_gastos.setEnabled(hay_datos)
+        self.btn_gastos.setEnabled(hay_datos and not self._bloques_por_leer())
         self.btn_registro.setEnabled(hay_datos)
         self.lbl_estado.setText(f"Bloque «{nombre}» quitado del lote.")
 
@@ -2276,14 +2433,15 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._rellenar_tabla()
             self._revalidar_todo()
             hay = self.tabla.rowCount() > 0
-            self.btn_gastos.setEnabled(hay)
+            self.btn_gastos.setEnabled(hay and not self._bloques_por_leer())
             self.btn_registro.setEnabled(hay)
             self._avisar(f"Bloque «{nombre}» recuperado.", EXITO)
         self._avisar(f"Bloque «{nombre}» quitado del lote.", INFO,
                      deshacer=deshacer)
 
     def _vaciar_todo(self):
-        if not self._bloques and not self.filas:
+        por_leer = self._bloques_por_leer() + len(self._cola_guardada)
+        if not self._bloques and not self.filas and not por_leer:
             self._limpiar_visor()
             self.tabla_su_suma.limpiar()
             sesion.borrar()
@@ -2291,13 +2449,17 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         if QMessageBox.question(
                 self, "Vaciar todo",
                 f"¿Vaciar el lote entero ({len(self._bloques)} bloque(s), "
-                f"{self.tabla.rowCount()} línea(s)) y empezar de cero?\n\n"
+                f"{self.tabla.rowCount()} línea(s)"
+                + (f", y {por_leer} bloque(s) por leer" if por_leer else "")
+                + ") y empezar de cero?\n\n"
                 "Lo leído se perderá y habría que volver a pasarlo por Gemini.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self._guardar_muestra_revision()
+        # La cola también: lo que se está leyendo se cancela y lo que entregue
+        # ya no vuelve a aparecer en el lote vacío (ver _soltar_cola).
+        self._soltar_cola()
         self._bloques = []
-        self._cola = []
         self._decisiones_conflicto_nif = {}
         self._localizaciones = {}
         self._ultimo_borrado = []

@@ -167,8 +167,12 @@ class ArchivoMixin:
         self.btn_escanear.setEnabled(True)
         self.lbl_estado.setText(f"Escaneado y guardado en {ruta}")
         self._avisar_hojas_perdidas(ruta)
+        # Lo que se dijo al escanear va con este escaneo, no con la ventana:
+        # mientras se escaneaba pudo leerse otro PDF, o empezar otro escaneo.
+        opciones = getattr(getattr(self, "_hilo_escaneo", None), "opciones", None) or {}
         # Directo al lote: es el flujo que se pidio, sin pasar por abrir archivo.
-        self.procesar_rutas([ruta], desde_escaner=True)
+        self.procesar_rutas([ruta], desde_escaner=True,
+                            tipo_declarado=opciones.get("tipo", ""))
 
     def _avisar_hojas_perdidas(self, ruta):
         """El alimentador arrastra a veces dos hojas pegadas: salen menos
@@ -371,6 +375,17 @@ class ArchivoMixin:
             cambiar(registro["factura"])
             for f in registro.get("fuentes", []):
                 cambiar(f)
+        # Y lo que aún está por leer de ese taco: si no, sus bloques entraban
+        # después apuntando a un PDF que ya no estaba ahí.
+        for elemento in [self._elemento_cola_actual, *self._cola,
+                         *getattr(self, "_cola_guardada", [])]:
+            if not elemento:
+                continue
+            if mismo(elemento.get("original")):
+                elemento["original"] = nuevo
+            elemento["rutas"] = [nuevo if mismo(r) else r
+                                 for r in elemento.get("rutas", [])]
+        self._rutas_actuales = [nuevo if mismo(r) else r for r in self._rutas_actuales]
 
 
 # ------------------------------------------------------------------------
