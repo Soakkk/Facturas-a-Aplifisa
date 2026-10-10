@@ -151,8 +151,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cola = []
         self._cola_total = 0
         self._cola_completados = 0
-        # Los bloques de esta cola que no se pudieron leer (ver _on_fallo).
+        self._procesados_cola = []      # los de esta cola, para contarlos
+        # Los bloques que no se pudieron leer (ver _on_fallo) y cuyo aviso
+        # la persona aún no ha cerrado (ver _aviso_quitado); y ese aviso.
         self._fallidos_cola = []
+        self._texto_aviso_fallidos = None
+        self._tapados_fallidos = []     # ver _apuntar_aviso_tapado
         self._elemento_cola_actual = None
         # La lectura de la cola (ver LecturaMixin): la de ahora, las que aún
         # están acabando (un QThread que Python suelta mientras trabaja tumba
@@ -487,6 +491,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             capa_tipo.addWidget(boton)
         cuerpo.addWidget(self.alerta)
         self.banda = BandaAvisos(self)
+        self.banda.quitado.connect(self._aviso_quitado)
         cuerpo.addWidget(self.banda)
         self.combo_filtro_registro = ComboSinRueda()
         self.combo_filtro_registro.addItem("Aplifisa: todas", "todas")
@@ -2498,7 +2503,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         por_leer = self._bloques_por_leer() + len(self._cola_guardada)
         # Se vacía lo que dice la pregunta: lo que llegue mientras está
         # abierta (un escaneo que acaba) no (ver _soltar_cola).
-        en_la_pregunta = self._elementos_de_la_cola()
+        # (Y los que fallaron sin sus hojas: ver _on_fallo.)
+        en_la_pregunta = [*self._elementos_de_la_cola(), *self._fallidos_cola]
         if not self._bloques and not self.filas and not por_leer:
             self._limpiar_visor()
             self.tabla_su_suma.limpiar()
@@ -2553,6 +2559,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
         sesion.borrar()
         self._soltar_lote_vaciado()
+        # Lo que llegó con la pregunta abierta y falló no se vacía, pero su
+        # aviso sí se iba (con el «Deshacer» de lo vaciado): vuelve, sin las
+        # hojas en rojo de lo vaciado delante.
+        self._tapados_fallidos = []
+        self._volver_a_ofrecer_fallidos()
 
     def _soltar_lote_vaciado(self) -> None:
         """Que «Vaciar todo» devuelva de verdad la memoria del lote.
@@ -2861,12 +2872,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 factura = registro.factura
                 cambiado = getattr(factura, campo, None) != valor
                 setattr(factura, campo, valor)
-                if cambiado and campo in ("cuota_iva", "pct_iva"):
-                    # Una fila de líneas juntadas deja de ser la suma leída
-                    # (validacion la compara con base×% o con esa suma).
-                    factura.iva_a_mano = True
-                elif cambiado and campo in ("cuota_requiv", "pct_requiv"):
-                    factura.requiv_a_mano = True
+                if campo in ("cuota_iva", "cuota_requiv"):
+                    # Escrita a mano (aunque sea la leída, para darla por
+                    # buena), la cuota de una fila de líneas juntadas ya no
+                    # se comprueba línea a línea (validacion).
+                    setattr(factura, "iva_a_mano" if campo == "cuota_iva"
+                            else "requiv_a_mano", True)
                 fuentes = registro.get("fuentes") or []
                 if not any(x is factura for x in fuentes):
                     # Recargo «por el total»: la línea a la vista es un

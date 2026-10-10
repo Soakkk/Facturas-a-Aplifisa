@@ -1334,3 +1334,243 @@ def test_la_parte_de_lo_puesto_no_se_borra_hasta_que_el_disco_lo_tiene(
     sigue.set()
     _esperar(lambda: not os.path.exists(parte))     # escrito: ya sobra
     assert _en_disco() == (1, [ventana._elemento_cola_actual["rutas"][0]])
+
+
+def _con_hoja_en_rojo(lectura, hoja, hasta=25):
+    """Lo que lee `lectura`, con la hoja `hoja` sin leer (sale en rojo)."""
+    lectura.fallos = [(lectura.rutas[0], hoja, "Error 500 en esta hoja")]
+    hojas = _bloque_de(lectura, 1, hasta)
+    hojas[hoja - 1] = (*hojas[hoja - 1][:3], {"emisor_nombre": None,
+                                              "lineas_iva": [{}],
+                                              "_error": "Error 500"})
+    return hojas
+
+
+def test_el_aviso_de_un_fallo_tapado_sin_cerrar_vuelve_al_acabar_otra_carga(
+        ventana, tmp_path, monkeypatch):
+    # Falla la última parte de un taco y, sin cerrar su aviso, se carga el
+    # siguiente, que llega con una hoja en rojo: su aviso tapaba el del fallo
+    # y al acabar ya no volvía (se olvidaba al empezar cada carga, se hubiera
+    # cerrado o no). Solo Exportar lo recordaba.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_con_hoja_en_rojo(lectura, 4, 10))
+    aviso = ventana.banda.lbl.text()
+    assert "Páginas sin leer" in aviso
+    assert "No se han podido leer 1 bloque(s) de taco.pdf" in aviso
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    assert "1 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+
+    # Cerrado, ya no vuelve.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "tercero.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert ventana.banda.isHidden() or "No se han podido" not in ventana.banda.lbl.text()
+    assert len(ventana._cola_guardada) == 1      # sigue por leer (Exportar lo dice)
+
+
+def test_la_barra_cuenta_los_mismos_bloques_sin_leer_que_el_aviso(
+        ventana, tmp_path, monkeypatch):
+    # Falla un bloque de un taco y se cierra su aviso; en la carga siguiente
+    # falla otro. La barra contaba solo el de esta carga («1 no se pudieron
+    # leer (ver el aviso)») y el aviso al que manda, y Exportar, decían 2.
+    from facturas_excel.ventana_aplifisa import DialogoOrden
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 50)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    _fallar(WorkerFalso.creados[-1], "Error 503 del servidor")
+
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 1 bloque(s) procesado(s). 2 no se pudieron leer (ver el aviso).")
+    assert "No se han podido leer 2 bloque(s) de otro.pdf, taco.pdf" in ventana.banda.lbl.text()
+    textos = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda *a, **k: textos.append(a[2]) or QMessageBox.No))
+    monkeypatch.setattr(DialogoOrden, "exec", lambda self: 0)
+    ventana._exportar_todo()
+    assert textos[0].startswith("Faltan 2 bloque(s)")
+
+
+def test_el_aviso_del_fallo_vuelve_cuando_se_va_el_deshacer_que_lo_tapaba(
+        ventana, tmp_path, monkeypatch):
+    # Falla la parte 1 de un taco. Mientras se lee la última, se marcan dos
+    # líneas como revisadas («Deshacer», 10 s) y la parte llega dentro de
+    # esos 10 s: el aviso del fallo no se vuelve a ofrecer (no se pisa un
+    # «Deshacer»), y al irse éste la banda se quedaba vacía con la barra
+    # mandando a «ver el aviso».
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 75)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    assert ventana._marcar_revisada([0, 1]) is not None
+    revisadas = ventana.banda.lbl.text()
+    assert "revisada(s)" in revisadas and ventana.banda.accion() is not None
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    assert "1 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+    assert ventana.banda.lbl.text() == revisadas         # no se pisa
+
+    ventana.banda._timer.timeout.emit()                 # a los 10 s
+    assert not ventana.banda.isHidden()
+    assert "No se han podido leer 1 bloque(s) de taco.pdf" in ventana.banda.lbl.text()
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+
+    # Lo mismo si se pulsa su «Deshacer» o se cierra con la ✕.
+    for filas, quitar in (([2, 3], "_deshacer"), ([4, 5], "btn_cerrar")):
+        assert ventana._marcar_revisada(filas) is not None
+        assert "revisada(s)" in ventana.banda.lbl.text()
+        if quitar == "_deshacer":
+            ventana.banda._deshacer()
+            assert "Revisión deshecha" in ventana.banda.lbl.text()
+            ventana.banda._timer.timeout.emit()
+        else:
+            ventana.banda.btn_cerrar.click()
+        assert "No se han podido leer 1 bloque(s)" in ventana.banda.lbl.text(), quitar
+    # Y cerrado el suyo, ya no.
+    ventana.banda.btn_cerrar.click()
+    assert ventana._marcar_revisada([6, 7]) is not None
+    ventana.banda._timer.timeout.emit()
+    assert ventana.banda.isHidden()
+
+
+def test_vaciar_todo_dice_lo_que_llego_y_fallo_con_la_pregunta_abierta(
+        ventana, tmp_path, monkeypatch):
+    # Con «¿Vaciar todo?» abierta acaba un escaneo y, sin crédito, fallan la
+    # parte del taco que se leía (se vacía) y el escaneo (no: llegó con la
+    # pregunta abierta). Al decir que sí, su aviso se iba con lo vaciado y el
+    # escaneo se quedaba por leer sin decir nada.
+    ventana.procesar_rutas([_pdf(tmp_path / "a.pdf", 50)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    escaneo = _pdf(tmp_path / "escaneo_provisional.pdf", 10)
+
+    def pregunta(*a, **k):
+        ventana.procesar_rutas([escaneo], desde_escaner=True, tipo_declarado="gastos")
+        while ventana._elemento_cola_actual is not None:
+            _fallar(WorkerFalso.creados[-1], "la API key se quedó sin crédito")
+        return QMessageBox.Yes
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(pregunta))
+
+    ventana._vaciar_todo()
+
+    assert [e["rutas"] for e in ventana._cola_guardada] == [[escaneo]]
+    assert not ventana.banda.isHidden()
+    assert "No se han podido leer 1 bloque(s) de escaneo_provisional.pdf" \
+        in ventana.banda.lbl.text()
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+
+
+def test_sin_credito_en_cascada_las_hojas_en_rojo_siguen_en_el_aviso(
+        ventana, tmp_path, monkeypatch):
+    # El crédito se acaba a mitad de la parte 1 de un taco, que llega con 13
+    # hojas en rojo y su aviso («Páginas sin leer… Puede volver a cargar solo
+    # esas páginas»); las partes 2 a 4 fallan enteras. Cada fallo tapaba ese
+    # aviso y al acabar solo se veía el de los bloques que no se leyeron.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    lectura = WorkerFalso.creados[-1]
+    sin_credito = "No leída: la API key se quedó sin crédito"
+    lectura.fallos = [(lectura.rutas[0], n, sin_credito) for n in range(13, 26)]
+    lectura.sin_credito = "Sin crédito"
+    hojas = _bloque_de(lectura)
+    for n in range(12, 25):
+        hojas[n] = (*hojas[n][:3], {"emisor_nombre": None, "lineas_iva": [{}],
+                                    "_error": sin_credito})
+    lectura.entregar(hojas)
+    assert ventana.banda.lbl.text().startswith("Páginas sin leer")
+    for _ in range(3):
+        _fallar(WorkerFalso.creados[-1], "la API key se quedó sin crédito")
+
+    aviso = ventana.banda.lbl.text()
+    assert aviso.startswith("Páginas sin leer") and aviso.count("Páginas sin leer") == 1
+    assert "13 página(s) no se han podido leer" in aviso
+    assert "No se han podido leer 3 bloque(s) de taco.pdf" in aviso
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+    assert "3 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+
+    # Cerrado, ya no va delante del siguiente.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    assert "Páginas sin leer" not in ventana.banda.lbl.text()
+    assert "No se han podido leer 4 bloque(s)" in ventana.banda.lbl.text()
+
+
+def test_un_bloque_que_falla_sin_sus_hojas_se_dice_al_acabar(
+        ventana, tmp_path, monkeypatch):
+    # Se cargan una foto y un PDF, y la foto desaparece antes de su turno (se
+    # quita el USB). Su lectura falla, el aviso de la hoja en rojo del PDF lo
+    # tapa y al acabar la barra decía «2 bloque(s) procesado(s).» sin más: en
+    # la 1.25 era una ventana que había que cerrar.
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a, _pdf(tmp_path / "b.pdf", 10)])
+    ventana._muestra_capturada(ventana._elemento_cola_actual)   # su copia, hecha
+    os.remove(a)
+    _fallar(WorkerFalso.creados[-1], "No such file or directory")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_con_hoja_en_rojo(lectura, 3, 10))
+
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 2 bloque(s) procesado(s). 1 no se pudieron leer (ver el aviso).")
+    aviso = ventana.banda.lbl.text()
+    assert "Páginas sin leer" in aviso
+    assert "No se han podido leer 1 bloque(s) de a.jpg, y ya no se pueden " \
+           "volver a leer" in aviso
+    assert not ventana._cola_guardada and ventana.banda.accion() is None
+
+    # Cerrado, ya no vuelve; y no se cuenta en la carga siguiente.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "c.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert ventana.banda.isHidden()
+
+
+def test_vaciar_todo_olvida_el_bloque_que_fallo_sin_sus_hojas(
+        ventana, tmp_path, monkeypatch):
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a, _pdf(tmp_path / "b.pdf", 10)])
+    ventana._muestra_capturada(ventana._elemento_cola_actual)   # su copia, hecha
+    os.remove(a)
+    _fallar(WorkerFalso.creados[-1], "No such file or directory")
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    avisos = len(ventana.banda.historial)
+    ventana._vaciar_todo()
+    ventana.procesar_rutas([_pdf(tmp_path / "c.pdf", 10)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    assert ventana.lbl_estado.text() == "Cola terminada: 1 bloque(s) procesado(s)."
+    assert not any("a.jpg" in texto for texto in ventana.banda.historial[avisos:])
+
+
+def test_volver_a_leer_a_mitad_de_cola_no_cuenta_dos_veces_el_bloque(
+        ventana, tmp_path, monkeypatch):
+    # Falla la parte 1 de un taco de 4, se pulsa «Volver a leer» mientras se
+    # lee la 2 y la 1 vuelve a fallar: la barra decía «5 bloque(s)
+    # procesado(s)» de un PDF de 4.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    assert ventana.banda.btn_deshacer.text() == "Volver a leer"
+    ventana.banda.btn_deshacer.click()
+    for _ in range(3):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    lectura = WorkerFalso.creados[-1]
+    assert os.path.basename(lectura.rutas[0]).startswith("taco_parte_01")
+    _fallar(lectura, "Error 503 otra vez")
+    assert ventana.lbl_estado.text() == (
+        "Cola terminada: 4 bloque(s) procesado(s). 1 no se pudieron leer (ver el aviso).")
