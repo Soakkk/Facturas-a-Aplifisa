@@ -173,6 +173,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # puede leer (sus hojas no están), para decirlo al abrir.
         self._cola_guardada = []
         self._cola_perdida = []
+        # Quién es el cliente del lote, si no se preguntó por cerrar justo
+        # entonces: se pregunta al volver (ver _preguntar_cliente_pendiente).
+        self._cliente_por_decidir = False
         self._decisiones_conflicto_nif = {}
         # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
         self._localizaciones = {}
@@ -1916,6 +1919,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                                in self._localizaciones.items()},
             "su_suma": self.tabla_su_suma.valores(),
             "cola": cola,
+            "cliente_por_decidir": self._cliente_por_decidir,
         }
 
     def _avisar_sesion_apartada(self, ruta: str) -> None:
@@ -2006,6 +2010,11 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 self._rellenar_tabla()
             self._pintar_cliente()
             self._revalidar_todo()
+            if datos.get("cliente_por_decidir"):
+                # Se cerró sin preguntarlo: se pregunta ya con la ventana
+                # abierta, como se habría preguntado al poner el bloque.
+                self._cliente_por_decidir = True
+                QTimer.singleShot(0, self._preguntar_cliente_pendiente)
             # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
             try:
                 self.tabla_su_suma.poner_valores(datos.get("su_suma"))
@@ -2472,6 +2481,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._escaneo_sin_identificar = False
         self._cliente_nif = self._cliente_nombre = ""
         self._cliente_elegido_lote = ""
+        self._cliente_por_decidir = False
         self._periodo_manual_valor = "auto"
         self._periodo_lote = PeriodoLote()
         self.txt_buscar.clear()

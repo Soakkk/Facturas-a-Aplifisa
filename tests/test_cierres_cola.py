@@ -671,6 +671,41 @@ def test_volver_a_cargar_el_pdf_que_quedo_a_medias_no_lo_lee_dos_veces(
     assert sesion.cargar() is None or not abierta._datos_sesion()["cola"]
 
 
+def test_quien_es_el_cliente_que_no_se_pregunto_al_cerrar_se_pregunta_al_volver(
+        ventana, tmp_path, monkeypatch):
+    # Un taco de un cliente nuevo: no se sabe cuál de las dos partes es el
+    # cliente y se pregunta al poner el bloque. Si el bloque llegaba en la
+    # espera del cierre se ponía sin preguntar «para decidirlo al volver»,
+    # pero al volver no se preguntaba nunca: el lote se quedaba con el
+    # cliente supuesto (en un taco de ventas, el que compra: todo al revés).
+    from facturas_excel.dialogo_cliente import DialogoCliente
+    preguntas = []
+    monkeypatch.setattr(DialogoCliente, "exec", lambda self: preguntas.append(1) or 0)
+    nuevo = ("CLIENTE NUEVO SA", "A12345674")
+    a = _jpg(tmp_path / "a.jpg")
+    ventana.procesar_rutas([a])
+    lectura = WorkerFalso.creados[-1]
+    hojas = []
+    for n in (1, 2):
+        hoja = _hoja(a, n, f"F-{n}")
+        hoja[3]["receptor_nombre"], hoja[3]["receptor_nif"] = nuevo
+        hojas.append(hoja)
+    # Llega en la espera del cierre (al cancelar la lectura).
+    lectura.cancelar = lambda: lectura.terminado.emit(
+        preparar_lote(hojas, *nuevo), *nuevo, hojas)
+
+    ventana.closeEvent(QCloseEvent())
+    assert len(ventana._bloques) == 1 and not preguntas    # al cerrar, no
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _esperar(lambda: preguntas)                             # al volver, sí
+    assert preguntas == [1]
+    abierta.closeEvent(QCloseEvent())
+    VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _app.processEvents()
+    assert preguntas == [1]                     # y una vez, no cada vez
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace

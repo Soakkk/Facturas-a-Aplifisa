@@ -929,7 +929,12 @@ class LecturaMixin:
         pagar ninguna lectura.
         """
         if automatico and self._cerrando:
-            return      # al cerrar no se pregunta: se decide al volver
+            # Al cerrar no se pregunta: se apunta (va con la sesión) y se
+            # pregunta al volver a abrir. Antes no se preguntaba nunca y el
+            # lote se quedaba con el cliente supuesto (en un taco de ventas,
+            # el que compra: todo al revés).
+            self._cliente_por_decidir = True
+            return
         analisis = self._analisis_del_lote()
         if len(analisis.candidatos) < 2:
             if not automatico:
@@ -939,6 +944,7 @@ class LecturaMixin:
             return
         dialogo = DialogoCliente(analisis.candidatos, self,
                                  elegido=getattr(self, "_cliente_nif", ""))
+        self._cliente_por_decidir = False      # ya se ha preguntado
         if dialogo.exec() != QDialog.Accepted:
             return
         elegido = dialogo.elegido()
@@ -961,6 +967,16 @@ class LecturaMixin:
                     != clave_proveedor(elegido.nombre)):
                 recordar_nif(otro.nombre, otro.nif, manual=True)
         self._rehacer_con_cliente(elegido.nombre, elegido.nif)
+
+    def _preguntar_cliente_pendiente(self) -> None:
+        """Quién es el cliente del lote, si no se preguntó al cerrar (su
+        bloque llegó mientras se cerraba): como al poner el bloque."""
+        if self._cerrando or not self._cliente_por_decidir:
+            return
+        analisis = self._analisis_del_lote()
+        if analisis.empate or analisis.homonimo:
+            self._cambiar_cliente(automatico=True)
+        self._cliente_por_decidir = False
 
     def _rehacer_con_cliente(self, nombre, nif):
         """Vuelve a montar todos los bloques con otro cliente, sin Gemini."""
