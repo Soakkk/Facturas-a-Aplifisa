@@ -2556,6 +2556,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self.lbl_estado.setText("Lote vacío. Cargue o escanee facturas para empezar.")
         sesion.borrar()
         self._soltar_lote_vaciado()
+        # Lo que llegó con la pregunta abierta y falló no se vacía, pero su
+        # aviso sí se iba (con el «Deshacer» de lo vaciado): vuelve.
+        self._volver_a_ofrecer_fallidos()
 
     def _soltar_lote_vaciado(self) -> None:
         """Que «Vaciar todo» devuelva de verdad la memoria del lote.

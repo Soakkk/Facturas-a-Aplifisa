@@ -1442,3 +1442,30 @@ def test_el_aviso_del_fallo_vuelve_cuando_se_va_el_deshacer_que_lo_tapaba(
     assert ventana._marcar_revisada([6, 7]) is not None
     ventana.banda._timer.timeout.emit()
     assert ventana.banda.isHidden()
+
+
+def test_vaciar_todo_dice_lo_que_llego_y_fallo_con_la_pregunta_abierta(
+        ventana, tmp_path, monkeypatch):
+    # Con «¿Vaciar todo?» abierta acaba un escaneo y, sin crédito, fallan la
+    # parte del taco que se leía (se vacía) y el escaneo (no: llegó con la
+    # pregunta abierta). Al decir que sí, su aviso se iba con lo vaciado y el
+    # escaneo se quedaba por leer sin decir nada.
+    ventana.procesar_rutas([_pdf(tmp_path / "a.pdf", 50)])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura))
+    escaneo = _pdf(tmp_path / "escaneo_provisional.pdf", 10)
+
+    def pregunta(*a, **k):
+        ventana.procesar_rutas([escaneo], desde_escaner=True, tipo_declarado="gastos")
+        while ventana._elemento_cola_actual is not None:
+            _fallar(WorkerFalso.creados[-1], "la API key se quedó sin crédito")
+        return QMessageBox.Yes
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(pregunta))
+
+    ventana._vaciar_todo()
+
+    assert [e["rutas"] for e in ventana._cola_guardada] == [[escaneo]]
+    assert not ventana.banda.isHidden()
+    assert "No se han podido leer 1 bloque(s) de escaneo_provisional.pdf" \
+        in ventana.banda.lbl.text()
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
