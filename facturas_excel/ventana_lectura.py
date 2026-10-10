@@ -130,6 +130,7 @@ class LecturaMixin:
                 self, "No se pudo preparar el PDF",
                 f"No se ha añadido a la cola:\n\n{e}")
             return
+        self._olvidar_cola_guardada_de(elementos)
 
         # En curso hasta que su bloque está en el lote, no hasta que el hilo
         # acaba: con un aviso abierto al terminar un bloque, el hilo ya no
@@ -514,6 +515,25 @@ class LecturaMixin:
         self._avisar(" ".join(textos), AVISO, segundos=0,
                      deshacer=self._seguir_cola_guardada if self._cola_guardada else None,
                      boton="Seguir leyendo")
+
+    def _olvidar_cola_guardada_de(self, elementos) -> None:
+        """Lo que quedó por leer la última vez de un PDF que se vuelve a
+        cargar ya no se ofrece: esta carga lo lee otra vez (tiene las mismas
+        partes, que borra al leerlas). Si no, «Seguir leyendo» lo leía dos
+        veces (pagándolo otra vez y con las facturas repetidas) o, más
+        tarde, se ofrecía con sus partes ya borradas."""
+        nuevas = {os.path.normcase(os.path.abspath(ruta))
+                  for elemento in elementos for ruta in elemento["rutas"]}
+        quedan = [e for e in self._cola_guardada
+                  if not any(os.path.normcase(os.path.abspath(ruta)) in nuevas
+                             for ruta in e.get("rutas", []))]
+        if len(quedan) == len(self._cola_guardada):
+            return
+        self._cola_guardada = quedan
+        if hasattr(self, "banda") and self.banda.accion() == self._seguir_cola_guardada:
+            # El aviso de «Seguir leyendo» ya no dice lo que queda.
+            self.banda.ocultar()
+            self._ofrecer_cola_guardada()
 
     def _seguir_cola_guardada(self) -> None:
         """Pone en la cola lo que quedó por leer la última vez."""

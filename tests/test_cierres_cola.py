@@ -650,6 +650,27 @@ def test_el_aviso_de_facturas_recuperadas_no_lo_tapa_el_de_seguir_leyendo(
     assert otra.banda.btn_deshacer.text() == "Seguir leyendo"
 
 
+def test_volver_a_cargar_el_pdf_que_quedo_a_medias_no_lo_lee_dos_veces(
+        ventana, tmp_path, monkeypatch):
+    # Se abre con 2 bloques de taco.pdf por leer y, en vez de «Seguir
+    # leyendo», se vuelve a cargar taco.pdf: esta carga tiene las mismas
+    # partes y las lee (y borra). Se seguía ofreciendo «Seguir leyendo»
+    # esos 2 bloques: leídos dos veces, o con sus partes ya borradas.
+    abierta = _abrir_con_cola_guardada(ventana, tmp_path, monkeypatch)
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+
+    abierta.procesar_rutas([str(tmp_path / "taco.pdf")])
+
+    assert not abierta._cola_guardada
+    assert abierta.banda.isHidden() or abierta.banda.btn_deshacer.isHidden()
+    for _ in range(3):
+        lectura = WorkerFalso.creados[-1]
+        lectura.entregar(_bloque_de(lectura))
+    assert len(abierta._bloques) == 4 and not abierta._cola
+    assert not _partes_en_disco()
+    assert sesion.cargar() is None or not abierta._datos_sesion()["cola"]
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace
