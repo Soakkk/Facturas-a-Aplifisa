@@ -607,6 +607,25 @@ class LecturaMixin:
                 f"La última vez quedó sin leer parte de "
                 f"{self._nombres_de(de_antes)}: "
                 f"{len(de_antes)} bloque(s), {self._hojas_de(de_antes)} hoja(s).")
+            # El PDF entero también tiene que seguir donde estaba: al leer
+            # se archiva en la carpeta del cliente y cada factura apunta a
+            # él. Si en estos días se movió o se borró, sus hojas se leían
+            # (y se pagaban) igual, pero sin archivarlo ni dar a cada factura
+            # su PDF, y sin decir nada: se dice antes de seguir.
+            sin_original = [e for e in de_antes
+                            if e.get("original")
+                            and e["original"] not in e.get("rutas", [])
+                            and not os.path.isfile(e["original"])]
+            if sin_original:
+                carpetas = sorted({os.path.dirname(e["original"])
+                                   for e in sin_original})
+                donde = f"en {carpetas[0]}" if len(carpetas) == 1 else "donde estaba"
+                textos.append(
+                    f"Pero {self._nombres_de(sin_original)} ya no está {donde}: "
+                    "sus hojas se pueden leer, pero sin el PDF entero no se "
+                    "archiva en la carpeta del cliente ni cada factura tendrá "
+                    "su PDF. Si lo movió, vuelva a ponerlo en su sitio antes "
+                    "de seguir leyendo.")
         if fallidos:
             textos.append(
                 f"No se han podido leer {len(fallidos)} bloque(s) de "

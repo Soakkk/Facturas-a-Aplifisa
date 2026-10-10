@@ -749,6 +749,62 @@ def test_volver_a_cargar_el_pdf_que_quedo_a_medias_no_lo_lee_dos_veces(
     assert sesion.cargar() is None or not abierta._datos_sesion()["cola"]
 
 
+def _cerrar_con_un_taco_del_escritorio_por_leer(ventana, monkeypatch, al_cargar=None):
+    """Carga un taco del Escritorio y cierra con su primer bloque leyéndose:
+    sus dos bloques quedan por leer, y el PDF aún sin archivar."""
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    escritorio = os.path.join(os.path.expanduser("~"), "Desktop")
+    os.makedirs(escritorio, exist_ok=True)
+    taco = _pdf(os.path.join(escritorio, "taco marzo.pdf"), 30)
+    ventana.procesar_rutas([taco])
+    if al_cargar:
+        al_cargar(taco)
+    ventana.closeEvent(QCloseEvent())
+    return taco
+
+
+def test_recoger_sueltos_no_se_lleva_el_pdf_que_quedo_por_leer(ventana, monkeypatch):
+    # Al día siguiente, antes de «Seguir leyendo», se recogen los sueltos.
+    # La recogida solo dejaba quietos los PDF de los bloques ya leídos y se
+    # llevaba el taco a la carpeta del cliente; luego se leía igual (sus
+    # partes seguían ahí), pero apuntando a un PDF que ya no estaba: sin
+    # archivar donde tocaba y ninguna factura con su PDF al exportar.
+    from facturas_excel import archivo, recoger
+    leyendose = []
+    taco = _cerrar_con_un_taco_del_escritorio_por_leer(
+        ventana, monkeypatch, lambda _taco: leyendose.extend(ventana._rutas_del_lote()))
+    # Mientras se lee, tampoco se lo llevaba (ya en la 1.25, pero eran
+    # minutos; con la cola guardada, días).
+    assert taco in leyendose
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+    assert taco in abierta._rutas_del_lote()
+
+    sueltos = recoger.buscar(recoger.carpetas_origen(), archivo.carpeta_escaneos(),
+                             abierta._rutas_del_lote())
+
+    assert "taco marzo.pdf" not in {os.path.basename(c.ruta) for c in sueltos}
+
+
+def test_si_el_pdf_que_quedo_por_leer_ya_no_esta_se_dice_antes_de_seguir(
+        ventana, tmp_path, monkeypatch):
+    # Sus partes siguen ahí, pero el PDF entero se movió a mano: se leía y
+    # se pagaba igual, sin archivarlo ni dar a cada factura su PDF, y sin
+    # decir nada.
+    taco = _cerrar_con_un_taco_del_escritorio_por_leer(ventana, monkeypatch)
+    os.replace(taco, tmp_path / "en otro sitio.pdf")
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+
+    aviso = abierta.banda.historial[-1]
+    assert "2 bloque(s), 30 hoja(s)" in aviso
+    assert f"taco marzo.pdf ya no está en {os.path.dirname(taco)}" in aviso
+    assert "vuelva a ponerlo en su sitio" in aviso
+    # Se puede seguir leyendo igual (las hojas están), ya sabiéndolo.
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+    assert len(abierta._cola_guardada) == 2
+
+
 def test_quien_es_el_cliente_que_no_se_pregunto_al_cerrar_se_pregunta_al_volver(
         ventana, tmp_path, monkeypatch):
     # Un taco de un cliente nuevo: no se sabe cuál de las dos partes es el

@@ -74,14 +74,16 @@ class ArchivoMixin:
         Tampoco los que quedan por leer (lo que se lee ahora, lo que espera
         turno y lo de la última vez): un PDF de Descargas que se cerró sin
         leer se recogía por la mañana y, al seguir leyéndolo, no se archivaba
-        y sus facturas apuntaban a donde ya no estaba."""
+        y sus facturas apuntaban a donde ya no estaba. Ni sus hojas, que en
+        unas fotos sueltas son las propias fotos."""
         rutas = []
         for bloque in self._bloques:
             if bloque.get("original"):
                 rutas.append(bloque["original"])
             rutas.extend(origen for _img, origen, _p, _d in bloque.get("crudos", []))
-        rutas.extend(elemento.get("original", "")
-                     for elemento in self._elementos_de_la_cola())
+        for elemento in self._elementos_de_la_cola():
+            rutas.append(elemento.get("original", ""))
+            rutas.extend(elemento.get("rutas", []))
         return [r for r in rutas if r]
 
     def _recoger_sueltos(self) -> None:
