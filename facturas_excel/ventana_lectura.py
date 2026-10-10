@@ -159,8 +159,11 @@ class LecturaMixin:
             w.isRunning() for w in self._lecturas_abandonadas)
 
     def _bloques_por_leer(self) -> int:
-        """Los bloques de la cola que aún no están en el lote."""
-        return len(self._cola) + (self._elemento_cola_actual is not None)
+        """Los bloques de la cola que aún no están en el lote (el que se lee
+        de antes de «Vaciar todo» no cuenta: ya no es del lote)."""
+        actual = self._elemento_cola_actual
+        return len(self._cola) + (actual is not None
+                                  and not self._lectura_descartada(actual))
 
     def _iniciar_siguiente_cola(self, api_key=None):
         # Una sola lectura a la vez, y nunca desde dentro de otro arranque
@@ -298,11 +301,18 @@ class LecturaMixin:
             self._resumen()      # la barra, con el lote de ahora
 
     def _devolver_a_la_cola(self, elemento) -> None:
-        """Al cerrar, un bloque a medias vuelve a la cola (que se guarda)."""
+        """Al cerrar, un bloque a medias vuelve a la cola (que se guarda).
+
+        Uno de antes de «Vaciar todo» no: ya no es del lote. Si al cerrar
+        enseguida su lectura cancelada no llegaba, se guardaba como cola y al
+        abrir se ofrecía seguir leyendo lo que se había vaciado."""
         if not elemento:
             return
         if self._elemento_cola_actual is elemento:
             self._elemento_cola_actual = None
+        if self._lectura_descartada(elemento):
+            self._limpiar_parte_interna(elemento)
+            return
         if elemento not in self._cola:
             self._cola.insert(0, elemento)
 
@@ -375,7 +385,10 @@ class LecturaMixin:
         worker = self.worker
         if worker is not None and hasattr(worker, "cancelar"):
             worker.cancelar()
-        if worker is not None and hasattr(worker, "wait"):
+        # A la de antes de «Vaciar todo» no se la espera: lo que entregue se
+        # tira igual (ver _devolver_a_la_cola).
+        if worker is not None and hasattr(worker, "wait") \
+                and not self._lectura_descartada(elemento):
             self.lbl_estado.setText("Cerrando: guardando lo ya leído…")
             limite = time.monotonic() + ESPERA_LECTURA_AL_CERRAR_S
             while self._elemento_cola_actual is not None \
@@ -436,7 +449,10 @@ class LecturaMixin:
         leyendo (si se corta, se vuelve a leer entero), lo que espera turno y
         lo que quedó de la última vez sin seguir todavía."""
         elementos = [self._elemento_cola_actual, *self._cola, *self._cola_guardada]
-        return [self._elemento_para_guardar(e) for e in elementos if e]
+        # Sin lo que se sigue leyendo de antes de «Vaciar todo» (el guardado
+        # automático lo guardaba, y tras un corte se ofrecía seguir con él).
+        return [self._elemento_para_guardar(e) for e in elementos
+                if e and not self._lectura_descartada(e)]
 
     def _partes_de_la_cola(self) -> set:
         """Las partes temporales (cola_pdf) que aún hacen falta."""

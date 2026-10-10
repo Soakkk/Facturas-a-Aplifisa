@@ -437,6 +437,34 @@ def test_vaciar_con_el_mismo_pdf_cargado_dos_veces_no_deja_partes(
     assert not _partes_en_disco()
 
 
+def test_lo_vaciado_no_se_guarda_como_cola_al_cerrar_enseguida(
+        ventana, tmp_path, monkeypatch):
+    # «Vaciar todo» con el 2.º bloque leyéndose y cerrar enseguida: si la
+    # lectura cancelada no llegaba en la espera del cierre, volvía a la cola
+    # y se guardaba (y el guardado automático, entre tanto, también), y al
+    # abrir se ofrecía «Seguir leyendo» lo que se había vaciado. Y a esa
+    # lectura, que ya no cuenta, tampoco se la espera al cerrar.
+    import time
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 3, raising=False)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.Yes))
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 60)])
+    primera = WorkerFalso.creados[-1]
+    primera.entregar(_bloque_de(primera))
+    cancelada = WorkerFalso.creados[-1]          # el 2.º, que no llegará
+
+    ventana._vaciar_todo()
+    assert cancelada.cancelada and ventana._bloques_por_leer() == 0
+    ventana._guardar_sesion_automatica()
+    assert sesion.cargar() is None
+    inicio = time.monotonic()
+    ventana.closeEvent(QCloseEvent())
+
+    assert time.monotonic() - inicio < 1.5
+    assert sesion.cargar() is None
+    assert not _partes_en_disco()
+
+
 # n.º 10 ---------------------------------------------------------------
 def _ventana_con_un_bloque():
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
