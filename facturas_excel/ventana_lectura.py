@@ -827,7 +827,10 @@ class LecturaMixin:
                 copiar=not elemento.get("mover_original", False), nif=nif)
             original_nuevo = self._rutas_actuales[0]
             elemento["original"] = original_nuevo
-            for pendiente in self._cola:
+            # También lo que no se pudo leer de ese PDF (ver _on_fallo): si
+            # no, al volver a leerlo sus facturas apuntaban al escaneo ya
+            # movido, y al abrir se pedía devolverlo a su sitio.
+            for pendiente in [*self._cola, *self._cola_guardada]:
                 if pendiente.get("original") == original_anterior:
                     pendiente["original"] = original_nuevo
                     pendiente["archivar"] = False

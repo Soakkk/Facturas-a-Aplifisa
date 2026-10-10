@@ -1164,3 +1164,31 @@ def test_vaciar_todo_vacia_tambien_lo_que_falla_con_la_pregunta_abierta(
     assert not _partes_en_disco()
     ventana._guardar_sesion_automatica()
     assert sesion.cargar() is None
+
+
+def test_el_bloque_que_fallo_antes_de_archivar_el_escaneo_sigue_a_su_pdf(
+        ventana, tmp_path, monkeypatch):
+    # El primer bloque de un escaneo falla y el segundo se lee: al leerlo, el
+    # escaneo se mueve a la carpeta del cliente. El que falló seguía con el
+    # sitio de antes: al volver a leerlo, sus facturas apuntaban a un PDF que
+    # ya no estaba (sin visor ni PDF de cada factura), y al abrir otro día se
+    # pedía devolver a su sitio el escaneo que el propio programa archivó.
+    from facturas_excel import archivo
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    escaneo = _pdf(os.path.join(archivo.carpeta_escaneos(),
+                                "escaneo_2026-03-15_101500.pdf"), 50)
+    ventana.procesar_rutas([escaneo], desde_escaner=True, tipo_declarado="gastos")
+    _fallar(WorkerFalso.creados[-1], "La lectura se cortó sin dar resultado")
+    segunda = WorkerFalso.creados[-1]
+    segunda.entregar(_bloque_de(segunda))
+    archivado = ventana._bloques[-1]["original"]
+    assert not os.path.exists(escaneo) and os.path.exists(archivado)
+    ventana.closeEvent(QCloseEvent())
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert "ya no está" not in abierta.banda.lbl.text()
+    abierta.banda.btn_deshacer.click()
+    tercera = WorkerFalso.creados[-1]
+    tercera.entregar(_bloque_de(tercera))
+    assert len(abierta.filas) == 50
+    assert {f.factura.origen_imagen for f in abierta.filas} == {archivado}
