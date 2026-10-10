@@ -483,6 +483,36 @@ def test_lo_vaciado_no_se_guarda_como_cola_al_cerrar_enseguida(
 
 
 # n.º 10 ---------------------------------------------------------------
+def test_un_escaneo_que_acaba_con_vaciar_todo_preguntando_no_se_tira(
+        ventana, tmp_path, monkeypatch):
+    # Lote A ya leído y, mientras se escanea el taco siguiente, «Vaciar
+    # todo». El escaneo acaba con la pregunta abierta (su señal llega por el
+    # bucle de la pregunta) y empieza a leerse; la pregunta no lo cuenta, pero
+    # al decir que sí se cancelaba y se tiraba sin decirlo.
+    a = _pdf(tmp_path / "a.pdf", 10)
+    ventana.procesar_rutas([a])
+    lectura = WorkerFalso.creados[-1]
+    lectura.entregar(_bloque_de(lectura, 1, 10))
+    escaneo = _pdf(tmp_path / "escaneo_provisional.pdf", 20)
+    textos = []
+
+    def pregunta(*a, **k):
+        textos.append(a[2])
+        ventana.procesar_rutas([escaneo], desde_escaner=True, tipo_declarado="gastos")
+        return QMessageBox.Yes
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(pregunta))
+
+    ventana._vaciar_todo()
+
+    assert "por leer" not in textos[0]            # la pregunta no lo contaba…
+    assert not ventana._bloques and not ventana.filas
+    lectura = WorkerFalso.creados[-1]
+    assert lectura.rutas == [escaneo] and not lectura.cancelada   # …y sigue
+    assert ventana._bloques_por_leer() == 1
+    lectura.entregar(_bloque_de(lectura, 1, 20))
+    assert len(ventana.filas) == 20
+
+
 def _ventana_con_un_bloque():
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     hojas = [_hoja("uno.pdf", 1, "F-1")]

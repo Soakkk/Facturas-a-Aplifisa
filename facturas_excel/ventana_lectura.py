@@ -489,22 +489,40 @@ class LecturaMixin:
                 self._lecturas_abandonadas.append(worker)
             self._devolver_a_la_cola(self._elemento_cola_actual)
 
-    def _soltar_cola(self) -> None:
+    def _elementos_de_la_cola(self) -> list:
+        """Lo que se está leyendo y lo que queda por leer, tal cual."""
+        return [e for e in (self._elemento_cola_actual, *self._cola,
+                            *self._cola_guardada) if e]
+
+    def _soltar_cola(self, solo=None) -> None:
         """«Vaciar todo» tira también la cola: lo que esperaba turno, lo que
         quedó de la última vez y lo que se está leyendo, que se cancela (lo que
         entregue se descarta: antes volvía a aparecer en el lote vacío). Sus
-        partes temporales se borran."""
+        partes temporales se borran.
+
+        `solo`: lo que había al preguntar (ver `_elementos_de_la_cola`). Lo
+        llegado mientras (un escaneo que acaba con la pregunta abierta) no es
+        de lo que se vacía y sigue: antes se cancelaba y se tiraba sin
+        decirlo."""
+        de_antes = None if solo is None else {id(e) for e in solo}
+
+        def se_tira(elemento):
+            return de_antes is None or id(elemento) in de_antes
         # Fuera de la cola antes de borrar sus partes: si no, las de un PDF
         # cargado dos veces se guardaban unas a otras y se quedaban.
-        soltados = [*self._cola, *self._cola_guardada]
-        self._cola = []
-        self._cola_guardada = []
+        soltados = [e for e in (*self._cola, *self._cola_guardada) if se_tira(e)]
+        self._cola = [e for e in self._cola if not se_tira(e)]
+        self._cola_guardada = [e for e in self._cola_guardada if not se_tira(e)]
         for elemento in soltados:
             self._limpiar_parte_interna(elemento)
         self._generacion_cola += 1
-        self._cola_total = self._cola_completados = 0
         actual = self._elemento_cola_actual
+        sigue = actual is not None and not se_tira(actual)
+        self._cola_total, self._cola_completados = len(self._cola) + sigue, 0
         if actual is None:
+            return
+        if sigue:
+            actual["generacion"] = self._generacion_cola    # es del lote nuevo
             return
         worker = self.worker
         if worker is not None and hasattr(worker, "cancelar"):

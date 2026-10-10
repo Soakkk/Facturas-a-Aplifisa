@@ -2470,6 +2470,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
 
     def _vaciar_todo(self):
         por_leer = self._bloques_por_leer() + len(self._cola_guardada)
+        # Se vacía lo que dice la pregunta: lo que llegue mientras está
+        # abierta (un escaneo que acaba) no (ver _soltar_cola).
+        en_la_pregunta = self._elementos_de_la_cola()
         if not self._bloques and not self.filas and not por_leer:
             self._limpiar_visor()
             self.tabla_su_suma.limpiar()
@@ -2487,7 +2490,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._guardar_muestra_revision()
         # La cola también: lo que se está leyendo se cancela y lo que entregue
         # ya no vuelve a aparecer en el lote vacío (ver _soltar_cola).
-        self._soltar_cola()
+        self._soltar_cola(solo=en_la_pregunta)
         self._bloques = []
         self._decisiones_conflicto_nif = {}
         self._localizaciones = {}
