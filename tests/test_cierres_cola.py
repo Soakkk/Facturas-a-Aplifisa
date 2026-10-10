@@ -758,6 +758,44 @@ def test_al_volver_quien_es_el_cliente_no_tapa_seguir_leyendo(
     assert not abierta.banda.btn_deshacer.isHidden()
 
 
+def test_el_recargo_no_se_pregunta_al_cerrar_sino_al_volver(
+        ventana, tmp_path, monkeypatch):
+    # El bloque llega en la espera del cierre con facturas con recargo de un
+    # cliente (persona física) sin régimen guardado: se abría la pregunta del
+    # recargo con la ventana cerrándose y, sin contestarla, «desglose» se
+    # quedaba guardado como su régimen para siempre.
+    from facturas_excel import app as modulo_app
+    from facturas_excel.clientes import TOTAL, regimen_recargo
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.5, raising=False)
+    preguntas = []
+    monkeypatch.setattr(modulo_app.DialogoRecargo, "exec",
+                        lambda self: preguntas.append(1) or 1)
+    monkeypatch.setattr(modulo_app.DialogoRecargo, "elegido", lambda self: TOTAL)
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 30)])
+    lectura = WorkerFalso.creados[-1]
+    hojas = _bloque_de(lectura)
+    for hoja in hojas:
+        linea = hoja[3]["lineas_iva"][0]
+        linea["pct_requiv"] = 5.2
+        linea["cuota_requiv"] = round(linea["base"] * 0.052, 2)
+        hoja[3]["total"] = round(linea["base"] + linea["cuota_iva"]
+                                 + linea["cuota_requiv"], 2)
+    # El bloque llega justo en la espera del cierre.
+    lectura.cancelar = lambda: lectura.entregar(hojas)
+
+    ventana.closeEvent(QCloseEvent())
+    assert len(ventana._bloques) == 1
+    assert not preguntas and regimen_recargo(CLIENTE[1]) == ""   # al cerrar, no
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _esperar(lambda: preguntas)                                   # al volver, sí
+    assert regimen_recargo(CLIENTE[1]) == TOTAL and abierta._por_el_total()
+    abierta.closeEvent(QCloseEvent())
+    VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _app.processEvents()
+    assert preguntas == [1]                       # y una vez, no cada vez
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace

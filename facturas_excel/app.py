@@ -179,6 +179,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # Quién es el cliente del lote, si no se preguntó por cerrar justo
         # entonces: se pregunta al volver (ver _preguntar_cliente_pendiente).
         self._cliente_por_decidir = False
+        # Igual con el régimen del recargo del cliente (ver _preparar_recargo).
+        self._recargo_por_decidir = False
         self._decisiones_conflicto_nif = {}
         # Dónde está cada dato en cada hoja: {clave de la imagen: [Caja]}.
         self._localizaciones = {}
@@ -1930,6 +1932,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "su_suma": self.tabla_su_suma.valores(),
             "cola": cola,
             "cliente_por_decidir": self._cliente_por_decidir,
+            "recargo_por_decidir": self._recargo_por_decidir,
         }
 
     def _avisar_sesion_apartada(self, ruta: str) -> None:
@@ -2025,6 +2028,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 # abierta, como se habría preguntado al poner el bloque.
                 self._cliente_por_decidir = True
                 QTimer.singleShot(0, self._preguntar_cliente_pendiente)
+            if datos.get("recargo_por_decidir"):
+                # Y el régimen del recargo, después del cliente (es el suyo).
+                self._recargo_por_decidir = True
+                QTimer.singleShot(0, self._preguntar_recargo_pendiente)
             # Lo tecleado en «Su suma», aparte: nunca puede tirar el lote.
             try:
                 self.tabla_su_suma.poner_valores(datos.get("su_suma"))
@@ -2492,6 +2499,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._cliente_nif = self._cliente_nombre = ""
         self._cliente_elegido_lote = ""
         self._cliente_por_decidir = False
+        self._recargo_por_decidir = False
         self._periodo_manual_valor = "auto"
         self._periodo_lote = PeriodoLote()
         self.txt_buscar.clear()
@@ -2667,7 +2675,13 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             # Una sociedad no puede estar en recargo (art. 148 de la Ley del
             # IVA), aunque se guardara así en una versión anterior.
             guardado = DESGLOSE
-        if cuantas and not guardado and nif and not sociedad:
+        if cuantas and not guardado and nif and not sociedad and self._cerrando:
+            # Al cerrar (con un bloque llegando) no se pregunta: la pregunta
+            # salía con la ventana cerrándose y, sin contestar, se guardaba
+            # «desglose» como su régimen para siempre. Va con la sesión y se
+            # pregunta al volver (ver _preguntar_recargo_pendiente).
+            self._recargo_por_decidir = True
+        elif cuantas and not guardado and nif and not sociedad:
             dialogo = DialogoRecargo(getattr(self, "_cliente_nombre", ""),
                                      cuantas, self)
             guardado = (dialogo.elegido() if dialogo.exec() == QDialog.Accepted
@@ -2675,8 +2689,21 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             guardar_regimen_recargo(nif, guardado,
                                     getattr(self, "_cliente_nombre", ""))
             self._perfil_columnas = (None,)
+        if not self._cerrando:
+            self._recargo_por_decidir = False   # preguntado, o ya no hace falta
         self._hay_recargo = bool(cuantas) or guardado in (TOTAL, EXENTO)
         self._mostrar_recargo(guardado)
+
+    def _preguntar_recargo_pendiente(self) -> None:
+        """El régimen del recargo del cliente, si no se preguntó al cerrar (su
+        bloque llegó mientras se cerraba): como al poner el bloque."""
+        if self._cerrando or not self._recargo_por_decidir:
+            return
+        antes = self._por_el_total()
+        self._preparar_recargo()
+        if self._por_el_total() != antes:
+            self._rellenar_tabla()
+            self._revalidar_todo()
 
     def _mostrar_recargo(self, regimen: str) -> None:
         """La fila del régimen de IVA, con el porqué de que esté a la vista."""
