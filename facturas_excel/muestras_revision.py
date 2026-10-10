@@ -10,6 +10,7 @@ import json
 import math
 import os
 import shutil
+import time
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,12 +26,44 @@ _EXT_ORIGINALES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".w
 # Los originales se leen y se copian a trozos: un PDF de 200 MB no se carga
 # entero en memoria (eran +200 MB de golpe al soltarlo).
 _TROZO = 1 << 20
+# La escritura que más tarda (copiar un original de 200 MB a un disco lento)
+# acaba en minutos: un temporal sin tocar desde hace más es de una escritura
+# cortada, no de otra copia del programa que lo está escribiendo ahora.
+HORAS_TEMPORALES = 6
+
+
+def _ruta_carpeta() -> Path:
+    return Path(os.environ.get("APPDATA") or Path.home()) / "FacturasAplifisa" / "muestras_revision"
 
 
 def carpeta() -> Path:
-    ruta = Path(os.environ.get("APPDATA") or Path.home()) / "FacturasAplifisa" / "muestras_revision"
+    ruta = _ruta_carpeta()
     ruta.mkdir(parents=True, exist_ok=True)
     return ruta
+
+
+def limpiar_temporales(horas: float = HORAS_TEMPORALES) -> int:
+    """Borra los temporales (.tmp-*) de escrituras que se cortaron a medias.
+
+    Cada escritura va a un temporal que se renombra al acabar. La copia del
+    original va en un hilo aparte (1.26) y, al cerrar con una lectura que no
+    acaba, se sale sin esperar (os._exit): la copia se cortaba y su temporal,
+    de hasta 200 MB por PDF, se quedaba para siempre (también tras un apagón).
+    Devuelve cuántos se han borrado.
+    """
+    raiz = _ruta_carpeta()          # sin crearla: si no hay muestras, nada
+    if not raiz.is_dir():
+        return 0
+    limite = time.time() - horas * 3600
+    borrados = 0
+    for temporal in raiz.glob("*/.tmp-*"):
+        try:
+            if temporal.is_file() and temporal.stat().st_mtime < limite:
+                temporal.unlink()
+                borrados += 1
+        except OSError:
+            pass                    # en uso o sin permiso: otra vez será
+    return borrados
 
 
 def _hash(contenido: bytes) -> str:

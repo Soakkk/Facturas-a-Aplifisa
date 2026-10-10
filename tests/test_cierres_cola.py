@@ -138,6 +138,37 @@ def test_al_salir_sin_esperar_la_lectura_se_apunta_lo_ya_gastado(tmp_path):
     assert len(_sesion_en_disco(carpeta)[1]) == 2  # y su bloque, en la cola
 
 
+def test_la_copia_del_original_cortada_al_salir_se_borra_al_volver(tmp_path, monkeypatch):
+    # La copia del original a las muestras va en su hilo (1.26) y, con una
+    # petición a Gemini que no acaba, se sale sin esperar (os._exit): la copia
+    # se corta y su temporal (hasta 200 MB por PDF) no lo borraba nadie.
+    import time
+    # Gemini tarda mucho más que la espera al cerrar (unos 7 s): se sale
+    # sin esperar aunque la máquina vaya cargada.
+    codigo, _resultado, carpeta, detalle = _escenario(
+        tmp_path, "cerrar_copiando_el_original", latencia=20.0)
+    assert codigo == 0, detalle
+    muestras = carpeta / "appdata" / "FacturasAplifisa" / "muestras_revision"
+    cortadas = list((muestras / "originales").glob(".tmp-*"))
+    assert cortadas, "la copia no llegó a cortarse: la prueba no prueba nada"
+    # Se vuelve a abrir otro día: lo cortado se borra. Lo de ahora mismo (otra
+    # copia del programa escribiendo) y las muestras de verdad, no.
+    hace_dias = time.time() - 30 * 3600
+    guardada = muestras / "originales" / ("0" * 64 + ".pdf")
+    guardada.write_bytes(b"%PDF-1.4 original ya guardado")
+    for ruta in (*cortadas, guardada):
+        os.utime(ruta, (hace_dias, hace_dias))
+    escribiendose = muestras / "imagenes" / ".tmp-de-ahora"
+    escribiendose.parent.mkdir(parents=True, exist_ok=True)
+    escribiendose.write_bytes(b"a medias")
+    for variable, sub in (("APPDATA", "appdata"), ("LOCALAPPDATA", "local"),
+                          ("HOME", "casa"), ("USERPROFILE", "casa")):
+        monkeypatch.setenv(variable, str(carpeta / sub))
+    VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    assert not any(ruta.exists() for ruta in cortadas)
+    assert guardada.exists() and escribiendose.exists()
+
+
 def test_cerrar_mientras_se_dibujan_las_hojas_no_pide_nada_a_gemini(tmp_path):
     codigo, resultado, carpeta, detalle = _escenario(tmp_path, "cerrar_dibujando")
     assert codigo == 0, detalle

@@ -220,6 +220,12 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             pdf.limpiar_partes_huerfanas(conservar=self._partes_de_la_cola())
         except OSError:
             pass
+        # Y lo que dejó a medias en las muestras una escritura cortada (salir
+        # sin esperar a la lectura corta la copia del original de su hilo).
+        try:
+            muestras_revision.limpiar_temporales()
+        except OSError:
+            pass
         QTimer.singleShot(500, self._mostrar_notas_version_al_arrancar)
         # La copia de seguridad del día, con el programa ya en pantalla.
         QTimer.singleShot(4000, self._copia_diaria)

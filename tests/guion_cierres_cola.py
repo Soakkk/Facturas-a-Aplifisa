@@ -312,6 +312,30 @@ def cerrar_con_una_hoja_lenta(v):
     _cerrar_a_mitad(v, v.close, lambda: _llamadas() >= 50, taco("taco", 60))
 
 
+def cerrar_copiando_el_original(v):
+    """Se cierra con Gemini sin contestar mientras se copia el original a las
+    muestras en su hilo (un PDF grande en un disco lento): se sale sin
+    esperar (os._exit) y la copia se corta a medias."""
+    import shutil
+    from facturas_excel import muestras_revision
+    copiar = shutil.copyfile
+
+    def despacio(origen, destino, *a, **k):
+        if os.path.basename(os.path.dirname(destino)) != "originales":
+            return copiar(origen, destino, *a, **k)
+        with open(origen, "rb") as entrada, open(destino, "wb") as salida:
+            datos = entrada.read()
+            salida.write(datos[:len(datos) // 2])
+            salida.flush()
+            ESTADO["copiando"] = True
+            time.sleep(60)          # el resto tarda más que la espera al cerrar
+            salida.write(datos[len(datos) // 2:])
+        return destino
+    muestras_revision.shutil.copyfile = despacio
+    _cerrar_a_mitad(v, v.close,
+                    lambda: ESTADO.get("copiando") and _llamadas() >= 5)
+
+
 def vaciar(v):
     """«Vaciar todo» con el segundo bloque leyéndose."""
     QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.Yes)
@@ -325,7 +349,8 @@ def vaciar(v):
 
 ESCENARIOS = {f.__name__: f for f in (pregunta_y_escaneo, fallo_y_otro, cerrar,
                                        salir_al_actualizar, cerrar_dibujando, vaciar,
-                                       cerrar_con_una_hoja_lenta)}
+                                       cerrar_con_una_hoja_lenta,
+                                       cerrar_copiando_el_original)}
 
 if __name__ == "__main__":
     hilos.hilos_lectura = lambda: 10
