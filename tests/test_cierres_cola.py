@@ -723,6 +723,41 @@ def test_quien_es_el_cliente_que_no_se_pregunto_al_cerrar_se_pregunta_al_volver(
     assert preguntas == [1]                     # y una vez, no cada vez
 
 
+def test_al_volver_quien_es_el_cliente_no_tapa_seguir_leyendo(
+        ventana, tmp_path, monkeypatch):
+    # Al abrir se ofrece seguir leyendo y después se pregunta quién es el
+    # cliente: al elegirlo, «Lote rehecho…» (la banda enseña un solo aviso)
+    # tapaba «Seguir leyendo», y lo que quedaba por leer solo se podía
+    # seguir pasando por Exportar y diciendo que no.
+    from PySide6.QtWidgets import QDialog
+    from facturas_excel.dialogo_cliente import DialogoCliente
+    monkeypatch.setattr(ventana_lectura, "ESPERA_LECTURA_AL_CERRAR_S", 0.1, raising=False)
+    nuevo = ("CLIENTE NUEVO SA", "A12345674")
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 60)])
+    lectura = WorkerFalso.creados[-1]
+    hojas = _bloque_de(lectura)
+    for hoja in hojas:
+        hoja[3]["receptor_nombre"], hoja[3]["receptor_nif"] = nuevo
+    # El 1.er bloque llega en la espera del cierre (al cancelar la lectura).
+    lectura.cancelar = lambda: lectura.terminado.emit(
+        preparar_lote(hojas, *nuevo), *nuevo, hojas)
+    ventana.closeEvent(QCloseEvent())
+    assert ventana._cliente_por_decidir and len(ventana._cola) == 2
+    preguntas = []
+    monkeypatch.setattr(DialogoCliente, "exec",
+                        lambda self: preguntas.append(1) or QDialog.Accepted)
+
+    abierta = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=True)
+    _esperar(lambda: preguntas)
+    _app.processEvents()
+
+    aviso = abierta.banda.lbl.text()
+    assert "Lote rehecho con CLIENTE NUEVO SA" in aviso
+    assert "quedó sin leer parte de taco.pdf: 2 bloque(s)" in aviso
+    assert abierta.banda.btn_deshacer.text() == "Seguir leyendo"
+    assert not abierta.banda.btn_deshacer.isHidden()
+
+
 # n.º 30 ---------------------------------------------------------------
 def test_el_tipo_declarado_va_con_cada_escaneo(ventana, tmp_path):
     from types import SimpleNamespace

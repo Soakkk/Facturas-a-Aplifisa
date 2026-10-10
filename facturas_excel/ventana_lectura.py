@@ -1089,6 +1089,12 @@ class LecturaMixin:
         if analisis.empate or analisis.homonimo:
             self._cambiar_cliente(automatico=True)
         self._cliente_por_decidir = False
+        # Se pregunta después de ofrecer lo que quedó por leer (casi siempre
+        # hay: se cerró con un bloque llegando), y «Lote rehecho…» tapaba ese
+        # aviso (la banda enseña uno solo): se vuelve a ofrecer, con él delante.
+        if self._cola_guardada and self.banda.accion() != self._seguir_cola_guardada:
+            self._ofrecer_cola_guardada(
+                antes="" if self.banda.isHidden() else self.banda.lbl.text())
 
     def _rehacer_con_cliente(self, nombre, nif):
         """Vuelve a montar todos los bloques con otro cliente, sin Gemini."""
