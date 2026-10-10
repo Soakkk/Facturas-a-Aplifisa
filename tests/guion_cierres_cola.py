@@ -132,6 +132,18 @@ extraccion.Extractor = ExtractorFalso
 hilos.costes.registrar = lambda *a, **k: 0.0
 
 
+def _sin_red(*_a, **_k):
+    raise RuntimeError("sin red en las pruebas")
+
+
+# «Señalar en el documento» (al acabar la cola) tampoco sale a la red: con la
+# clave de prueba se llegaba a pedir a Google de verdad (como en conftest).
+try:
+    from facturas_excel import localizar  # noqa: E402
+    localizar.pedir = _sin_red
+except ImportError:
+    pass
+
 _run = hilos.Worker.run
 
 
