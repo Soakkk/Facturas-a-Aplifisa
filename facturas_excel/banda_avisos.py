@@ -99,6 +99,10 @@ class BandaAvisos(QFrame):
         self._accion_deshacer = None
         self.hide()
 
+    def fijo(self) -> bool:
+        """Si el aviso que se ve se queda hasta cerrarlo (`segundos=0`)."""
+        return not self.isHidden() and not self._timer.isActive()
+
     def accion(self) -> Optional[Callable]:
         """Lo que hace el botón del aviso que se ve ahora (None si no hay)."""
         return self._accion_deshacer

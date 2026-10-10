@@ -629,9 +629,14 @@ class LecturaMixin:
         `antes` es otro aviso de la apertura que va delante, en el mismo:
         la banda enseña uno solo y éste lo tapaba."""
         perdida, self._cola_perdida = getattr(self, "_cola_perdida", []), []
-        textos = [antes] if antes else []
         de_antes = [e for e in self._cola_guardada if not e.get("fallido")]
         fallidos = [e for e in self._cola_guardada if e.get("fallido")]
+        # Lo que el de los fallidos tapó (ver _apuntar_aviso_tapado) va
+        # delante mientras éste no se cierre.
+        textos = ([t for t in getattr(self, "_tapados_fallidos", []) if t != antes]
+                  if fallidos else [])
+        if antes:
+            textos.append(antes)
         if de_antes:
             textos.append(
                 f"La última vez quedó sin leer parte de "
@@ -685,6 +690,19 @@ class LecturaMixin:
         return sum(1 for e in self._cola_guardada
                    if e.get("fallido") and id(e) in de_esta)
 
+    def _apuntar_aviso_tapado(self) -> None:
+        """El aviso fijo sin botón que se ve (las hojas en rojo de un bloque)
+        y que el de los bloques que no se pudieron leer va a tapar: la banda
+        enseña uno solo, y con el crédito agotado a mitad de un taco cada
+        fallo siguiente lo tapaba y no volvía. Va delante de aquél hasta que
+        la persona lo cierre (ver _aviso_quitado)."""
+        if self.banda.accion() is not None or not self.banda.fijo():
+            return
+        texto = self.banda.lbl.text()
+        if texto and texto != self._texto_aviso_fallidos \
+                and texto not in self._tapados_fallidos:
+            self._tapados_fallidos.append(texto)
+
     def _volver_a_ofrecer_fallidos(self) -> None:
         """Si otro aviso tapó el de los bloques que no se pudieron leer (la
         banda enseña uno solo), vuelve: con ése delante si no tiene botón
@@ -696,6 +714,7 @@ class LecturaMixin:
         if visible and visible == self._texto_aviso_fallidos:
             return                                  # ya se ve
         if self.banda.accion() is None:
+            self._apuntar_aviso_tapado()
             self._ofrecer_cola_guardada(antes=visible, tipo=ERROR)
 
     def _aviso_quitado(self, texto: str) -> None:
@@ -711,6 +730,7 @@ class LecturaMixin:
         if texto == self._texto_aviso_fallidos and (
                 self.banda.isHidden() or self.banda.lbl.text() != texto):
             self._fallidos_cola = []
+            self._tapados_fallidos = []
         elif self.banda.isHidden():
             self._volver_a_ofrecer_fallidos()
 
@@ -852,6 +872,7 @@ class LecturaMixin:
         # En la banda, no en una ventana: un aviso abierto paraba la cola
         # (y con otro bloque llegando mientras, el programa se cerraba).
         etiqueta = elemento.get("etiqueta") or "este bloque"
+        self._apuntar_aviso_tapado()
         self._ofrecer_cola_guardada(
             antes=f"No se pudo leer «{etiqueta}»: {str(msg).rstrip('. ')}. La "
                   "cola sigue con el siguiente.", tipo=ERROR)

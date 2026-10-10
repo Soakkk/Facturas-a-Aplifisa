@@ -1469,3 +1469,38 @@ def test_vaciar_todo_dice_lo_que_llego_y_fallo_con_la_pregunta_abierta(
     assert "No se han podido leer 1 bloque(s) de escaneo_provisional.pdf" \
         in ventana.banda.lbl.text()
     assert ventana.banda.accion() == ventana._seguir_cola_guardada
+
+
+def test_sin_credito_en_cascada_las_hojas_en_rojo_siguen_en_el_aviso(
+        ventana, tmp_path, monkeypatch):
+    # El crédito se acaba a mitad de la parte 1 de un taco, que llega con 13
+    # hojas en rojo y su aviso («Páginas sin leer… Puede volver a cargar solo
+    # esas páginas»); las partes 2 a 4 fallan enteras. Cada fallo tapaba ese
+    # aviso y al acabar solo se veía el de los bloques que no se leyeron.
+    ventana.procesar_rutas([_pdf(tmp_path / "taco.pdf", 100)])
+    lectura = WorkerFalso.creados[-1]
+    sin_credito = "No leída: la API key se quedó sin crédito"
+    lectura.fallos = [(lectura.rutas[0], n, sin_credito) for n in range(13, 26)]
+    lectura.sin_credito = "Sin crédito"
+    hojas = _bloque_de(lectura)
+    for n in range(12, 25):
+        hojas[n] = (*hojas[n][:3], {"emisor_nombre": None, "lineas_iva": [{}],
+                                    "_error": sin_credito})
+    lectura.entregar(hojas)
+    assert ventana.banda.lbl.text().startswith("Páginas sin leer")
+    for _ in range(3):
+        _fallar(WorkerFalso.creados[-1], "la API key se quedó sin crédito")
+
+    aviso = ventana.banda.lbl.text()
+    assert aviso.startswith("Páginas sin leer") and aviso.count("Páginas sin leer") == 1
+    assert "13 página(s) no se han podido leer" in aviso
+    assert "No se han podido leer 3 bloque(s) de taco.pdf" in aviso
+    assert ventana.banda.accion() == ventana._seguir_cola_guardada
+    assert "3 no se pudieron leer (ver el aviso)" in ventana.lbl_estado.text()
+
+    # Cerrado, ya no va delante del siguiente.
+    ventana.banda.btn_cerrar.click()
+    ventana.procesar_rutas([_pdf(tmp_path / "otro.pdf", 10)])
+    _fallar(WorkerFalso.creados[-1], "Error 503")
+    assert "Páginas sin leer" not in ventana.banda.lbl.text()
+    assert "No se han podido leer 4 bloque(s)" in ventana.banda.lbl.text()

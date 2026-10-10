@@ -155,6 +155,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         # la persona aún no ha cerrado (ver _aviso_quitado); y ese aviso.
         self._fallidos_cola = []
         self._texto_aviso_fallidos = None
+        self._tapados_fallidos = []     # ver _apuntar_aviso_tapado
         self._elemento_cola_actual = None
         # La lectura de la cola (ver LecturaMixin): la de ahora, las que aún
         # están acabando (un QThread que Python suelta mientras trabaja tumba
@@ -2557,7 +2558,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         sesion.borrar()
         self._soltar_lote_vaciado()
         # Lo que llegó con la pregunta abierta y falló no se vacía, pero su
-        # aviso sí se iba (con el «Deshacer» de lo vaciado): vuelve.
+        # aviso sí se iba (con el «Deshacer» de lo vaciado): vuelve, sin las
+        # hojas en rojo de lo vaciado delante.
+        self._tapados_fallidos = []
         self._volver_a_ofrecer_fallidos()
 
     def _soltar_lote_vaciado(self) -> None:
