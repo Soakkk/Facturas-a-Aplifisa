@@ -210,6 +210,31 @@ def validar_nif(nif: str) -> bool:
     return False
 
 
+def quitar_prefijo_es(nif):
+    """El NIF español sin el «ES» del NIF-IVA delante: ESB12345674 →
+    B12345674, ES12345678Z → 12345678Z, ESX1234567L → X1234567L.
+
+    Hay facturas que imprimen así el NIF del proveedor o del cliente. Para
+    Aplifisa son dos cuentas distintas: con «ES» no reconoce al proveedor de
+    siempre, crea otra y puede dejarla como intracomunitaria (el Ámbito lo
+    lleva la cuenta del proveedor, no el Excel). Por eso TODO lo que
+    normaliza un NIF en el programa pasa por aquí: el NIF con «ES» y el mismo
+    sin él son siempre el mismo (pedido por el usuario en la 1.26.2).
+
+    Solo se quita si lo que queda es un NIF español válido, y nunca a uno que
+    ya lo es por sí mismo. Lo demás se devuelve tal cual: el NIF-IVA de otro
+    país de la UE (DE…, IE…) o un «ES» seguido de algo que no pasa el control
+    siguen avisando en ámbar. Lo quitado sale limpio (mayúsculas, sin
+    puntos, espacios ni guiones), como lo dejan los que normalizan un NIF.
+    """
+    if not isinstance(nif, str):
+        return nif
+    limpio = _limpiar_nif(nif)
+    if limpio[:2] != "ES" or validar_nif(limpio) or not validar_nif(limpio[2:]):
+        return nif
+    return limpio[2:]
+
+
 def clasificar_nif(nif) -> str:
     """Qué clase de identificador es, para avisar con el motivo exacto.
 

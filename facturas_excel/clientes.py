@@ -13,6 +13,7 @@ import unicodedata
 from typing import Dict
 
 from .rutas import dir_datos
+from .validacion import quitar_prefijo_es
 
 _FICHERO = "clientes.json"
 
@@ -28,15 +29,34 @@ def _col():
 
 
 def _leer_todo() -> Dict[str, dict]:
-    return {k: v for k, v in _col().leer_todo().items() if isinstance(v, dict)}
+    return _sin_prefijo_es(
+        {k: v for k, v in _col().leer_todo().items() if isinstance(v, dict)})
+
+
+def _sin_prefijo_es(todo: Dict[str, dict]) -> Dict[str, dict]:
+    """Las fichas que guardó una versión anterior a la 1.26.2 con el NIF con
+    «ES» delante (ESB12345674) son las del NIF sin él: el mismo cliente. Si
+    están las dos, se leen juntas: lo de la ficha sin «ES» manda y lo que
+    solo tenía la otra (confirmado, régimen…) no se pierde."""
+    salida = {k: v for k, v in todo.items() if _normaliza(k) in ("", k)}
+    for clave, ficha in todo.items():
+        nif = _normaliza(clave)
+        if nif and nif != clave:
+            salida[nif] = {**ficha, **salida.get(nif, {})}
+    return salida
 
 
 def _guardar_ficha(nif: str, ficha: dict) -> None:
-    _col().guardar(nif, ficha)   # si falla, no debe tumbar la app
+    col = _col()
+    # La ficha ya lleva lo de la de antes con «ES» (se leyó junta): esa se
+    # quita, para no tener dos fichas del mismo cliente.
+    if col.guardar(nif, ficha) and _normaliza("ES" + nif) == nif:
+        col.borrar("ES" + nif)   # si falla, no debe tumbar la app
 
 
 def _normaliza(nif) -> str:
-    return "".join(c for c in str(nif or "") if c.isalnum()).upper()
+    return quitar_prefijo_es(
+        "".join(c for c in str(nif or "") if c.isalnum()).upper())
 
 
 def en_recargo_equivalencia(nif) -> bool:
@@ -248,9 +268,7 @@ def puede_estar_en_recargo(nif) -> bool:
     """Si la ley permite que este cliente este en recargo de equivalencia.
 
     Con el NIF vacio no se descarta nada: no se sabe quien es."""
-    nif = _normaliza(nif)
-    if len(nif) == 11 and nif.startswith("ES"):     # NIF-IVA
-        nif = nif[2:]
+    nif = _normaliza(nif)              # sin el «ES» del NIF-IVA
     return not nif or nif[0] not in _PERSONAS_JURIDICAS
 
 
@@ -319,7 +337,7 @@ def regimen_irpf(nif) -> str:
     preguntarlo antes de exportar). Una sociedad es siempre OTRO, aunque se
     guardara otra cosa; la ficha de un cliente de antes de la 1.26.1 no tiene
     el dato: ""."""
-    nif = _clave_irpf(nif)
+    nif = _normaliza(nif)
     if not nif:
         return ""
     if not puede_tributar_irpf(nif):
@@ -328,19 +346,11 @@ def regimen_irpf(nif) -> str:
     return guardado if guardado in REGIMENES_IRPF else ""
 
 
-def _clave_irpf(nif) -> str:
-    """El NIF con el que se recuerda el regimen de IRPF: sin el prefijo ES
-    del NIF-IVA. Una factura puede traer el del cliente asi (ES12345678Z) y
-    es el mismo cliente: si no, se le volvia a preguntar como si fuera otro
-    (y podia quedar con dos respuestas distintas)."""
-    nif = _normaliza(nif)
-    if len(nif) == 11 and nif.startswith("ES"):     # NIF-IVA
-        nif = nif[2:]
-    return nif
-
-
 def guardar_regimen_irpf(nif, regimen: str, nombre: str = "") -> None:
-    nif = _clave_irpf(nif)
+    # Sin el «ES» del NIF-IVA (_normaliza): una factura puede traer así el
+    # del cliente (ES12345678Z) y es el mismo; si no, se le volvía a
+    # preguntar como si fuera otro.
+    nif = _normaliza(nif)
     if not nif or regimen not in REGIMENES_IRPF + ("",):
         return
     if regimen == DIRECTA and not puede_tributar_irpf(nif):

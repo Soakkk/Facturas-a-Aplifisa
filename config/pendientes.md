@@ -1,9 +1,15 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 13 de octubre de 2026 (versión 1.26.1). Apunta abajo lo que
+Actualizado el 13 de octubre de 2026 (versión 1.26.2). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.26.2: el NIF sin «ES» delante
+
+Lo que pediste: un NIF español con «ES» delante (ESB12345674) se queda sin él
+solo, también en lo ya guardado, para que Aplifisa reconozca al proveedor de
+siempre y lo deje como interior; los de otros países de la UE siguen avisando.
 
 ### Lo nuevo de la 1.26.1: clientes en estimación directa
 

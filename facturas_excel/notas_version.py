@@ -6,6 +6,20 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.26.2": """
+<h2>Novedades de la versión 1.26.2: el NIF sin «ES» delante</h2>
+<ul>
+  <li><b>Un NIF español con «ES» delante (ESB12345674) se queda sin él
+      solo</b> (B12345674): al leer la factura, al escribirlo en la tabla, en
+      el Excel y en lo ya guardado (proveedores, clientes, registro de
+      exportadas y el lote de la última vez). Así Aplifisa reconoce al
+      proveedor de siempre y lo deja como interior, sin abrirle otra
+      cuenta.</li>
+  <li>Ya no sale el aviso ámbar de «prefijo ES» para quitarlo a mano.</li>
+  <li><b>Los NIF de otros países de la UE</b> (DE…, FR…, IE…) siguen igual,
+      con su aviso de posible operación intracomunitaria.</li>
+</ul>
+""",
     "1.26.1": """
 <h2>Novedades de la versión 1.26.1: clientes en estimación directa</h2>
 <ul>

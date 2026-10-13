@@ -22,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from .validacion import fecha_de, validar_nif
+from .validacion import fecha_de, quitar_prefijo_es, validar_nif
 
 FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 NUMERO = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}-?$|^-?\d+,\d{2}-?$")
@@ -185,7 +185,7 @@ def _nif_del_cliente(doc) -> str:
         return ""
     texto = _texto_simple(doc[0].get_text())
     for m in _NIF_CABECERA.finditer(texto):
-        nif = m.group(1).replace(".", "").replace("-", "")
+        nif = quitar_prefijo_es(m.group(1).replace(".", "").replace("-", ""))
         if validar_nif(nif):
             return nif
     return ""
@@ -378,7 +378,9 @@ def _leer_totales(registro: Registro, siguientes: List[str]) -> Registro:
 # ligeramente las abreviaturas. Se detectan las columnas por su posicion.
 
 MARGEN_FILA = 1.5
-NIF_SUELTO = re.compile(r"^[A-Z0-9][0-9]{7}[A-Z0-9]$")
+# Con o sin el «ES» del NIF-IVA: un apunte que entró en Aplifisa con
+# ESB12345674 lleva ese NIF, no es parte del nombre.
+NIF_SUELTO = re.compile(r"^(?:ES)?[A-Z0-9][0-9]{7}[A-Z0-9]$")
 
 
 def _texto_simple(texto: str) -> str:
@@ -691,6 +693,12 @@ def _normalizar_id(valor) -> str:
     return "".join(c for c in _texto_simple(valor) if c.isalnum())
 
 
+def _normalizar_nif(valor) -> str:
+    """El NIF comparable: el del programa (ya sin «ES») y el que tenga el
+    listado de un apunte de antes (ESB12345674) son el mismo."""
+    return quitar_prefijo_es(_normalizar_id(valor))
+
+
 def _cerca(a, b) -> bool:
     return abs(float(a or 0) - float(b or 0)) <= TOLERANCIA
 
@@ -718,7 +726,7 @@ def _puntuacion(f, a: Apunte) -> int:
     numero_a = _normalizar_id(a.num_factura_proveedor)
     if numero_f and numero_a:
         puntos += 8 if numero_f == numero_a else -4
-    nif_f, nif_a = _normalizar_id(getattr(f, "nif", "")), _normalizar_id(a.nif)
+    nif_f, nif_a = _normalizar_nif(getattr(f, "nif", "")), _normalizar_nif(a.nif)
     if nif_f and nif_a:
         puntos += 5 if nif_f == nif_a else -5
     if _misma_fecha(getattr(f, "fecha", ""), a.fecha):
@@ -757,7 +765,7 @@ def _diferencias(f, a: Apunte) -> List[str]:
         diferencias.append(
             f"Nº factura: programa {getattr(f, 'num_factura', '')}; "
             f"Aplifisa {a.num_factura_proveedor}")
-    nif_f, nif_a = _normalizar_id(getattr(f, "nif", "")), _normalizar_id(a.nif)
+    nif_f, nif_a = _normalizar_nif(getattr(f, "nif", "")), _normalizar_nif(a.nif)
     if nif_f and nif_a and nif_f != nif_a:
         diferencias.append(f"NIF: programa {getattr(f, 'nif', '')}; Aplifisa {a.nif}")
     return diferencias

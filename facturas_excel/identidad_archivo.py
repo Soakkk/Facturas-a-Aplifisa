@@ -31,7 +31,19 @@ def leer(base):
             or Path(ficha["carpeta"]).name != ficha["carpeta"]
             for nif, ficha in datos.items())):
         raise ValueError("No se puede leer el índice de clientes del archivo.")
-    return datos
+    return _sin_prefijo_es(datos)
+
+
+def _sin_prefijo_es(indice):
+    """El índice por el NIF sin el «ES» del NIF-IVA, como lo busca hoy el
+    programa: un cliente que una versión anterior a la 1.26.2 apuntó como
+    ESB12345674 sigue en su carpeta (no se le hace otra con B12345674). Si
+    estaba de las dos formas, vale la de sin «ES»."""
+    salida = {}
+    for nif, ficha in sorted(indice.items(),
+                             key=lambda kv: clientes._normaliza(kv[0]) != kv[0]):
+        salida.setdefault(clientes._normaliza(nif) or nif, ficha)
+    return salida
 
 
 def guardar(ruta, datos):

@@ -23,6 +23,8 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from .validacion import quitar_prefijo_es
+
 ORIGEN = "facturas"
 
 
@@ -33,7 +35,9 @@ def ruta_directorio() -> str:
 
 
 def _normaliza(nif) -> str:
-    return re.sub(r"[\s.\-]+", "", str(nif or "")).upper()
+    # Sin el «ES» del NIF-IVA (ESB12345674 es B12345674): un cliente que otro
+    # programa apuntó así, o una factura que lo trae así, es el mismo.
+    return quitar_prefijo_es(re.sub(r"[\s.\-]+", "", str(nif or "")).upper())
 
 
 _cache: dict = {"mtime": None, "ruta": None, "datos": None}

@@ -28,6 +28,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import almacen
 from .rutas import dir_datos
+from .validacion import quitar_prefijo_es
 
 LEIDA, REVISADA, EXPORTADA, ARCHIVADA = "leida", "revisada", "exportada", "archivada"
 ORDEN_ESTADO = {LEIDA: 0, REVISADA: 1, EXPORTADA: 2, ARCHIVADA: 3}
@@ -38,7 +39,9 @@ _LEGADO = "facturas_exportadas.json"
 
 # ------------------------------------------------------------ identidad
 def _nif(valor) -> str:
-    return re.sub(r"[\s.\-]+", "", str(valor or "")).upper()
+    # Sin el «ES» del NIF-IVA (1.26.2): ESB12345674 es B12345674, y la misma
+    # factura leída de las dos formas tiene que ser la misma ficha.
+    return quitar_prefijo_es(re.sub(r"[\s.\-]+", "", str(valor or "")).upper())
 
 
 def _numero(valor) -> str:
@@ -130,6 +133,7 @@ def _con():
     carpeta = _carpeta()
     _migrar_historial(carpeta)
     _migrar_claves_sin_nif(carpeta)
+    _migrar_prefijo_es(carpeta)
     return almacen.conexion(carpeta)
 
 
@@ -194,6 +198,76 @@ def _migrar_claves_sin_nif(carpeta: str) -> None:
             con.execute("INSERT OR REPLACE INTO migraciones VALUES (?, ?, ?)",
                         ("claves_sin_nif", f"{cambiadas} fichas", almacen.ahora()))
     _claves_migradas.add(carpeta)
+
+
+_sin_es_migradas: set = set()
+
+
+def _migrar_prefijo_es(carpeta: str) -> None:
+    """Una sola vez (1.26.2): las fichas apuntadas con un NIF español con el
+    «ES» del NIF-IVA delante (el del cliente o el de la otra parte) pasan a
+    llevarlo sin él, como lo apunta ya el programa. Si no, la misma factura
+    leída otra vez no salía como «posiblemente ya exportada», y el cuadre del
+    año y los huecos no veían lo exportado de ese cliente.
+
+    Si la misma factura estaba apuntada de las dos formas, queda una sola
+    ficha con lo de las dos: no baja de estado ni pierde su Excel o su PDF."""
+    if carpeta in _sin_es_migradas:
+        return
+    with almacen.conexion(carpeta) as con:
+        hecho = con.execute("SELECT 1 FROM migraciones WHERE coleccion = ?",
+                            ("nif_sin_es",)).fetchone()
+        if not hecho:
+            existentes = {f["id"]: dict(f) for f in con.execute(
+                "SELECT * FROM facturas")}
+            cambiadas = 0
+            for ident, fila in list(existentes.items()):
+                nueva = _ficha_sin_prefijo_es(fila)
+                if nueva is None:
+                    continue
+                previa = existentes.get(nueva["id"])
+                if previa is not None:
+                    nueva = _juntar_fichas(previa, nueva)
+                con.execute("DELETE FROM facturas WHERE id = ?", (ident,))
+                con.execute(_INSERTAR, tuple(nueva.get(c) for c in _COLUMNAS))
+                del existentes[ident]
+                existentes[nueva["id"]] = nueva
+                cambiadas += 1
+            con.execute("INSERT OR REPLACE INTO migraciones VALUES (?, ?, ?)",
+                        ("nif_sin_es", f"{cambiadas} fichas", almacen.ahora()))
+    _sin_es_migradas.add(carpeta)
+
+
+def _ficha_sin_prefijo_es(fila: dict) -> Optional[dict]:
+    """La ficha con los NIF sin «ES» (su clave también), o None si no
+    llevaba ninguno así (o su clave no se entiende: no se toca)."""
+    cliente = fila.get("cliente") or ""
+    ident = fila.get("id") or ""
+    if not ident.startswith(cliente + "#"):
+        return None
+    partes = ident[len(cliente) + 1:].split("|")
+    if len(partes) != 4:
+        return None
+    if not cliente.startswith("NOMBRE:"):
+        cliente = _nif(cliente) or cliente
+    if partes[1] and not partes[1].startswith("~"):
+        partes[1] = _nif(partes[1]) or partes[1]
+    nueva = dict(fila, id=_id(cliente, "|".join(partes)), cliente=cliente,
+                 cliente_nif=quitar_prefijo_es(fila.get("cliente_nif")),
+                 nif=quitar_prefijo_es(fila.get("nif")))
+    return None if nueva == fila else nueva
+
+
+def _juntar_fichas(una: dict, otra: dict) -> dict:
+    """Dos fichas de la misma factura: el estado más avanzado y, de cada
+    dato, el que haya (el de `una` si están los dos)."""
+    junta = {c: una.get(c) if una.get(c) not in (None, "") else otra.get(c)
+             for c in _COLUMNAS}
+    estados = [una.get("estado") or LEIDA, otra.get("estado") or LEIDA]
+    junta["estado"] = max(estados, key=lambda e: ORDEN_ESTADO.get(e, 0))
+    junta["actualizado"] = max(str(una.get("actualizado") or ""),
+                               str(otra.get("actualizado") or "")) or None
+    return junta
 
 
 def _migrar_historial(carpeta: str) -> None:
