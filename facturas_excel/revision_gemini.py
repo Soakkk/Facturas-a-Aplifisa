@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from .extraccion import modelos_configurados
+from .extraccion import modelos_gemini
 from .rutas import dir_datos
 
 
@@ -18,11 +18,11 @@ FICHERO_SOLICITUD = "solicitud-revision-gemini.md"
 
 
 def modelo_principal() -> str:
-    return modelos_configurados()[0]
+    return modelos_gemini()[0]
 
 
 def texto_solicitud(version_app: str) -> str:
-    modelos = modelos_configurados()
+    modelos = modelos_gemini()
     modelo = modelos[0]
     respaldo = modelos[1] if len(modelos) > 1 else "ninguno"
     return f"""Revisa el modelo de Gemini de mi proyecto público

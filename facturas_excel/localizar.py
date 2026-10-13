@@ -207,6 +207,9 @@ def de_guardado(datos) -> List[Caja]:
 
 
 def principal() -> Optional[str]:
-    from .extraccion import modelos_configurados
-    modelos = modelos_configurados()
+    """El modelo que señala los datos: siempre el Gemini principal, también
+    con Claude elegido para leer (los recuadros los pide esta consulta a
+    Gemini, con su API key y su formato de cajas de 0 a 1000)."""
+    from .extraccion import modelos_gemini
+    modelos = modelos_gemini()
     return modelos[0] if modelos else None

@@ -68,6 +68,15 @@ borra el trabajo del otro sin avisar.
 - **Lectura**: Gemini (`extraccion.py`), modelos fijos `gemini-3.8-flash`
   (principal) y `gemini-3.7-flash` (respaldo), configurables; doble lectura
   comparada en `doble_lectura.py`. Nunca alias `-latest`.
+  Desde la 1.27 hay un desplegable «Quién lee las facturas» (ajuste
+  `proveedor_lectura`): `gemini` (por defecto, lo de siempre) o `claude`
+  (prueba): primera lectura con Claude Opus 5.5 (`claude-opus-5-5`, SDK
+  `anthropic`, su API key aparte en `claves.py`) y segunda/respaldo con los
+  Gemini de siempre. `modelos_gemini()` son los Gemini configurados;
+  `modelos_configurados()` los que leen. Los recuadros (`localizar.py`) siguen
+  siempre en Gemini. El esquema para Claude (`ESQUEMA_CLAUDE`) respeta sus
+  límites (≤16 campos con null, objetos cerrados): los textos vacíos vuelven a
+  null al leer.
 - **Criterio contable**: `conceptos.py` + `config/conceptos_aplifisa.csv`, que es
   el catálogo REAL de conceptos del Aplifisa del usuario. Las cuentas salen de
   ahí; no se inventan.

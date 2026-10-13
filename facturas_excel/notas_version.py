@@ -6,6 +6,36 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.27.0": """
+<h2>Novedades de la versión 1.27.0: probar la lectura con Claude</h2>
+<ul>
+  <li><b>Ahora puedes elegir quién lee las facturas</b>, en Configuración →
+      Modelos de lectura y doble lectura → «Quién lee las facturas»:
+      <ul>
+        <li><b>Gemini (como hasta ahora)</b>: todo sigue igual. Es lo que viene
+            puesto.</li>
+        <li><b>Claude Opus 5.5 + Gemini (prueba)</b>: la primera lectura la
+            hace Claude Opus 5.5 y la segunda Gemini 3.8 Flash. Las dos se
+            comparan dato a dato como siempre. Si Claude falla (clave mala,
+            sin saldo, ocupado…) la hoja la lee Gemini, no se pierde, y al
+            acabar el bloque se avisa de cuántas hojas no leyó Claude.</li>
+      </ul></li>
+  <li><b>Para usar Claude hace falta su API key</b>: Configuración →
+      API key de Claude… (o el botón del mismo nombre en Modelos de lectura). Se guarda
+      en el almacén seguro de Windows, como la de Gemini, que también se sigue
+      usando.</li>
+  <li><b>Esfuerzo de Claude</b> (bajo, medio o alto): cuánto razona cada hoja
+      antes de contestar. Medio es lo recomendado; alto puede leer mejor las
+      hojas difíciles, pero cuesta más y tarda más.</li>
+  <li><b>Coste:</b> con Claude, cada hoja cuesta unos 0,05 € más la lectura de
+      Gemini (con Gemini solo, menos de 0,01 €). Abajo, en el gasto, sale lo
+      que ha costado cada bloque de Claude y de Gemini y cuánto sale por hoja.
+      <b>El tope de gasto del mes pasa a 20 €</b> (Claude y Gemini juntos):
+      avisa al llegar al 80 % y al pasarlo. Se cambia en Configuración →
+      Tope de gasto al mes.</li>
+  <li>Para volver a lo de antes, basta elegir «Gemini (como hasta ahora)».</li>
+</ul>
+""",
     "1.26.2": """
 <h2>Novedades de la versión 1.26.2: el NIF sin «ES» delante</h2>
 <ul>

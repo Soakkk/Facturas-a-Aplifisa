@@ -19,7 +19,7 @@ from facturas_excel import (
     almacen, archivo, costes, imagen_hoja, muestras_revision, sesion,
 )
 from facturas_excel.banda_avisos import AVISO, ERROR, INFO
-from facturas_excel.claves import leer_api_key
+from facturas_excel.claves import leer_api_key, leer_api_key_claude
 from facturas_excel.dialogo_cliente import DialogoCliente
 from facturas_excel.clientes import marcar_cliente, mismo_nombre, recordar_nombre
 from facturas_excel.control_facturas import clave_documento
@@ -35,6 +35,21 @@ from facturas_excel.union_bloques import unir_ultimo_bloque
 from facturas_excel.rutas import escritorio
 from facturas_excel.ventana_comun import EXT_FACTURA
 from facturas_excel.hilos import NO_LEIDA_AL_CERRAR, Worker
+
+
+def falta_clave_claude() -> bool:
+    """Con «Claude Opus 5.5 + Gemini» elegido, si falta la API key de Claude
+    (con Gemini elegido no hace falta: nunca falta)."""
+    from facturas_excel.extraccion import PROVEEDOR_CLAUDE, proveedor_lectura
+    return (proveedor_lectura() == PROVEEDOR_CLAUDE
+            and not (leer_api_key_claude() or "").strip())
+
+
+TEXTO_FALTA_CLAVE_CLAUDE = (
+    "Has elegido que lea Claude Opus 5.5 (con Gemini de segunda lectura), "
+    "pero falta su API key.\n\nPégala en Configuración → API key de "
+    "Claude…, o vuelve a «Gemini (como hasta ahora)» en Configuración → "
+    "Modelos de lectura y doble lectura.")
 
 # Cada cuánto se vuelve a intentar poner en el lote un bloque leído que llegó
 # con una pregunta abierta (milisegundos).
@@ -126,6 +141,12 @@ class LecturaMixin:
                 self._muestra_capturada({"muestra_id": futuro})
             QMessageBox.warning(self, "Falta la API key",
                                 "Configura primero tu API key de Gemini.")
+            return
+        if falta_clave_claude():
+            for futuro in muestras.values():
+                self._muestra_capturada({"muestra_id": futuro})
+            QMessageBox.warning(self, "Falta la API key de Claude",
+                                TEXTO_FALTA_CLAVE_CLAUDE)
             return
         declarado = (tipo_declarado or self._tipo_escaneo) if desde_escaner else ""
         elementos = []
@@ -247,6 +268,9 @@ class LecturaMixin:
         api_key = api_key or leer_api_key()
         if not api_key:
             self.lbl_estado.setText("Cola pendiente: falta la API key de Gemini.")
+            return
+        if falta_clave_claude():
+            self.lbl_estado.setText("Cola pendiente: falta la API key de Claude.")
             return
         self._iniciando_cola = True
         try:
@@ -1051,6 +1075,7 @@ class LecturaMixin:
         # La muestra de revisión, con la de cada poco (la revisión del lote
         # ya la ha pedido): no una foto entera del lote por cada bloque.
         self._avisar_paginas_no_leidas(worker)
+        self._avisar_hojas_sin_claude(worker)
         self._iniciar_siguiente_cola()
 
     @staticmethod
@@ -1139,6 +1164,17 @@ class LecturaMixin:
             else:
                 conflicto["consultado"] = True
 
+    def _avisar_hojas_sin_claude(self, worker=None):
+        """Con «Claude + Gemini», si Claude no ha leído alguna hoja (clave
+        mala, sin saldo, límite, error…), se dice: esas hojas las ha leído
+        solo Gemini y no deben contar como «lo leyó Claude» en la prueba."""
+        worker = worker or getattr(self, "worker", None)
+        aviso = getattr(worker, "aviso_claude", "")
+        # Con páginas sin leer, va dentro de ese aviso (la banda enseña uno
+        # solo y este taparía el de las páginas en rojo).
+        if aviso and not getattr(worker, "fallos", None):
+            self._avisar(aviso, AVISO, segundos=0)
+
     def _avisar_paginas_no_leidas(self, worker=None):
         """Detalla las páginas agotadas o ilegibles sin detener la cola: en
         la banda, no en una ventana que hay que cerrar (ver _on_fallo)."""
@@ -1157,12 +1193,14 @@ class LecturaMixin:
             for ruta, pagina, motivo in fallos[:10])
         if len(fallos) > 10:
             detalle += f"{salto}· … y {len(fallos) - 10} más"
+        claude = getattr(worker, "aviso_claude", "")
         self._avisar(
             "Páginas sin leer. "
             f"{cabecera}"
             f"{len(fallos)} página(s) no se han podido leer y están en rojo "
             f"en la tabla:{salto}{detalle}{salto}"
-            "La cola continúa. Puede volver a cargar solo esas páginas.",
+            "La cola continúa. Puede volver a cargar solo esas páginas."
+            + (f"{salto}{salto}{claude}" if claude else ""),
             AVISO, segundos=0)
 
     def _limpiar_parte_interna(self, elemento: dict) -> None:
@@ -1318,12 +1356,26 @@ class LecturaMixin:
 
     def _on_gasto(self, modelo, coste_lote):
         self._pintar_gasto(modelo, coste_lote)
+        # Con «Claude + Gemini», lo de cada una y por hoja (solo entonces).
+        # El de los recuadros (que llega después) no lo borra: se queda el del
+        # último bloque leído.
+        # Una lectura (Worker) lo trae siempre, vacío si leyó solo Gemini.
+        desglose = getattr(self.sender(), "desglose_gasto", None) if self.sender() else None
+        if desglose is not None:
+            self._ultimo_desglose = desglose
+        desglose = getattr(self, "_ultimo_desglose", "")
+        if desglose and hasattr(self, "lbl_gasto"):
+            self.lbl_gasto.setText(
+                f"{self.lbl_gasto.text()}  ·  último bloque: {desglose}")
         aviso = costes.aviso_tope()
         if aviso and not getattr(self, "_aviso_tope_dado", False):
             # Una vez por sesion: recordarlo en cada lote seria un incordio.
             # En la banda: llega mientras se lee y una ventana pararía la cola.
             self._aviso_tope_dado = True
-            self._avisar(f"Gasto de Gemini: {aviso}", AVISO, segundos=0)
+            from facturas_excel.extraccion import PROVEEDOR_CLAUDE, proveedor_lectura
+            quien = ("Gasto de lectura (Claude + Gemini)"
+                     if proveedor_lectura() == PROVEEDOR_CLAUDE else "Gasto de Gemini")
+            self._avisar(f"{quien}: {aviso}", AVISO, segundos=0)
 
     @staticmethod
     def _mismo_archivo(a: str, b: str) -> bool:

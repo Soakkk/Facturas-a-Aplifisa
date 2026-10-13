@@ -7,6 +7,16 @@ El usuario pidió: «el objetivo es que el programa pueda trabajar con PDF de
 alto peso de 100-200 MB para ir sobrados» y «cuando termines sube todo como
 update».
 
+**1.27.0 (13/10/2026): prueba de lectura con Claude.** El usuario pidió poder
+probar la API de Claude (tiene crédito) para ver si lee mejor que Gemini, «sin
+que elimine nada»: desplegable «Quién lee las facturas» en Modelos de lectura,
+`gemini` por defecto (idéntico a antes) o `claude` = Claude Opus 5.5 primera
+lectura + Gemini 3.8 Flash segunda/respaldo, con su API key aparte y un
+esfuerzo bajo/medio/alto (medio por defecto). **Pendiente:** que el usuario
+compare resultados y coste real con facturas suyas y decida si da el paso
+definitivo; medir la salida real por hoja (`SALIDA_POR_FACTURA_CLAUDE` = 2000
+es estimada) y el 429 con su nivel de cuenta (10 hojas a la vez).
+
 **1.26.1 (13/10/2026): estimación directa → «IRPF/IVA».** Aplifisa decide el
 tipo de operación solo por la columna Base IRPF del Excel (probado por el
 usuario: con la base rellena sale «IRPF/IVA»; vacía, o con solo % o cuota a 0,

@@ -27,8 +27,17 @@ def test_la_1_26_2_cuenta_lo_del_nif_con_es():
     """Corta: el NIF español con «ES» delante se quita solo (para que
     Aplifisa reconozca al proveedor y lo deje como interior) y los de otros
     países de la UE siguen avisando."""
-    from facturas_excel import __version__
-    assert __version__ == "1.26.2"
-    texto = notas_version.contenido(__version__)
+    texto = notas_version.contenido("1.26.2")
     assert "ESB12345674" in texto and "B12345674" in texto
     assert "interior" in texto and "otros países de la UE" in texto
+
+
+def test_la_1_27_0_explica_como_probar_claude_y_volver_a_gemini():
+    """Dónde se elige, que hace falta la API key de Claude, lo que cuesta y
+    que lo de siempre sigue a un clic."""
+    from facturas_excel import __version__
+    assert __version__ == "1.27.0"
+    texto = notas_version.contenido(__version__)
+    assert "Quién lee las facturas" in texto
+    assert "API key de Claude" in texto and "Claude Opus 5.5" in texto
+    assert "Gemini (como hasta ahora)" in texto and "0,05 €" in texto

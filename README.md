@@ -209,5 +209,8 @@ Release (exe + instalador + subida a GitHub): `python scripts/release.py`
 ## Privacidad
 
 Las facturas se envían a la API de Gemini solo para extraer sus datos. Con
-facturación activada, Google no usa esos datos para entrenar modelos. Las
+facturación activada, Google no usa esos datos para entrenar modelos. Si en
+Modelos de lectura se elige «Claude Opus 5.5 + Gemini», cada hoja se envía
+también a la API de Claude (Anthropic), que no usa los datos de su API para
+entrenar modelos. Las
 cachés y Excels generados quedan fuera del repositorio (`.gitignore`).
