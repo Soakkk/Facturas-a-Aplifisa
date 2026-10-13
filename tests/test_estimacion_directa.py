@@ -194,6 +194,30 @@ def test_en_directa_cada_linea_sin_retencion_lleva_su_base_irpf(tmp_path, xml):
     assert verificar_excel(lote, config, otra) == []
 
 
+def test_una_factura_que_solo_trae_suplidos_tambien_va_irpf_iva(tmp_path):
+    """La de una gestoría con solo las tasas que pagó por el cliente: al leerla
+    queda una línea sin base y la del suplido. Si el suplido no lleva su Base
+    IRPF, ninguna fila la lleva y el apunte entra «Sólo IVA» (como con las
+    columnas de IRPF vacías). Con honorarios, el suplido sigue sin ella."""
+    config = leer_config(ruta_config("gastos.xml"))
+    solo = [_gasto("S-1", None, pct=None, documento_id="DS", lineas_factura=2),
+            _gasto("S-1", 45.0, pct=None, documento_id="DS", lineas_factura=2,
+                   es_suplido=True)]
+    con_honorarios = [
+        _gasto("S-2", 100.0, documento_id="DH", lineas_factura=2),
+        _gasto("S-2", 45.0, pct=None, documento_id="DH", lineas_factura=2,
+               es_suplido=True)]
+    lote = solo + con_honorarios
+    ruta = str(tmp_path / "suplidos.xlsx")
+    exportar_excel(lote, config, ruta, estimacion_directa=True)
+    assert _columna(ruta, "G") == [None, "45,00", "100,00", None]
+    assert verificar_excel(lote, config, ruta, estimacion_directa=True) == []
+    # Sin directa, como siempre.
+    otra = str(tmp_path / "otro.xlsx")
+    exportar_excel(lote, config, otra)
+    assert _columna(otra, "G") == [None] * 4
+
+
 def test_la_base_sujeta_al_0_y_la_no_sujeta_si_van_en_el_excel(tmp_path):
     """Una línea sin IVA lleva en Base IRPF la base que vaya en el Excel: si
     la configuración da columna a la base sujeta al 0 % o a la no sujeta,

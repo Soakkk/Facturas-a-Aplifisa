@@ -146,15 +146,17 @@ _BASES = ("base_iva", "base_sujeta_cero", "no_sujeta")
 
 
 def base_irpf_directa(factura: Factura,
-                      config: ConfigColumnas | None = None) -> float | None:
+                      config: ConfigColumnas | None = None,
+                      suplido: bool = False) -> float | None:
     """La Base IRPF que lleva en el Excel una línea de un cliente en
     estimación directa que no trae retención: la base con la que va al Excel.
 
     Nada (None) para la línea de un suplido (sumas pagadas en nombre y por
     cuenta del cliente, art. 78.Tres.3.º de la Ley del IVA: no son la
     operación facturada) ni para una línea de importe 0, que no tiene nada
-    que imputar."""
-    if getattr(factura, "es_suplido", False):
+    que imputar. Con ``suplido``, también la del suplido: es la de una
+    factura que no trae otra cosa (ver datos_para_aplifisa)."""
+    if getattr(factura, "es_suplido", False) and not suplido:
         return None
     columnas = config.columnas if config is not None else None
     base = 0.0
@@ -190,10 +192,23 @@ def datos_para_aplifisa(
         return filas
     from .control_facturas import clave_documento
     retenidas = {clave_documento(f) for f in facturas if _con_retencion(f)}
+    con_base = set()
     for factura, datos in zip(facturas, filas):
         if clave_documento(factura) in retenidas:
             continue
         base = base_irpf_directa(factura, config)
+        if base is not None:
+            datos["base_irpf"] = base
+            con_base.add(clave_documento(factura))
+    # Una factura que solo trae suplidos (la de una gestoría con las tasas
+    # que pagó por el cliente) se quedaba sin ninguna Base IRPF: el apunte
+    # entraba «Sólo IVA», como con las columnas de IRPF vacías. Esa, con la
+    # base del suplido, que es su gasto.
+    for factura, datos in zip(facturas, filas):
+        clave = clave_documento(factura)
+        if clave in retenidas or clave in con_base:
+            continue
+        base = base_irpf_directa(factura, config, suplido=True)
         if base is not None:
             datos["base_irpf"] = base
     return filas
