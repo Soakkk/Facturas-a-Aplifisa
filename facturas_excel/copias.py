@@ -305,6 +305,12 @@ def restaurar(ruta_copia: str) -> Restauracion:
             except FileNotFoundError:
                 pass
         os.replace(temporal, db)
+    # La copia puede ser de una versión anterior (las diarias de antes de
+    # instalar la 1.26.2 tienen los NIF con «ES»): su registro se convierte
+    # ya, no al volver a abrir el programa. Mientras, la misma factura
+    # leída otra vez no salía «YA EXPORTADA».
+    from . import registro_facturas
+    registro_facturas.olvidar_migraciones()
     if ajustes.leer("carpeta_escaneos", None) != carpeta_doc:
         ajustes.guardar("carpeta_escaneos", carpeta_doc)
     resultado = Restauracion(antes)

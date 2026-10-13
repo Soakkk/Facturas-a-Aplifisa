@@ -203,6 +203,15 @@ def _migrar_claves_sin_nif(carpeta: str) -> None:
 _sin_es_migradas: set = set()
 
 
+def olvidar_migraciones() -> None:
+    """Las conversiones de una sola vez se vuelven a mirar en la base (cada
+    una consulta si ya consta hecha en ella). Para después de restaurar una
+    copia de seguridad, que puede ser de una versión anterior: si no, su
+    registro se quedaba sin convertir hasta volver a abrir el programa."""
+    for hechas in (_migrados, _claves_migradas, _sin_es_migradas):
+        hechas.clear()
+
+
 def _migrar_prefijo_es(carpeta: str) -> None:
     """Una sola vez (1.26.2): las fichas apuntadas con un NIF español con el
     «ES» del NIF-IVA delante (el del cliente o el de la otra parte) pasan a

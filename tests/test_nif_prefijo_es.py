@@ -460,6 +460,22 @@ def test_la_misma_factura_apuntada_con_y_sin_es_queda_en_una_ficha():
     assert ficha["leida_en"] and ficha["exportada_en"]
 
 
+def test_restaurar_una_copia_de_antes_de_la_1262_tambien_la_pasa_a_sin_es():
+    """Las copias de seguridad diarias de antes de instalar la 1.26.2 tienen
+    el registro con «ES». Restaurada una con el programa abierto, se quedaba
+    así hasta volver a abrirlo (la conversión constaba como hecha): la misma
+    factura leída otra vez no salía «YA EXPORTADA», y se podía mandar dos
+    veces a Aplifisa."""
+    from facturas_excel import copias
+    _registro_viejo(_factura(numero="F-1"))
+    copia = copias.hacer("a mano")             # como la diaria de la 1.26.1
+    assert historial.buscar(CLIENTE, _factura(numero="F-1"), "gasto")
+    copias.restaurar(copia)
+    ya = historial.buscar(CLIENTE, _factura(numero="F-1"), "gasto")
+    assert ya and ya["nif"] == PROVEEDOR
+    assert [nif for nif, _ in registro_facturas.clientes()] == [CLIENTE]
+
+
 # --------------------------------------------------- listado de Aplifisa
 def test_el_listado_con_un_nif_con_es_cuadra_con_el_del_programa():
     apunte = registro.Apunte(numero="1", fecha="10/03/2026", nif="ESB12345674",
