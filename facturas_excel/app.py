@@ -62,6 +62,7 @@ from facturas_excel.procesar import (
     a_total_factura, clave_proveedor, construir, nombre_preferido,
     nombres_guardados, normaliza_nif,
     ficha_de_cuenta, nombre_sin_letra, quitar_aviso_cuenta,
+    quitar_prefijo_es_del_lote,
     recordar_cuenta_proveedor, recordar_nif,
     recordar_nombre_proveedor, unificar_nombres_por_nif,
 )
@@ -78,7 +79,7 @@ from facturas_excel.tabla_facturas import (  # noqa: F401
     C_GXX, C_NIF, C_NOMBRE, C_NUM, C_PCT, C_PCT_IRPF, C_PCT_RE, C_TIPO, C_TOTAL,
     ComboSinRueda, TablaFacturas, fmt, parse_numero, valor_de_celda,
 )
-from facturas_excel.validacion import REVISAR, validar_nif
+from facturas_excel.validacion import REVISAR, quitar_prefijo_es, validar_nif
 from facturas_excel.ventana_validacion import MENSAJES_DE_ESTADO
 
 # Datos de la cabecera de una factura (iguales en todas sus líneas).
@@ -1996,7 +1997,19 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             convertir.bloques(self._bloques)
             for fila in datos.get("filas", []):
                 fila["png"] = convertir(fila.get("png"))
-            self._cliente_nif = datos.get("cliente_nif", "")
+            # Lotes de antes de la 1.26.2: el NIF español con el «ES» del
+            # NIF-IVA delante (el del cliente o el de un proveedor) se queda
+            # sin él, como al leerlo hoy: así sale en la tabla y en el Excel.
+            self._cliente_nif = quitar_prefijo_es(datos.get("cliente_nif", ""))
+            for bloque in self._bloques:
+                if isinstance(bloque.get("nif"), str):
+                    bloque["nif"] = quitar_prefijo_es(bloque["nif"])
+            guardadas = (
+                [x for fila in datos.get("filas", [])
+                 for x in (fila["factura"], *(fila.get("fuentes") or ()))]
+                + [f for bloque in self._bloques
+                   for _, pr in bloque.get("procesadas", []) for f in pr.facturas])
+            quitar_prefijo_es_del_lote(guardadas)
             self._cliente_nombre = datos.get("cliente_nombre", "")
             self._periodo_manual_valor = datos.get("periodo_modo", "auto")
             self._localizaciones = {
@@ -2021,11 +2034,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             self._reparar_abonos_emitidos_guardados(datos.get("filas", []))
             # Lotes de antes: el mismo NIF podía quedarse con dos nombres.
             unificadas = unificar_nombres_por_nif(
-                [x for fila in datos.get("filas", [])
-                 for x in (fila["factura"], *(fila.get("fuentes") or ()))]
-                + [f for bloque in self._bloques
-                   for _, pr in bloque.get("procesadas", []) for f in pr.facturas],
-                nombres_guardados(solo_a_mano=True))
+                guardadas, nombres_guardados(solo_a_mano=True))
             # Lotes de la 1.24.0: una línea «revisada» con un nombre que trae
             # un carácter invisible se revisó sin el aviso del nombre (no
             # existía) y saldría a Aplifisa sin esa letra: vuelve a pendiente.
@@ -2897,6 +2906,10 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
                 factura = registro.factura
                 cambiado = getattr(factura, campo, None) != valor
                 setattr(factura, campo, valor)
+                if columna == C_NIF and (valor or "") != item.text():
+                    # Se le quitó el «ES» del NIF-IVA (o un carácter que no
+                    # se ve): la celda enseña el NIF que va a ir al Excel.
+                    self.tabla.pintar(item.row(), registro, (C_NIF,))
                 if campo in ("cuota_iva", "cuota_requiv"):
                     # Escrita a mano (aunque sea la leída, para darla por
                     # buena), la cuota de una fila de líneas juntadas ya no

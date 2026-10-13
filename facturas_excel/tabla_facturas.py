@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from .conceptos import SUBCLAVES_628
 from .lote import CAMPOS_IRPF, CAMPOS_RECARGO, Fila, hay_datos
-from .validacion import ERROR
+from .validacion import ERROR, quitar_prefijo_es
 
 # Un SUPLIDO no tiene columna propia: va como una linea mas del mismo apunte,
 # con su base y sin % ni cuota de IVA (es como lo registra Aplifisa).
@@ -127,7 +127,13 @@ def valor_de_celda(columna: int, texto: str):
         return campo, (texto or "").strip().upper() or None
     # Un pegado puede traer un carácter invisible (copiado de un PDF).
     from .texto import limpiar
-    return campo, limpiar(texto)[0] or None
+    valor = limpiar(texto)[0] or None
+    if columna == C_NIF:
+        # Un NIF español escrito o pegado con el «ES» del NIF-IVA delante
+        # (ESB12345674) se queda sin él, como al leerlo: con «ES» Aplifisa no
+        # reconoce al proveedor de siempre.
+        valor = quitar_prefijo_es(valor)
+    return campo, valor
 
 
 class _SinRueda:

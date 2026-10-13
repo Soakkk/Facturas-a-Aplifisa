@@ -105,6 +105,12 @@ def _iguales(campo: str, a, b) -> bool:
         if fa and fb:
             return fa == fb
         return _texto(a) == _texto(b)
+    if campo in ("emisor_nif", "receptor_nif"):
+        # ESB12345674 y B12345674 son el mismo NIF (el primero, con el «ES»
+        # del NIF-IVA): que un modelo lo copie con él y otro sin él no es
+        # una discrepancia.
+        from .validacion import quitar_prefijo_es
+        return quitar_prefijo_es(_texto(a)) == quitar_prefijo_es(_texto(b))
     return _texto(a) == _texto(b)
 
 
@@ -190,14 +196,17 @@ def texto_diferencia(d: dict, modelo_1: str = "", modelo_2: str = "") -> str:
 
 def es_dudosa(datos: dict) -> bool:
     """Si una lectura merece una segunda opinion (modo «solo dudosas»)."""
-    from .validacion import validar_nif
+    from .validacion import quitar_prefijo_es, validar_nif
     if str(datos.get("confianza") or "").strip().lower() != "alta":
         return True
     if datos.get("manuscrito_en_importes"):
         return True
     for campo in ("emisor_nif", "receptor_nif"):
         valor = datos.get(campo)
-        if valor and not validar_nif(re.sub(r"[\s.-]", "", str(valor))):
+        # Un NIF español con el «ES» del NIF-IVA delante es bueno: el
+        # programa le quita el «ES»; no merece pagar otra lectura.
+        if valor and not validar_nif(quitar_prefijo_es(
+                re.sub(r"[\s.-]", "", str(valor)))):
             return True
     total = _numero(datos.get("total"))
     lineas = _lineas(datos)

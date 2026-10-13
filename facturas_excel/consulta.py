@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from .modelo import Factura
-from .validacion import fecha_de
+from .validacion import fecha_de, quitar_prefijo_es
 
 
 MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -76,6 +76,9 @@ def coincide_busqueda(factura: Factura, texto: str) -> bool:
         )
         return any(v is not None and abs(float(v) - importe) <= 0.005
                    for v in valores)
+    # Un NIF buscado como viene en el papel, con el «ES» del NIF-IVA
+    # delante (ESB12345674), es el de la fila, que va ya sin él.
+    texto = " ".join(quitar_prefijo_es(p) for p in str(texto).split())
     consulta_original = normalizar_texto(texto).split()
     consulta = [token for token in consulta_original
                 if token not in FORMAS_JURIDICAS] or consulta_original

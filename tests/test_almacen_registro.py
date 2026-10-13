@@ -36,6 +36,7 @@ def _sin_base_de_datos():
     almacen._migradas.clear()
     registro_facturas._migrados.clear()
     registro_facturas._claves_migradas.clear()
+    registro_facturas._sin_es_migradas.clear()
 
 
 # ------------------------------------------------------------ migración

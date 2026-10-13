@@ -74,8 +74,14 @@ def _valor_celda(campo: str, valor, modo: str):
             return None
 
     # Aplifisa: el NIF de la cuenta no puede llevar puntos, espacios ni guiones.
+    # Ni el «ES» del NIF-IVA delante de uno español: con él no reconoce al
+    # proveedor de siempre y le abre otra cuenta (que puede quedar como
+    # intracomunitaria). El programa ya lo quita al leer y al escribirlo; si
+    # aun así llega uno (la fila avisa en ámbar), al Excel va sin él.
     if campo == "nif":
-        return str(valor).strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+        from .validacion import quitar_prefijo_es
+        return quitar_prefijo_es(
+            str(valor).strip().upper().replace(".", "").replace(" ", "").replace("-", ""))
 
     if campo == "nombre":
         return _recortar_nombre(valor)
