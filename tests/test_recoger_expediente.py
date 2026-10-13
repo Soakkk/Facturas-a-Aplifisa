@@ -162,7 +162,7 @@ def test_exportar_guarda_el_excel_y_actualiza_el_expediente(entorno, monkeypatch
     from facturas_excel import archivo
 
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):

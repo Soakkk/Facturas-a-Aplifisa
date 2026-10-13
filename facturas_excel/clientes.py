@@ -1,8 +1,9 @@
 """Lo que hay que recordar de cada cliente de la asesoria, por NIF.
 
-De momento solo si esta en RECARGO DE EQUIVALENCIA (no deduce IVA: sus gastos se
-registran por el total de la factura). Se guarda en %APPDATA%\\FacturasAplifisa
-para no tener que marcarlo en cada lote.
+Su regimen de IVA (RECARGO DE EQUIVALENCIA, sin derecho a deducir...: sus
+gastos se registran por el total de la factura) y su regimen de IRPF (si esta
+en ESTIMACION DIRECTA, sus apuntes van a Aplifisa como «IRPF/IVA»). Se guarda
+en %APPDATA%\\FacturasAplifisa para no tener que marcarlo en cada lote.
 """
 
 from __future__ import annotations
@@ -281,5 +282,61 @@ def guardar_regimen_recargo(nif, regimen: str, nombre: str = "") -> None:
     ficha["regimen_recargo"] = regimen
     ficha["recargo_equivalencia"] = (regimen == TOTAL)   # por si lo lee algo viejo
     if nombre:
+        ficha["nombre"] = nombre
+    _guardar_ficha(nif, todo[nif])
+
+
+# ---------------------------------------------------------- regimen de IRPF
+# Un cliente en ESTIMACION DIRECTA lleva sus ingresos y gastos en Aplifisa
+# como tipo de operacion «IRPF/IVA»: es lo que hace que cuenten en su IRPF.
+# Los demas (modulos, sociedades) van como «Sólo IVA». Al importar el Excel,
+# Aplifisa lo decide SOLO por la columna Base IRPF (lo comprobó el usuario con
+# filas de prueba: ver exportar.datos_para_aplifisa), así que el programa
+# tiene que saber quien esta en directa. No se ve en las facturas: se pregunta
+# una vez por cliente y se recuerda.
+DIRECTA = "directa"      # estimacion directa (normal o simplificada): IRPF/IVA
+OTRO = "otro"            # modulos, o no tributa por IRPF: Sólo IVA
+REGIMENES_IRPF = (DIRECTA, OTRO)
+
+
+def puede_tributar_irpf(nif) -> bool:
+    """Si este cliente puede llevar su actividad por el IRPF.
+
+    Las personas fisicas (DNI, NIE) y las entidades en atribucion de rentas
+    (comunidades de bienes, E; sociedades civiles, J), cuyas rentas se
+    atribuyen a sus socios o comuneros, que tributan por el IRPF (art. 8.3 de
+    la Ley del IRPF). Una sociedad civil con objeto mercantil va por
+    Sociedades (art. 7.1.a de la Ley del IS): por eso a la J se le pregunta
+    como a las demas. Una sociedad o cualquier otra persona juridica
+    (_PERSONAS_JURIDICAS: S.A., S.L., cooperativas, asociaciones...) va por
+    el Impuesto sobre Sociedades: nunca en estimacion directa. Con el NIF
+    vacio no se descarta nada: no se sabe quien es."""
+    return puede_estar_en_recargo(nif)   # la misma regla, por la letra del NIF
+
+
+def regimen_irpf(nif) -> str:
+    """DIRECTA, OTRO, o "" si aun no se ha dicho (entonces hay que
+    preguntarlo antes de exportar). Una sociedad es siempre OTRO, aunque se
+    guardara otra cosa; la ficha de un cliente de antes de la 1.26.1 no tiene
+    el dato: ""."""
+    nif = _normaliza(nif)
+    if not nif:
+        return ""
+    if not puede_tributar_irpf(nif):
+        return OTRO
+    guardado = _leer_todo().get(nif, {}).get("regimen_irpf")
+    return guardado if guardado in REGIMENES_IRPF else ""
+
+
+def guardar_regimen_irpf(nif, regimen: str, nombre: str = "") -> None:
+    nif = _normaliza(nif)
+    if not nif or regimen not in REGIMENES_IRPF + ("",):
+        return
+    if regimen == DIRECTA and not puede_tributar_irpf(nif):
+        return                   # una sociedad no puede estar en directa
+    todo = _leer_todo()
+    ficha = todo.setdefault(nif, {})
+    ficha["regimen_irpf"] = regimen
+    if nombre and not _roto(nombre):
         ficha["nombre"] = nombre
     _guardar_ficha(nif, todo[nif])

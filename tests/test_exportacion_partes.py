@@ -35,7 +35,7 @@ def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
     ventana._revalidar_todo()
 
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):
@@ -60,7 +60,7 @@ def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
     monkeypatch.setattr(ventana_aplifisa, "leer_config", lambda ruta: object())
     monkeypatch.setattr(ventana_aplifisa, "exportar_excel",
                         lambda facturas, config, ruta, **_k: escritos.append(ruta))
-    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *args: [])
+    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *args, **_k: [])
     monkeypatch.setattr(ventana_aplifisa, "totales_del_excel",
                         lambda *args: {"base_iva": 200, "cuota_iva": 42})
     monkeypatch.setattr(modulo_app.QMessageBox, "information", lambda *args: None)
@@ -74,7 +74,7 @@ def test_exporta_solo_el_excel_consolidado_en_el_escritorio(
 
 
 class _Orden:
-    def __init__(self, parent):
+    def __init__(self, parent, **_k):
         pass
 
     def exec(self):
@@ -166,7 +166,7 @@ def test_un_excel_que_no_cuadra_no_se_queda_con_el_nombre_bueno(tmp_path, monkey
     ventana, criticos = _ventana_para_exportar(tmp_path, monkeypatch)
     verificar = ventana_aplifisa.verificar_excel
     monkeypatch.setattr(ventana_aplifisa, "verificar_excel",
-                        lambda *a: ["línea 2: el nº no coincide"])
+                        lambda *a, **_k: ["línea 2: el nº no coincide"])
     ventana._exportar_todo()
     assert criticos and "NO IMPORTAR - GASTOS_CLIENTE PRUEBA.xlsx" in criticos[-1][2]
     assert sorted(p.name for p in tmp_path.glob("*.xlsx")) == [

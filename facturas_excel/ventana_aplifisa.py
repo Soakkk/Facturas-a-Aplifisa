@@ -18,6 +18,10 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from facturas_excel import ajustes, archivo, escaner, historial
 from facturas_excel import errores as registro_errores
 from facturas_excel.banda_avisos import AVISO, EXITO, INFO, fuera_del_lote
+from facturas_excel.clientes import (
+    DIRECTA, guardar_regimen_irpf, regimen_irpf,
+)
+from facturas_excel.dialogo_irpf import DialogoIrpf, texto_tipo_operacion
 from facturas_excel.dialogo_orden import (
     PDF as ORDEN_PDF, DialogoOrden,
 )
@@ -460,9 +464,18 @@ class AplifisaMixin:
                 "del lote están duplicadas o ya se exportaron.")
             return
 
+        # Cómo entran los apuntes en Aplifisa (IRPF/IVA o Sólo IVA): según el
+        # régimen de IRPF del cliente. Si aún no se sabe, se pregunta ahora; sin
+        # respuesta no se exporta (saldría todo «Sólo IVA» a ciegas).
+        directa = self._estimacion_directa_al_exportar()
+        if directa is None:
+            return
+        tipo_operacion = texto_tipo_operacion(
+            directa, sin_cliente=not getattr(self, "_cliente_nif", ""))
+
         # El orden manda: Aplifisa renumera las facturas recibidas segun entran,
         # asi que este orden es el que tendran en el registro.
-        dialogo_orden = DialogoOrden(self)
+        dialogo_orden = DialogoOrden(self, tipo_operacion=tipo_operacion)
         if dialogo_orden.exec() != QDialog.Accepted:
             return
         dialogo_orden.recordar()
@@ -495,7 +508,8 @@ class AplifisaMixin:
                 config = leer_config(ruta_config(xml))
                 listas = self._para_aplifisa(por_tipo[tipo])
                 try:
-                    exportar_excel(listas, config, ruta, solo_nuevo=True)
+                    exportar_excel(listas, config, ruta, solo_nuevo=True,
+                                   estimacion_directa=directa)
                 except FileExistsError:
                     raise              # no es nuestro: no se toca
                 except Exception:
@@ -507,7 +521,8 @@ class AplifisaMixin:
                 # DOBLE CONTRASTE: se vuelve a leer el archivo escrito y se
                 # compara con lo que hay en pantalla. Es el ultimo paso antes
                 # de que los apuntes entren en la contabilidad.
-                fallos = verificar_excel(listas, config, ruta)
+                fallos = verificar_excel(listas, config, ruta,
+                                         estimacion_directa=directa)
                 problemas_export.extend(f"{nombre}: {p}" for p in fallos[:5])
                 resumen_archivos.append(
                     (ruta, len(listas), totales_del_excel(config, ruta)))
@@ -576,6 +591,7 @@ class AplifisaMixin:
             f"Guardados en el Escritorio:\n{carpetas}\n\n"
             + ("En el orden del PDF escaneado.\n" if orden == ORDEN_PDF
                else "Por fecha de factura.\n")
+            + f"{tipo_operacion}.\n"
             + "".join(
                 f"Ya había un «{os.path.basename(propia)}» en el Escritorio y "
                 f"no se ha tocado: el nuevo es «{os.path.basename(ruta)}».\n"
@@ -602,6 +618,39 @@ class AplifisaMixin:
         except Exception as error:
             registro_errores.apuntar(traceback.format_exc())
             self._avisar(aviso + texto_fallo_archivo(error), EXITO, segundos=0)
+
+    def _estimacion_directa_al_exportar(self) -> bool | None:
+        """Si los apuntes de este cliente van a Aplifisa como «IRPF/IVA»
+        (estimación directa). None: no se sabe y no se ha dicho, así que no
+        se exporta.
+
+        Se pregunta una sola vez por cliente, aquí y no al leer (la lectura
+        no se para por esto). No se pregunta a una sociedad (no tributa por
+        el IRPF: siempre «Sólo IVA»), ni sin NIF del cliente (no habría dónde
+        recordarlo: «Sólo IVA», como siempre), ni con el programa cerrándose.
+        """
+        nif = getattr(self, "_cliente_nif", "")
+        if not nif:
+            return False
+        regimen = regimen_irpf(nif)
+        if not regimen:
+            if getattr(self, "_cerrando", False):
+                return None
+            regimen = self._preguntar_regimen_irpf()
+            if not regimen:
+                return None
+        return regimen == DIRECTA
+
+    def _preguntar_regimen_irpf(self, actual: str = "") -> str:
+        """Pregunta si el cliente está en estimación directa y lo guarda.
+        Devuelve DIRECTA, OTRO, o "" si se cancela (no se guarda nada)."""
+        nif = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        dialogo = DialogoIrpf(nombre, self, elegido=actual)
+        if dialogo.exec() != QDialog.Accepted or not dialogo.elegido():
+            return ""
+        guardar_regimen_irpf(nif, dialogo.elegido(), nombre)
+        return dialogo.elegido()
 
     def _avisar_archivo(self, aviso: str, texto_archivo: str, problemas: bool) -> None:
         """Lo archivado, al final del aviso de la exportación (como cuando se
