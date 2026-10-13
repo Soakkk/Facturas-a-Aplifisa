@@ -70,15 +70,18 @@ class DialogoIrpf(QDialog):
                                                QDialogButtonBox.ActionRole)
         self.boton_otro = botones.addButton(TITULO_OTRO,
                                             QDialogButtonBox.ActionRole)
-        botones.addButton(QDialogButtonBox.Cancel)
+        cancelar = botones.addButton(QDialogButtonBox.Cancel)
         self.boton_directa.clicked.connect(lambda: self._elegir(DIRECTA))
         self.boton_otro.clicked.connect(lambda: self._elegir(OTRO))
         botones.rejected.connect(self.reject)
-        # Desde Configuración, lo que ya tenía, a mano para el Intro.
-        actual = {DIRECTA: self.boton_directa, OTRO: self.boton_otro}.get(elegido)
-        if actual is not None:
-            actual.setDefault(True)
-            actual.setFocus()
+        # Desde Configuración, lo que ya tenía, a mano para el Intro. La
+        # primera vez no hay nada que proponer: el Intro cancela (no se
+        # exporta). Sin esto el foco caía en «Sí» y Qt lo daba por pulsado
+        # con el Intro: el cliente quedaba en directa sin que nadie lo dijera.
+        actual = {DIRECTA: self.boton_directa,
+                  OTRO: self.boton_otro}.get(elegido, cancelar)
+        actual.setDefault(True)
+        actual.setFocus()
         raiz.addWidget(botones)
 
     def _elegir(self, regimen: str) -> None:

@@ -478,3 +478,21 @@ def test_la_pantalla_de_exportar_dice_como_iran():
     assert dialogo.lbl_tipo_operacion.text() == linea
     assert not dialogo.lbl_tipo_operacion.isHidden()
     assert DialogoOrden(None).lbl_tipo_operacion.isHidden()
+
+
+def test_el_intro_no_contesta_por_el_asesor():
+    """La primera vez no hay respuesta que proponer, y el Intro no puede
+    guardar una para siempre: con el foco en el primer botón, Qt lo daba por
+    pulsado y el cliente quedaba «en estimación directa» sin que nadie lo
+    eligiera. El Intro cancela (no se exporta); desde Configuración deja lo
+    que ya tenía."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    for actual, esperado in (("", ""), (clientes.DIRECTA, clientes.DIRECTA),
+                             (clientes.OTRO, clientes.OTRO)):
+        dialogo = DialogoIrpf("AUTÓNOMO", elegido=actual)
+        dialogo.show()
+        _app.processEvents()
+        QTest.keyClick(dialogo, Qt.Key_Return)
+        assert dialogo.elegido() == esperado, actual
+    assert dialogo.result() == QDialog.Accepted
