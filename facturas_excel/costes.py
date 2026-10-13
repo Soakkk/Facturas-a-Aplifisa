@@ -44,7 +44,12 @@ PRECIOS: Dict[str, Tuple[float, float]] = {
 PRECIO_DESCONOCIDO = (0.75, 3.75)
 
 EUROS_POR_DOLAR = 0.92     # aproximado; se puede afinar en ajustes.json
-TOPE_POR_DEFECTO = 5.0     # euros al mes (el limite que tiene puesto en Google)
+# Euros al mes. Era 5 (el limite que tiene puesto en Google); el 13/10/2026,
+# para probar la lectura con Claude, el usuario pidio 20 € (Claude + Gemini).
+TOPE_POR_DEFECTO = 20.0
+# Ese cambio a 20 € se aplica UNA vez al actualizar a la 1.27.0, aunque
+# tuviera guardado otro; si despues lo cambia a mano, manda lo suyo.
+_TOPE_1_27_APLICADO = "tope_20_euros_1_27"
 
 _FICHERO = "gasto.json"
 
@@ -144,7 +149,19 @@ def facturas_del_mes(dia: Optional[date] = None) -> int:
     return int(_leer().get("meses", {}).get(mes(dia), {}).get("facturas", 0))
 
 
+def _subir_tope_una_vez() -> None:
+    """El tope pasa a 20 € una sola vez (ver TOPE_POR_DEFECTO)."""
+    try:
+        if ajustes.leer(_TOPE_1_27_APLICADO):
+            return
+        ajustes.guardar(_TOPE_1_27_APLICADO, True)
+        ajustes.guardar("tope_mensual", TOPE_POR_DEFECTO)
+    except Exception:
+        pass  # no poder guardarlo no debe tumbar la app
+
+
 def tope() -> float:
+    _subir_tope_una_vez()
     try:
         return float(ajustes.leer("tope_mensual", TOPE_POR_DEFECTO))
     except (TypeError, ValueError):
@@ -152,6 +169,8 @@ def tope() -> float:
 
 
 def guardar_tope(euros: float) -> None:
+    # Lo que pone el usuario manda sobre el cambio a 20 € de la 1.27.0.
+    ajustes.guardar(_TOPE_1_27_APLICADO, True)
     ajustes.guardar("tope_mensual", round(float(euros), 2))
 
 

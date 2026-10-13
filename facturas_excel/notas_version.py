@@ -30,8 +30,9 @@ NOTAS = {
   <li><b>Coste:</b> con Claude, cada hoja cuesta unos 0,05 € más la lectura de
       Gemini (con Gemini solo, menos de 0,01 €). Abajo, en el gasto, sale lo
       que ha costado cada bloque de Claude y de Gemini y cuánto sale por hoja.
-      Conviene subir el tope de gasto del mes
-      (Configuración → Tope de gasto al mes) mientras pruebas.</li>
+      <b>El tope de gasto del mes pasa a 20 €</b> (Claude y Gemini juntos):
+      avisa al llegar al 80 % y al pasarlo. Se cambia en Configuración →
+      Tope de gasto al mes.</li>
   <li>Para volver a lo de antes, basta elegir «Gemini (como hasta ahora)».</li>
 </ul>
 """,

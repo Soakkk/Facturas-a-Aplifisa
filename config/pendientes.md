@@ -14,8 +14,9 @@ viene puesto, o **Claude Opus 5.5 + Gemini (prueba)**: lee primero Claude Opus
 5.5 y después Gemini 3.8 Flash, y se comparan como siempre.
 
 **Para probarlo:** pega la API key de Claude (Configuración → API key de
-Claude…), elige Claude en el desplegable, sube el tope de gasto del mes y lee
-facturas que Gemini lea regular. **Lo que necesito saber:** si Claude acierta
+Claude…), elige Claude en el desplegable y lee facturas que Gemini lea
+regular. El tope de gasto del mes ya está en 20 €, como pediste (solo avisa;
+el límite de verdad de Claude se pone en platform.claude.com). **Lo que necesito saber:** si Claude acierta
 más (NIF, bases, recargo, cuentas), si tarda demasiado y cuánto cuesta cada
 hoja de verdad (abajo, en el gasto, sale lo de Claude, lo de Gemini y el
 precio por hoja de cada bloque). Si Claude no lee alguna hoja, al acabar el

@@ -720,3 +720,15 @@ def test_con_gemini_lo_ultimo_de_claude_no_cambia_la_estimacion():
     assert costes.coste_por_factura(150) == costes.coste_por_factura(
         150, "gemini-3.8-flash")
     assert antes < 0.01
+
+
+# ------------------------------------- tope de 20 € (pedido el 13/10/2026)
+def test_el_tope_del_mes_pasa_a_20_euros_una_sola_vez():
+    ajustes.guardar("tope_mensual", 5.0)          # lo que tenía antes
+    assert costes.tope() == 20.0                  # al actualizar, 20 €
+    costes.guardar_tope(12.0)                     # si luego lo cambia…
+    assert costes.tope() == 12.0                  # …manda lo suyo
+
+
+def test_sin_tope_guardado_tambien_son_20_euros():
+    assert costes.tope() == 20.0
