@@ -496,3 +496,23 @@ def test_el_intro_no_contesta_por_el_asesor():
         QTest.keyClick(dialogo, Qt.Key_Return)
         assert dialogo.elegido() == esperado, actual
     assert dialogo.result() == QDialog.Accepted
+
+
+def test_con_la_letra_grande_las_respuestas_se_leen_enteras():
+    """Con la letra más grande (escalado de Windows), los dos botones de la
+    respuesta no caben en el ancho mínimo de 520: la ventana se quedaba en
+    él y cortaba «Sí, estimación directa (IRPF/IVA)». Tiene que crecer."""
+    from PySide6.QtWidgets import QPushButton
+    normal = _app.font()
+    grande = type(normal)(normal)
+    grande.setPointSizeF(normal.pointSizeF() * 1.4)
+    _app.setFont(grande)
+    try:
+        dialogo = DialogoIrpf("AUTÓNOMO")
+        dialogo.show()
+        _app.processEvents()
+        for boton in dialogo.findChildren(QPushButton):
+            assert boton.width() >= boton.sizeHint().width(), boton.text()
+        dialogo.close()
+    finally:
+        _app.setFont(normal)

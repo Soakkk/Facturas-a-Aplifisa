@@ -83,6 +83,10 @@ class DialogoIrpf(QDialog):
         actual.setDefault(True)
         actual.setFocus()
         raiz.addWidget(botones)
+        # Con la letra grande (escalado de Windows) los dos botones no caben
+        # en 520: con un ancho mínimo puesto a mano la ventana no crecía y
+        # cortaba la respuesta. Lo que necesiten, como poco.
+        self.setMinimumWidth(max(520, self.minimumSizeHint().width()))
 
     def _elegir(self, regimen: str) -> None:
         self._elegido = regimen
