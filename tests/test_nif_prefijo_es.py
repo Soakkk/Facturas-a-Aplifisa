@@ -300,6 +300,21 @@ def test_con_las_dos_fichas_manda_la_de_sin_es():
     assert clientes._leer_todo()["ESB12345670"] == {"nombre": "DUDOSO"}
 
 
+def test_un_es_dudoso_no_cambia_la_letra_que_dice_si_es_sociedad():
+    """ESB12345670 (un dígito mal leído) se queda tal cual, pero para la ley
+    sigue siendo una B, una sociedad: ni recargo (art. 148 LIVA) ni
+    estimación directa. Hasta la 1.26.1 se miraba la letra de detrás del
+    «ES»; si se mira la «E» del «ES», pasaba por comunidad de bienes."""
+    assert quitar_prefijo_es("ESB12345670") == "ESB12345670"
+    assert not clientes.puede_estar_en_recargo("ESB12345670")
+    assert not clientes.puede_tributar_irpf("ESB12345670")
+    assert clientes.regimen_irpf("ESB12345670") == clientes.OTRO
+    clientes.guardar_regimen_irpf("ESB12345670", clientes.DIRECTA)
+    assert clientes.regimen_irpf("ESB12345670") == clientes.OTRO
+    # Un DNI mal leído con «ES» delante sigue siendo una persona física.
+    assert clientes.puede_estar_en_recargo("ES12345678A")
+
+
 def test_el_directorio_de_la_suite_con_es_es_el_mismo_cliente():
     ruta = suite.ruta_directorio()
     os.makedirs(os.path.dirname(ruta), exist_ok=True)

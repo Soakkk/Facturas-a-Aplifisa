@@ -269,6 +269,12 @@ def puede_estar_en_recargo(nif) -> bool:
 
     Con el NIF vacio no se descarta nada: no se sabe quien es."""
     nif = _normaliza(nif)              # sin el «ES» del NIF-IVA
+    if len(nif) == 11 and nif.startswith("ES"):
+        # «ES» delante de un NIF que no pasa el control (un dígito mal
+        # leído): el dato se queda tal cual, dudoso, pero quién es lo dice
+        # la letra de detrás. ESB12345670 es una sociedad mal leída, no una
+        # «E» (comunidad de bienes) que pudiera estar en recargo.
+        nif = nif[2:]
     return not nif or nif[0] not in _PERSONAS_JURIDICAS
 
 
