@@ -373,6 +373,27 @@ def test_el_directorio_de_la_suite_con_es_es_el_mismo_cliente():
         assert list(json.load(fh)["clientes"]) == ["ESB12345674"]
 
 
+@pytest.mark.parametrize("orden", [("B12345674", "ESB12345674"),
+                                   ("ESB12345674", "B12345674")])
+def test_en_el_directorio_de_la_suite_con_las_dos_formas_manda_la_de_sin_es(orden):
+    """El directorio común puede tener al cliente de las dos formas (otro
+    programa, o este antes de la 1.26.2, lo apuntó con «ES»). Como en las
+    fichas de clientes, manda la de sin «ES», sea cual sea el orden del
+    fichero, y no se le apuntan cosas a la otra."""
+    entradas = {"B12345674": {"nif": "B12345674", "nombre": "CLIENTE PRUEBA SL"},
+                "ESB12345674": {"nif": "ESB12345674", "nombre": "NOMBRE VIEJO SL"}}
+    ruta = suite.ruta_directorio()
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1,
+                   "clientes": {k: entradas[k] for k in orden}}, fh)
+    assert suite.nombre_de(PROVEEDOR) == "CLIENTE PRUEBA SL"
+    assert suite.nombre_de("ESB12345674") == "CLIENTE PRUEBA SL"
+    assert not suite.registrar_cliente(PROVEEDOR, "CLIENTE PRUEBA SL")
+    with open(ruta, encoding="utf-8") as fh:
+        assert json.load(fh)["clientes"] == entradas
+
+
 # ------------------------------------------------- registro de exportadas
 def _registro_viejo(*facturas, cliente=CLIENTE, quedan_las_nuevas=False):
     """Lo exportado como lo apuntaba una versión anterior: con el NIF del
