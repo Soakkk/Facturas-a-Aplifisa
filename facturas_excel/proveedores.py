@@ -16,6 +16,7 @@ import os
 from typing import Dict, Optional
 
 from .rutas import dir_datos
+from .validacion import quitar_prefijo_es
 
 _FICHERO = "proveedores.json"
 
@@ -31,7 +32,19 @@ def _col():
 
 
 def leer_todo() -> Dict[str, dict]:
-    return {k: v for k, v in _col().leer_todo().items() if isinstance(v, dict)}
+    return {k: _sin_prefijo_es(v) for k, v in _col().leer_todo().items()
+            if isinstance(v, dict)}
+
+
+def _sin_prefijo_es(ficha: dict) -> dict:
+    """Una ficha de antes de la 1.26.2 puede tener el NIF con el «ES» del
+    NIF-IVA delante (ESB12345674): se lee sin él, que es como lo lee hoy el
+    programa. Si no, ni se encontraba al proveedor por su NIF ni se ponía
+    bien su NIF de memoria (salía con «ES» al Excel). Al guardarla otra vez,
+    queda ya sin él."""
+    nif = ficha.get("nif")
+    sin_es = quitar_prefijo_es(nif)
+    return ficha if sin_es == nif else {**ficha, "nif": sin_es}
 
 
 def leer(clave: str) -> Optional[dict]:
@@ -135,6 +148,7 @@ def buscar_clave_por_nif(nif: str) -> tuple:
     if not nif:
         return None, None
     from .texto import tiene_invisibles
+    nif = quitar_prefijo_es(str(nif).upper())
     todo = leer_todo()
     fichas = [(k, todo[k]) for k in sorted(todo)
               if isinstance(todo[k], dict)

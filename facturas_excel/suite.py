@@ -23,6 +23,8 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from .validacion import quitar_prefijo_es
+
 ORIGEN = "facturas"
 
 
@@ -32,8 +34,21 @@ def ruta_directorio() -> str:
     return os.path.join(base, "AsesoriaEMarin", "Suite", "clientes.json")
 
 
-def _normaliza(nif) -> str:
+def _crudo(nif) -> str:
     return re.sub(r"[\s.\-]+", "", str(nif or "")).upper()
+
+
+def _normaliza(nif) -> str:
+    # Sin el «ES» del NIF-IVA (ESB12345674 es B12345674): un cliente que otro
+    # programa apuntó así, o una factura que lo trae así, es el mismo.
+    return quitar_prefijo_es(_crudo(nif))
+
+
+def _con_es(clave, ficha) -> bool:
+    """La entrada está apuntada con el «ES» del NIF-IVA delante."""
+    nif = ficha.get("nif") if isinstance(ficha, dict) else None
+    crudo = _crudo(nif or clave)
+    return _normaliza(crudo) != crudo
 
 
 _cache: dict = {"mtime": None, "ruta": None, "datos": None}
@@ -68,7 +83,12 @@ def clientes() -> Dict[str, dict]:
     salida = {}
     for clave, ficha in datos["clientes"].items():
         if isinstance(ficha, dict):
-            salida[_normaliza(ficha.get("nif") or clave)] = ficha
+            nif = _normaliza(ficha.get("nif") or clave)
+            if nif in salida and _con_es(clave, ficha):
+                # Está de las dos formas (ESB12345674 y B12345674): manda la
+                # de sin «ES», como en las fichas de clientes.
+                continue
+            salida[nif] = ficha
     return salida
 
 
@@ -129,7 +149,9 @@ def registrar_cliente(nif, nombre: str) -> bool:
     else:
         datos = {"schema_version": 1, "clientes": {}}
     ahora = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    clave = next((k for k, f in datos["clientes"].items()
+    # La suya; si está de las dos formas, la de sin «ES» (la que se lee).
+    clave = next((k for k, f in sorted(datos["clientes"].items(),
+                                       key=lambda kv: _con_es(*kv))
                   if _normaliza((f or {}).get("nif") or k) == nif), nif)
     ficha = datos["clientes"].setdefault(clave, {"nif": nif})
     ficha.setdefault("nif", nif)

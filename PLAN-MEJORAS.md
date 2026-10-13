@@ -18,6 +18,16 @@ retención lleva su base en Base IRPF (`exportar.datos_para_aplifisa`).
 «Retención I.R.P.F.» del apunte grabado y cambia el 111/190; y cómo queda una
 factura con retención y dos tipos de IVA (la base va solo en la primera línea).
 
+**1.26.2 (13/10/2026): el NIF español sin «ES» delante.** En Aplifisa el
+Ámbito (0 Interior, 1 Intracomunitario, 2 Exportación/Importación) no viene
+del Excel: es un dato de la cuenta del proveedor. Un NIF con «ES» delante
+(ESB12345674) no casaba con la cuenta de siempre y Aplifisa abría otra, que
+podía quedar como intracomunitaria. Ahora `validacion.quitar_prefijo_es` lo
+quita cuando el resto es un NIF español válido, y la usan todos los que
+normalizan un NIF (lectura, tabla, clientes, suite, proveedores, registro,
+listado, Excel); lo guardado antes se lee sin «ES» (el registro, con una
+migración única `nif_sin_es`). Los NIF-IVA de otros países no se tocan.
+
 ### Qué se hizo en la 1.26
 
 - **Pruebas de estrés** en 4 frentes (volumen y mañana, tablas grandes,

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .extraccion import MAX_TOKENS_SALIDA
+from .validacion import quitar_prefijo_es
 
 # Dato de la Factura -> nombre que se le da a Gemini.
 CAMPOS = {
@@ -109,8 +110,10 @@ def _prompt(lista: List[Tuple[str, str]]) -> str:
         "de 0 a 1000 sobre la imagen (0,0 es la esquina de arriba a la "
         "izquierda). La caja debe rodear solo ese valor impreso, no su "
         "etiqueta. Si un valor no aparece tal cual en la hoja, devuelve caja "
-        "null: NO lo sitúes en otro número parecido. Devuelve cada dato con el "
-        "mismo campo y valor que se piden.\n\n" + lineas)
+        "null: NO lo sitúes en otro número parecido. Un NIF puede estar "
+        "impreso con «ES» delante (ESB12345674 para B12345674): es ese mismo "
+        "valor. Devuelve cada dato con el mismo campo y valor que se piden."
+        "\n\n" + lineas)
 
 
 @dataclass
@@ -176,8 +179,15 @@ def cajas_de(cajas: Iterable[Caja], campo: str, valor=None) -> List[Caja]:
     del_campo = [c for c in cajas or () if c.campo == campo]
     if valor in (None, ""):
         return del_campo
-    buscado = _comparable(valor)
-    iguales = [c for c in del_campo if _comparable(c.valor) == buscado]
+    if campo == "nif":
+        # El NIF de la fila ya va sin «ES» y la hoja (o una caja guardada
+        # antes de la 1.26.2) puede traerlo con él: es el mismo.
+        def comparable(v):
+            return quitar_prefijo_es(_comparable(v))
+    else:
+        comparable = _comparable
+    buscado = comparable(valor)
+    iguales = [c for c in del_campo if comparable(c.valor) == buscado]
     return iguales
 
 

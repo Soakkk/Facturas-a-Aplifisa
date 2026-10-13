@@ -29,7 +29,7 @@ from .conceptos import (
 from .extraccion import _num
 from .modelo import Factura
 from .sanear_lectura import _cuota_que_cuadra, _sumar, aviso_saneado
-from .validacion import fecha_de, normalizar_fecha, validar_nif
+from .validacion import fecha_de, normalizar_fecha, quitar_prefijo_es, validar_nif
 from .texto import limpiar, reparar, tiene_invisibles, visible
 
 
@@ -40,7 +40,10 @@ def normaliza_nif(nif) -> str:
     # asiático o una lectura rara) pasan a las normales. Si no, el DNI pasaba
     # el control de la letra y llegaba así al Excel, en verde.
     nif = unicodedata.normalize("NFKC", str(nif))
-    return nif.strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+    nif = nif.strip().upper().replace(".", "").replace(" ", "").replace("-", "")
+    # ESB12345674 es B12345674 (el NIF-IVA): con «ES» Aplifisa lo tomaba por
+    # otro proveedor, y la memoria, el registro y el cliente del lote también.
+    return quitar_prefijo_es(nif)
 
 
 def _tokens_nombre(nombre) -> set:
@@ -1585,6 +1588,20 @@ def unificar_nombres_por_nif(facturas, preferidos: Dict[str, str] | None = None)
     return cambios
 
 
+def quitar_prefijo_es_del_lote(facturas) -> int:
+    """Un lote guardado antes de la 1.26.2 puede traer NIF españoles con el
+    «ES» del NIF-IVA delante (ESB12345674): se le quita, como al leerlos hoy,
+    para que la tabla y el Excel lleven el que reconoce Aplifisa. Devuelve
+    cuántas facturas ha cambiado."""
+    cambiadas = 0
+    for f in facturas:
+        sin_es = quitar_prefijo_es(f.nif)
+        if sin_es != f.nif:
+            f.nif = sin_es
+            cambiadas += 1
+    return cambiadas
+
+
 def recordar_nombre_proveedor(nif, nombre) -> bool:
     """El nombre con el que el usuario quiere ver a este proveedor.
 
@@ -1624,8 +1641,34 @@ def _cuentas_por_cliente(ficha) -> dict:
     valor = (ficha or {}).get("cuentas_cliente") if isinstance(ficha, dict) else None
     if not isinstance(valor, dict):
         return {}
-    return {str(k): (list(v) + [None])[:2] for k, v in valor.items()
-            if isinstance(v, (list, tuple)) and v}
+    # El cliente, sin el «ES» del NIF-IVA: una cuenta guardada antes de la
+    # 1.26.2 para «ESB12345674» es la de B12345674. Si están las dos, manda
+    # la guardada ya sin «ES» (va primero); al guardar queda una sola.
+    cuentas = {}
+    for k, v in sorted(valor.items(),
+                       key=lambda kv: quitar_prefijo_es(str(kv[0])) != str(kv[0])):
+        if isinstance(v, (list, tuple)) and v:
+            cuentas.setdefault(quitar_prefijo_es(str(k)), (list(v) + [None])[:2])
+    return cuentas
+
+
+def _cuentas_del_proveedor(clave, ficha, todas) -> dict:
+    """Las cuentas por cliente del proveedor: las de su ficha y, para los
+    clientes que esa no tiene, las de las otras fichas con su NIF.
+
+    Hasta la 1.26.1, ESB12345674 y B12345674 eran dos proveedores: leídos
+    con otro nombre, cada uno tenía su ficha con la cuenta que una persona le
+    puso para su cliente. Ahora son el mismo y se usa una sola de las dos
+    fichas: sin esto, la cuenta de ese cliente que estaba en la otra se
+    perdía (salía la de otro cliente, en ámbar). La de su ficha manda."""
+    cuentas = _cuentas_por_cliente(ficha)
+    for otra_clave in sorted(todas):
+        otra = todas[otra_clave]
+        if (otra_clave != clave and isinstance(otra, dict)
+                and otra.get("cuenta_manual") and otra.get("nif") == ficha.get("nif")):
+            for cliente, cuenta in _cuentas_por_cliente(otra).items():
+                cuentas.setdefault(cliente, cuenta)
+    return cuentas
 
 
 def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
@@ -1690,10 +1733,12 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
     son: se ponen como hasta ahora.)"""
     cliente = normaliza_nif(cliente_nif)
     puestos = 0
+    todas = None                # las fichas de todos, solo si hacen falta
     for pr in procesadas:
         if pr.tipo != "gasto" or not pr.facturas:
             continue
-        ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
+        nif = normaliza_nif(pr.facturas[0].nif)
+        clave, ficha = proveedores.buscar_clave_por_nif(nif) if nif else (None, None)
         if not ficha or not ficha.get("cuenta_manual"):
             continue
         if pr.cuenta == "200" or any(
@@ -1702,7 +1747,9 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
             # Va a la 200: no la pisa la cuenta de sus gastos (con suplido,
             # el tratamiento pasa a «Factura con suplido», pero sigue en 200).
             continue
-        por_cliente = _cuentas_por_cliente(ficha)
+        if todas is None:
+            todas = proveedores.leer_todo()
+        por_cliente = _cuentas_del_proveedor(clave, ficha, todas)
         propia = por_cliente.get(cliente) if cliente \
             else por_cliente.get(CUENTA_SIN_NIF)
         de_antes = por_cliente.get(CUENTA_DE_ANTES)

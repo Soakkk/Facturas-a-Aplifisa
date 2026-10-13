@@ -308,8 +308,10 @@ def leer_con_gemini(candidatos: List[Candidato], base: str, api_key: str,
             c.dudas = [f"Gemini no pudo leerlo: {str(e)[:80]}"]
             continue
         datos = leido.crudo
-        emisor = re.sub(r"[\s.-]", "", str(datos.get("emisor_nif") or "")).upper()
-        receptor = re.sub(r"[\s.-]", "", str(datos.get("receptor_nif") or "")).upper()
+        # Como los NIF de los clientes conocidos: sin el «ES» del NIF-IVA
+        # (una factura puede traer así el del cliente, ESB12345674).
+        emisor = clientes._normaliza(datos.get("emisor_nif"))
+        receptor = clientes._normaliza(datos.get("receptor_nif"))
         from .validacion import fecha_de
         dia = fecha_de(datos.get("fecha")) if datos.get("fecha") else None
         c.sin_texto = False
