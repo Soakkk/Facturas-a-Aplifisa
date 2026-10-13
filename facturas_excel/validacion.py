@@ -232,7 +232,10 @@ def quitar_prefijo_es(nif):
     limpio = _limpiar_nif(nif)
     if limpio[:2] != "ES" or validar_nif(limpio) or not validar_nif(limpio[2:]):
         return nif
-    return limpio[2:]
+    # Limpio también por delante: un tabulador o un salto entre el «ES» y
+    # el NIF quedaba al principio, y como el control no mira los blancos de
+    # los extremos, «\tB12345674» salía en verde y así se recordaba.
+    return _limpiar_nif(limpio[2:])
 
 
 def clasificar_nif(nif) -> str:

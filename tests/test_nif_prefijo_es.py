@@ -36,8 +36,10 @@ from facturas_excel.modelo import Factura
 from facturas_excel.procesar import (
     analizar_cliente, aplicar_recordado, clave_proveedor,
     completar_desde_memoria, construir, normaliza_nif, recordar_cuenta_proveedor,
+    recordar_nif,
 )
 from facturas_excel.rutas import dir_datos, ruta_config
+from facturas_excel.tabla_facturas import valor_de_celda
 from facturas_excel.validacion import (
     OK, REVISAR, quitar_prefijo_es, validar,
 )
@@ -92,6 +94,21 @@ def _avisos_es(mensajes):
 def test_se_quita_el_es_de_un_nif_espanol_valido(leido, queda):
     assert quitar_prefijo_es(leido) == queda
     assert normaliza_nif(leido) == queda
+
+
+@pytest.mark.parametrize("leido", [
+    "ES\tB12345674", "ES\nB12345674", "ES\u00a0B12345674"])
+def test_lo_quitado_sale_limpio_aunque_venga_con_un_tabulador_o_un_salto(leido):
+    """Un «ES» separado por un tabulador, un salto de línea o un espacio
+    duro (pegado de un PDF). Sin limpiar, quedaba «\tB12345674»: pasa el
+    control (que no mira los blancos de los extremos), sale en verde y así
+    se guardaba en la memoria de proveedores, donde B12345674 ya no lo
+    encontraba."""
+    assert quitar_prefijo_es(leido) == PROVEEDOR
+    assert normaliza_nif(leido) == PROVEEDOR
+    assert valor_de_celda(C_NIF, leido) == ("nif", PROVEEDOR)
+    assert recordar_nif(NOMBRE, leido)
+    assert proveedores.buscar_por_nif(PROVEEDOR)["nif"] == PROVEEDOR
 
 
 @pytest.mark.parametrize("nif", [
