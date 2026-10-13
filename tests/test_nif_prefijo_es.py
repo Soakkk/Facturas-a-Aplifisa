@@ -460,6 +460,23 @@ def test_la_misma_factura_apuntada_con_y_sin_es_queda_en_una_ficha():
     assert ficha["leida_en"] and ficha["exportada_en"]
 
 
+def test_buscar_el_nif_con_es_encuentra_la_factura_apuntada_sin_el():
+    """En el registro de facturas y en el buscador del lote se busca el NIF
+    como viene en el papel. Con «ES» delante no encontraba nada: la factura
+    ya está apuntada sin él (también las de antes, al convertir el
+    registro)."""
+    from facturas_excel.consulta import coincide_busqueda
+    historial.registrar(CLIENTE, {"gasto": [_factura()]},
+                        {"gasto": "C:/x/GASTOS 2026.xlsx"})
+    for texto in (PROVEEDOR, "ESB12345674", "es-b12345674", "SUMINISTROS ESB12345674"):
+        assert [f["nif"] for f in registro_facturas.consultar(texto)] == [PROVEEDOR], texto
+        assert coincide_busqueda(_factura(), texto), texto
+    # Lo que no es un NIF español con «ES» se busca tal cual.
+    assert registro_facturas.consultar("ESB12345670") == []
+    assert not coincide_busqueda(_factura(), "ESB12345670")
+    assert not coincide_busqueda(_factura(), "ESTACION")
+
+
 def test_restaurar_una_copia_de_antes_de_la_1262_tambien_la_pasa_a_sin_es():
     """Las copias de seguridad diarias de antes de instalar la 1.26.2 tienen
     el registro con «ES». Restaurada una con el programa abierto, se quedaba

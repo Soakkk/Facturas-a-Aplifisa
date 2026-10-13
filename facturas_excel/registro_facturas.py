@@ -635,6 +635,9 @@ def consultar(texto: str = "", ejercicio: Optional[int] = None,
         condiciones.append("ejercicio = ?")
         valores.append(int(ejercicio))
     for palabra in str(texto or "").split():
+        # Un NIF buscado como viene en el papel, con el «ES» del NIF-IVA
+        # delante (ESB12345674): está apuntado sin él.
+        palabra = quitar_prefijo_es(palabra)
         like = f"%{palabra.upper()}%"
         importe = palabra.replace(".", "").replace(",", ".")
         extra = ""
