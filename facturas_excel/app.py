@@ -41,8 +41,8 @@ from facturas_excel.dialogo_notas_version import DialogoNotasVersion
 from facturas_excel.dialogo_recargo import DialogoRecargo
 from facturas_excel.dialogo_textos import DialogoTextos
 from facturas_excel.clientes import (
-    DESGLOSE, EXENTO, TOTAL, guardar_regimen_recargo, puede_estar_en_recargo,
-    regimen_recargo,
+    DESGLOSE, DIRECTA, EXENTO, TOTAL, guardar_regimen_recargo,
+    puede_estar_en_recargo, puede_tributar_irpf, regimen_irpf, regimen_recargo,
 )
 from facturas_excel.conceptos import descripcion_de, es_valido
 from facturas_excel.control_facturas import clave_documento
@@ -1636,6 +1636,8 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         config.addAction("Textos de conceptos para Aplifisa…", self._configurar_textos)
         config.addAction("Régimen de IVA de este cliente…",
                          self._elegir_regimen_recargo)
+        config.addAction("Régimen de IRPF de este cliente…",
+                         self._elegir_regimen_irpf)
         config.addAction("Copias de seguridad…", self._copias_de_seguridad)
 
         menu = self.menuBar().addMenu("Ayuda")
@@ -2807,6 +2809,29 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
         self._preparar_recargo()
         self._rellenar_tabla()
         self._revalidar_todo()
+
+    def _elegir_regimen_irpf(self) -> None:
+        """Configuración → Régimen de IRPF del cliente: si está en estimación
+        directa (sus apuntes van a Aplifisa como «IRPF/IVA») o no. Es lo
+        mismo que se pregunta al exportar la primera vez; vale para las
+        próximas exportaciones (lo ya exportado no cambia)."""
+        nif = getattr(self, "_cliente_nif", "")
+        nombre = getattr(self, "_cliente_nombre", "")
+        if not nif:
+            self._avisar("Primero cargue o escanee facturas del cliente: su "
+                         "régimen de IRPF se recuerda por su NIF.", INFO)
+            return
+        if not puede_tributar_irpf(nif):
+            self._avisar(f"{nombre or nif} no tributa por el IRPF (es una "
+                         "sociedad u otra persona jurídica): sus apuntes van "
+                         "siempre a Aplifisa como «Sólo IVA».", INFO)
+            return
+        elegido = self._preguntar_regimen_irpf(actual=regimen_irpf(nif))
+        if elegido:
+            self._avisar(f"Guardado: los apuntes de {nombre or nif} irán a "
+                         "Aplifisa como «"
+                         + ("IRPF/IVA" if elegido == DIRECTA else "Sólo IVA")
+                         + "» desde la próxima exportación.", INFO)
 
     def _anadir_fila(self, png, f: Factura, tipo, cuenta, gxx, aviso, bloque="",
                      fuentes=None):

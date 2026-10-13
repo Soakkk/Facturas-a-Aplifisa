@@ -106,12 +106,121 @@ def _valor_celda(campo: str, valor, modo: str):
     return _fmt_importe_texto(valor)
 
 
+# ------------------------------------------- tipo de operación: IRPF/IVA
+# Un cliente en ESTIMACIÓN DIRECTA tiene que llevar sus ingresos y gastos en
+# Aplifisa como «IRPF/IVA» para que cuenten en su IRPF; importados salían
+# todos «Sólo IVA» y había que cambiarlos a mano uno a uno.
+#
+# La pantalla de importación de Aplifisa («Desde fichero Excel») no tiene
+# ningún ajuste ni columna para el tipo de operación (el desplegable de al
+# lado de COMPRAS/GASTOS es IVA/IGIC): lo decide SOLO la Base IRPF. Lo
+# comprobó el usuario en octubre de 2026 importando filas de prueba:
+#   - Base IRPF vacía (como siempre)                      -> «Sólo IVA»;
+#   - solo % IRPF = 0, o solo cuota IRPF = 0 (sin base)    -> «Sólo IVA»;
+#   - Base IRPF = la base imponible, con % y cuota a 0     -> «IRPF/IVA»;
+#   - Base IRPF = la base imponible, sin % ni cuota        -> «IRPF/IVA», y el
+#     bloque I.R.P.F. del apunte queda con la base, sin tipo ni cuota.
+# Así que, para esos clientes, cada línea lleva en Base IRPF la base que va
+# en el Excel, y el % y la cuota se quedan como estén (vacíos). Las
+# facturas con retención ya traen su base, % y cuota: no se tocan.
+
+def _hay(valor) -> bool:
+    if valor is None or valor == "":
+        return False
+    try:
+        return abs(float(valor)) >= 0.005
+    except (TypeError, ValueError, OverflowError):
+        return True         # algo raro: esa factura, mejor no tocarla
+
+
+def _con_retencion(factura: Factura) -> bool:
+    """La línea trae algo de IRPF (una retención, o al menos su base)."""
+    return any(_hay(getattr(factura, campo)) for campo in
+               ("base_irpf", "pct_irpf", "cuota_irpf"))
+
+
+# Las bases que pueden ir en el Excel: la imponible (también la de una línea
+# exenta al 0 %, y la de una «por el total», que ya es el total), y la sujeta
+# al 0 % y la no sujeta si la configuración les da columna.
+_BASES = ("base_iva", "base_sujeta_cero", "no_sujeta")
+
+
+def base_irpf_directa(factura: Factura,
+                      config: ConfigColumnas | None = None,
+                      suplido: bool = False) -> float | None:
+    """La Base IRPF que lleva en el Excel una línea de un cliente en
+    estimación directa que no trae retención: la base con la que va al Excel.
+
+    Nada (None) para la línea de un suplido (sumas pagadas en nombre y por
+    cuenta del cliente, art. 78.Tres.3.º de la Ley del IVA: no son la
+    operación facturada) ni para una línea de importe 0, que no tiene nada
+    que imputar. Con ``suplido``, también la del suplido: es la de una
+    factura que no trae otra cosa (ver datos_para_aplifisa)."""
+    if getattr(factura, "es_suplido", False) and not suplido:
+        return None
+    columnas = config.columnas if config is not None else None
+    base = 0.0
+    for campo in _BASES:
+        valor = getattr(factura, campo, None)
+        if (columnas is None or campo in columnas) and valor is not None:
+            try:
+                valor = float(valor)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(valor):
+                base += valor
+    base = round(base, 2)
+    return base if abs(base) >= 0.005 else None
+
+
+def datos_para_aplifisa(
+    facturas: List[Factura],
+    config: ConfigColumnas | None = None,
+    estimacion_directa: bool = False,
+) -> List[dict]:
+    """Lo que va en cada fila del Excel: {campo: valor}, una por línea.
+
+    Lo usan tanto la escritura como la comprobación (verificar_excel), para
+    que las dos digan lo mismo. Sin estimación directa son los datos de la
+    línea tal cual. En directa, cada línea sin Base IRPF lleva la suya (ver
+    arriba), salvo las de una factura con retención: esa ya trae su base, %
+    y cuota (en su primera línea, la de toda la factura) y no se toca
+    ninguna de sus líneas; poner aparte la base de las demás contaría dos
+    veces esa parte en el IRPF."""
+    filas = [factura.campos_dict() for factura in facturas]
+    if not estimacion_directa:
+        return filas
+    from .control_facturas import clave_documento
+    retenidas = {clave_documento(f) for f in facturas if _con_retencion(f)}
+    con_base = set()
+    for factura, datos in zip(facturas, filas):
+        if clave_documento(factura) in retenidas:
+            continue
+        base = base_irpf_directa(factura, config)
+        if base is not None:
+            datos["base_irpf"] = base
+            con_base.add(clave_documento(factura))
+    # Una factura que solo trae suplidos (la de una gestoría con las tasas
+    # que pagó por el cliente) se quedaba sin ninguna Base IRPF: el apunte
+    # entraba «Sólo IVA», como con las columnas de IRPF vacías. Esa, con la
+    # base del suplido, que es su gasto.
+    for factura, datos in zip(facturas, filas):
+        clave = clave_documento(factura)
+        if clave in retenidas or clave in con_base:
+            continue
+        base = base_irpf_directa(factura, config, suplido=True)
+        if base is not None:
+            datos["base_irpf"] = base
+    return filas
+
+
 def exportar_excel(
     facturas: List[Factura],
     config: ConfigColumnas,
     ruta_salida: str,
     modo_numeros: str = MODO_TEXTO,
     solo_nuevo: bool = False,
+    estimacion_directa: bool = False,
 ) -> str:
     """Escribe el .xlsx y devuelve la ruta.
 
@@ -120,6 +229,9 @@ def exportar_excel(
     - Cada campo va a la columna (letra) que diga config.columnas.
     - Con ``solo_nuevo`` nunca pisa un archivo que ya exista (lanza
       FileExistsError): la exportación elige antes un nombre libre.
+    - Con ``estimacion_directa`` (cliente en directa) cada línea lleva su
+      Base IRPF, para que entre en Aplifisa como «IRPF/IVA» (ver
+      datos_para_aplifisa).
     """
     wb = Workbook()
     # Aplifisa interpreta la mera presencia de <workbookProtection /> como si
@@ -137,8 +249,7 @@ def exportar_excel(
 
     # Datos
     fila = config.primera_fila
-    for factura in facturas:
-        datos = factura.campos_dict()
+    for datos in datos_para_aplifisa(facturas, config, estimacion_directa):
         for campo, letra in config.columnas.items():
             valor = _valor_celda(campo, datos.get(campo), modo_numeros)
             if valor is not None:
@@ -170,6 +281,7 @@ def verificar_excel(
     config: ConfigColumnas,
     ruta: str,
     modo_numeros: str = MODO_TEXTO,
+    estimacion_directa: bool = False,
 ) -> List[str]:
     """Vuelve a LEER el Excel escrito y lo compara con lo que hay en pantalla.
 
@@ -179,7 +291,9 @@ def verificar_excel(
     hasta tener el problema dentro de la contabilidad.
 
     Devuelve la lista de diferencias (vacia = el archivo dice exactamente lo
-    mismo que la tabla).
+    mismo que la tabla). Se le dice lo mismo que a exportar_excel
+    (``estimacion_directa``): la Base IRPF de cada línea se compara con la
+    que le toca.
     """
     from openpyxl import load_workbook
 
@@ -198,9 +312,9 @@ def verificar_excel(
                 f"El archivo tiene {max(escritas, 0)} línea(s) y deberían ser "
                 f"{len(facturas)}.")
 
-        for i, factura in enumerate(facturas):
+        filas = datos_para_aplifisa(facturas, config, estimacion_directa)
+        for i, (factura, datos) in enumerate(zip(facturas, filas)):
             fila = config.primera_fila + i
-            datos = factura.campos_dict()
             for campo, letra in config.columnas.items():
                 esperado = _valor_celda(campo, datos.get(campo), modo_numeros)
                 escrito = hoja[f"{letra}{fila}"].value

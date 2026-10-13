@@ -1,9 +1,30 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 10 de octubre de 2026 (versión 1.26.0). Apunta abajo lo que
+Actualizado el 13 de octubre de 2026 (versión 1.26.1). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.26.1: clientes en estimación directa
+
+Lo que pediste: los ingresos y gastos de un cliente en **estimación directa**
+entran en Aplifisa como **«IRPF/IVA»**. Como comprobaste, Aplifisa lo decide
+solo por la Base IRPF, así que el Excel lleva en esa columna la base de cada
+línea (sin % ni cuota); las facturas con retención van como siempre. Los demás
+(módulos, sociedades) siguen «Sólo IVA».
+
+La **primera vez que exportes** de cada persona física o comunidad de bienes
+se pregunta si está en directa y se recuerda; a las sociedades no. Se cambia en
+Configuración → Régimen de IRPF de este cliente. Lo ya importado como «Sólo
+IVA» no cambia solo.
+
+**Para comprobar:** importa un Excel de un cliente en directa y mira que los
+apuntes salen «IRPF/IVA». Una duda: en una factura **con retención y dos tipos
+de IVA**, la base del IRPF va solo en la primera línea (la de toda la factura,
+como hasta ahora) para no contarla dos veces. Si en Aplifisa ves que eso deja
+mal el apunte, dímelo. Y en un apunte ya grabado, mira si el bloque «Retención
+I.R.P.F.» se queda con esa base: si eso cambia el 111 o el 190 del cliente,
+dímelo antes de seguir.
 
 ### Lo nuevo de la 1.26: PDF pesados sin miedo
 
