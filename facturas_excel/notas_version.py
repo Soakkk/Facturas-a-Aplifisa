@@ -6,6 +6,25 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.26.1": """
+<h2>Novedades de la versión 1.26.1: clientes en estimación directa</h2>
+<ul>
+  <li><b>Los apuntes de un cliente en estimación directa entran en Aplifisa
+      como «IRPF/IVA»</b>, gastos e ingresos: ya no hay que cambiarlos a mano
+      uno a uno. Los demás (módulos, sociedades) siguen como «Sólo IVA».</li>
+  <li><b>La primera vez que exportes de cada cliente</b> (persona física o
+      comunidad de bienes) se pregunta si está en estimación directa, y se
+      recuerda. A las sociedades no se les pregunta. Se cambia en
+      Configuración → Régimen de IRPF de este cliente.</li>
+  <li>Al exportar se ve cómo irán: «Tipo de operación en Aplifisa: IRPF/IVA
+      (estimación directa)» o «Sólo IVA».</li>
+  <li>Cómo lo hace: cada línea lleva su base en la columna Base IRPF del
+      Excel, sin % ni cuota, que es lo que mira Aplifisa (lo comprobaste tú).
+      Las facturas con retención van como siempre.</li>
+  <li><b>Lo ya importado como «Sólo IVA» no cambia solo:</b> esos apuntes
+      hay que cambiarlos en Aplifisa.</li>
+</ul>
+""",
     "1.26.0": """
 <h2>Novedades de la versión 1.26.0: PDF pesados sin miedo</h2>
 <p>Esta versión está hecha para trabajar con paquetes escaneados grandes (de

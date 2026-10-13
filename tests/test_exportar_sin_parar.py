@@ -298,7 +298,7 @@ def test_si_falla_al_rehacerlo_el_expediente_de_antes_queda_entero(tmp_path, mon
 
 # ------------------------------------- 4. el archivo, en segundo plano
 class _Orden:
-    def __init__(self, parent):
+    def __init__(self, parent, **_k):
         pass
 
     def exec(self):

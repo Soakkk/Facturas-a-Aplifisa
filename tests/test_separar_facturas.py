@@ -168,7 +168,7 @@ def test_exportar_parte_el_taco_y_actualiza_la_ventana(monkeypatch):
     import facturas_excel.app as modulo_app
 
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):
@@ -210,7 +210,7 @@ def test_las_revisadas_con_motivo_se_exportan_y_tienen_su_pdf(monkeypatch):
     import facturas_excel.app as modulo_app
 
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):
@@ -261,7 +261,7 @@ def test_al_archivar_el_registro_guarda_todas_las_lineas_de_iva(monkeypatch):
     from facturas_excel import cuadre_anual, registro_facturas
 
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):

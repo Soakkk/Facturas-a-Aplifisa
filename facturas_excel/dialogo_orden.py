@@ -33,7 +33,9 @@ OPCIONES = [
 
 
 class DialogoOrden(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, tipo_operacion: str = ""):
+        """``tipo_operacion``: la línea que dice cómo entrarán los apuntes
+        («IRPF/IVA» o «Sólo IVA», según el régimen de IRPF del cliente)."""
         super().__init__(parent)
         self.setWindowTitle("Orden de los apuntes")
         self.setMinimumWidth(520)
@@ -58,6 +60,15 @@ class DialogoOrden(QDialog):
             raiz.addWidget(detalle)
         if self.grupo.checkedId() < 0:
             self.grupo.button(0).setChecked(True)
+
+        self.lbl_tipo_operacion = QLabel(tipo_operacion)
+        self.lbl_tipo_operacion.setStyleSheet("font-weight: 600;")
+        self.lbl_tipo_operacion.setWordWrap(True)
+        self.lbl_tipo_operacion.setToolTip(
+            "Depende de si el cliente está en estimación directa. Se cambia en "
+            "Configuración → Régimen de IRPF de este cliente.")
+        self.lbl_tipo_operacion.setVisible(bool(tipo_operacion))
+        raiz.addWidget(self.lbl_tipo_operacion)
 
         botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
                                    parent=self)

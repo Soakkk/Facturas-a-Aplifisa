@@ -5,7 +5,7 @@ import os
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 import facturas_excel.app as modulo_app
-from facturas_excel import historial, proveedores
+from facturas_excel import clientes, historial, proveedores
 from facturas_excel.app import C_ESTADO, ICONO_ESTADO, VentanaPrincipal
 from facturas_excel.modelo import Factura
 from facturas_excel.validacion import REVISAR
@@ -21,6 +21,9 @@ def _factura(numero, nombre="PROVEEDOR PRUEBA SL", nif="B12345674"):
 
 
 def _ventana(numeros):
+    # Un cliente al que ya se le preguntó el régimen de IRPF (1.26.1): no está
+    # en estimación directa, así que exportar no vuelve a preguntarlo.
+    clientes.guardar_regimen_irpf("12345678Z", clientes.OTRO)
     v = VentanaPrincipal(comprobar_updates=False, restaurar_sesion=False)
     v._cliente_nif, v._cliente_nombre = "12345678Z", "CLIENTE PRUEBA"
     v._bloques = [{"nombre": "b1", "cliente": "CLIENTE PRUEBA",
@@ -33,7 +36,7 @@ def _ventana(numeros):
 
 def _preparar_exportacion(monkeypatch, tmp_path, escritos):
     class Orden:
-        def __init__(self, parent):
+        def __init__(self, parent, **_k):
             pass
 
         def exec(self):
@@ -54,7 +57,7 @@ def _preparar_exportacion(monkeypatch, tmp_path, escritos):
     monkeypatch.setattr(ventana_aplifisa, "exportar_excel",
                         lambda facturas, config, ruta, **_k: escritos.append(
                             [f.num_factura for f in facturas]))
-    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *a: [])
+    monkeypatch.setattr(ventana_aplifisa, "verificar_excel", lambda *a, **_k: [])
     monkeypatch.setattr(ventana_aplifisa, "totales_del_excel",
                         lambda *a: {"base_iva": 0, "cuota_iva": 0})
     monkeypatch.setattr(modulo_app.QMessageBox, "information", lambda *a: None)
