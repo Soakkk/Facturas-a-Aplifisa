@@ -7,6 +7,9 @@ pulgada, mas caro. El color del escaneo o lo que pese el PDF no cambian nada.
 A menos calidad se ahorra, pero si la letra no se lee la factura sale mal y
 corregirla a mano cuesta mucho mas que unos centimos. Por eso el dialogo enseña
 las dos cosas a la vez: lo que se ahorra y lo que se arriesga.
+
+Con «Claude Opus 5.5 + Gemini» elegido, la estimacion es la de Claude (cobra
+por cuadros de 28x28 puntos, hasta un maximo por imagen) mas la de Gemini.
 """
 
 from __future__ import annotations
@@ -59,12 +62,23 @@ class DialogoCalidad(QDialog):
             detalle.setWordWrap(True)
             raiz.addWidget(detalle)
 
+        from .extraccion import PROVEEDOR_CLAUDE, proveedor_lectura
         modelo = costes.ultimo_modelo()
+        if proveedor_lectura() == PROVEEDOR_CLAUDE:
+            origen = ("Estimación con Claude Opus 5.5 más la lectura de Gemini "
+                      "(lo elegido en Modelos de lectura); el gasto real de "
+                      "cada lote sale abajo.")
+        elif modelo and not modelo.startswith("claude"):
+            origen = "Precios del modelo que usó la última vez: " + modelo
+        elif modelo:
+            # Lo último se leyó con Claude, pero ahora se lee con Gemini.
+            from .extraccion import modelos_gemini
+            origen = "Precios de " + modelos_gemini()[0] + ", el Gemini elegido"
+        else:
+            origen = ("Aún no se ha leído ningún lote: los precios son una "
+                      "estimación con la tarifa más cara.")
         pie = QLabel(
-            ("Precios del modelo que usó la última vez: " + modelo
-             if modelo else
-             "Aún no se ha leído ningún lote: los precios son una estimación "
-             "con la tarifa más cara.")
+            origen
             + f"\nGasto de este mes: {costes._eur(costes.gasto_del_mes())} "
               f"de {costes._eur(costes.tope())}.")
         pie.setObjectName("textoSuave")

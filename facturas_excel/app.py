@@ -1626,6 +1626,7 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             "Los divisores y las columnas, como venían en la distribución elegida.")
         config =self.menuBar().addMenu("Configuración")
         config.addAction("API key de Gemini…", self._configurar_key)
+        config.addAction("API key de Claude…", self._configurar_key_claude)
         config.addAction("Tope de gasto al mes…", self._configurar_tope)
         config.addAction("Carpeta de documentación digitalizada…",
                          self._configurar_carpeta_escaneos)
@@ -2256,6 +2257,18 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
             guardar_api_key(texto.strip())
             self._avisar("API key guardada de forma segura.", EXITO)
 
+    def _configurar_key_claude(self):
+        """La de Claude, para leer con «Claude Opus 5.5 + Gemini» (se elige en
+        Modelos de lectura; con Gemini elegido no se usa)."""
+        from facturas_excel.dialogo_modelos import pedir_api_key_claude
+        from facturas_excel.extraccion import PROVEEDOR_CLAUDE, proveedor_lectura
+        if pedir_api_key_claude(self):
+            self._avisar(
+                "API key de Claude guardada de forma segura."
+                + ("" if proveedor_lectura() == PROVEEDOR_CLAUDE else
+                   " Para leer con ella, elige «Claude Opus 5.5 + Gemini» en "
+                   "Configuración → Modelos de lectura."), EXITO)
+
     def _configurar_modelos(self):
         dialogo = DialogoModelos(self)
         if dialogo.exec() == QDialog.Accepted:
@@ -2270,8 +2283,9 @@ class VentanaPrincipal(LecturaMixin, ArchivoMixin, AplifisaMixin, ValidacionMixi
     def _configurar_tope(self):
         euros, ok = QInputDialog.getDouble(
             self, "Tope de gasto al mes",
-            "Aviso cuando el gasto en Gemini del mes pase de (€):\n"
-            "(solo avisa; el límite de verdad se pone en Google)",
+            "Aviso cuando el gasto de lectura del mes (Gemini y, si la usas,\n"
+            "Claude) pase de (€):\n"
+            "(solo avisa; el límite de verdad se pone en Google y en Claude)",
             costes.tope(), 0.0, 1000.0, 2)
         if ok:
             costes.guardar_tope(euros)

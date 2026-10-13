@@ -287,11 +287,13 @@ def leer_con_gemini(candidatos: List[Candidato], base: str, api_key: str,
     """
     import fitz
     from . import costes
-    from .extraccion import DOBLE_NO, Extractor
+    from .extraccion import DOBLE_NO, Extractor, modelos_gemini
     from .pdf import CALIDAD, pixmap_lectura
 
     conocidos = clientes_conocidos(base)
-    extractor = Extractor(api_key, modo_doble=DOBLE_NO)
+    # Siempre con Gemini, aunque se lea con Claude: aquí solo hace falta saber
+    # de quién es y la pantalla dice «con Gemini».
+    extractor = Extractor(api_key, modelos=modelos_gemini(), modo_doble=DOBLE_NO)
     pendientes = [c for c in candidatos if c.sin_texto and c.clase == "factura"]
     gasto = 0.0
     for i, c in enumerate(pendientes):
@@ -330,9 +332,9 @@ def leer_con_gemini(candidatos: List[Candidato], base: str, api_key: str,
 
 def coste_estimado_gemini(candidatos: List[Candidato]) -> float:
     from . import costes
-    from .extraccion import modelos_configurados
+    from .extraccion import modelos_gemini
     n = sum(1 for c in candidatos if c.sin_texto and c.clase == "factura")
-    return round(n * costes.coste_por_factura(150, modelos_configurados()[0]), 4)
+    return round(n * costes.coste_por_factura(150, modelos_gemini()[0]), 4)
 
 
 # ------------------------------------------------------------------ plan

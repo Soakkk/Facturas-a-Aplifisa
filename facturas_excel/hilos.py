@@ -8,7 +8,7 @@ import traceback
 from PySide6.QtCore import QObject, QThread, Signal
 
 from facturas_excel import ajustes, costes, escaner, imagen_hoja, updater
-from facturas_excel.extraccion import Extractor, SinCredito
+from facturas_excel.extraccion import Extractor, SinCredito, es_claude
 from facturas_excel.pdf import Hojas
 from facturas_excel.procesar import detectar_cliente, preparar_lote
 
@@ -41,6 +41,9 @@ class Worker(QThread):
         self.api_key = api_key
         self.fallos = []      # (archivo, pagina, motivo) de lo que no se leyó
         self.sin_credito = ""   # el aviso de Google si se acabó el crédito
+        self.aviso_claude = ""  # hojas que Claude no ha leído y por qué
+        self.desglose_gasto = ""  # con Claude: lo de cada IA y por hoja
+        self._leidas = []       # hojas leídas (para el gasto por hoja)
         self._extractor = None
         self._hojas = None
         # Se crea ya, no con la lectura: cancelar mientras se cuentan o se
@@ -93,7 +96,7 @@ class Worker(QThread):
 
             consumo = self._consumo   # (modelo, tokens entrada, tokens salida) por llamada
             sin_credito = []
-            leidas = []
+            leidas = self._leidas
 
             def sin_leer(img, origen, pagina):
                 motivo = "No leída: la API key se quedó sin crédito"
@@ -154,6 +157,8 @@ class Worker(QThread):
                 except SinCredito as e:
                     # No se tira lo ya leído (y pagado): esta hoja y las que
                     # faltan quedan en rojo para leerlas cuando haya saldo.
+                    # La otra lectura de la hoja, si llegó, también se pagó.
+                    consumo.extend(getattr(e, "consumos", None) or [])
                     sin_credito.append(str(e))
                     datos = sin_leer(img, origen, pagina)
                 except Exception as e:  # una factura ilegible no tumba el lote
@@ -184,6 +189,9 @@ class Worker(QThread):
                 # original o borra la parte (en Windows, abierto no se puede).
                 hojas.cerrar()
                 self._registrar_consumo(consumo)
+                # Con «Claude + Gemini»: las hojas que Claude no ha leído (y
+                # por qué), para avisarlo al acabar el bloque.
+                self.aviso_claude = getattr(extractor, "aviso_claude", lambda: "")()
 
             if sin_credito:
                 self.sin_credito = sin_credito[0]
@@ -204,9 +212,22 @@ class Worker(QThread):
                 return          # ya lo apuntó la salida sin esperar
             self._gasto_apuntado = True
         modelo, coste_lote = "", 0.0
+        por_ia = {}
         for m, entrada, salida in consumo:
             modelo = modelo or m
-            coste_lote += costes.registrar(m, entrada, salida)
+            importe = costes.registrar(m, entrada, salida)
+            coste_lote += importe
+            ia = "Claude" if es_claude(m) else "Gemini"
+            por_ia[ia] = por_ia.get(ia, 0.0) + importe
+        if "Claude" in por_ia:
+            # Con «Claude + Gemini», cuánto ha sido de cada una y por hoja,
+            # para juzgar la prueba con el coste real.
+            hojas = len(self._leidas)
+            self.desglose_gasto = (
+                f"Claude {costes._eur(por_ia['Claude'])} + Gemini "
+                f"{costes._eur(por_ia.get('Gemini', 0.0))}"
+                + (f" en {hojas} hoja(s): {costes._eur(coste_lote / hojas)} por hoja"
+                   if hojas else ""))
         if consumo:
             self.gasto.emit(modelo, round(coste_lote, 6))
 

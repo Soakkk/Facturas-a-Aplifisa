@@ -9,6 +9,7 @@ una sorpresa a fin de mes.
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import date
 from typing import Dict, Optional, Tuple
@@ -30,6 +31,10 @@ PRECIOS: Dict[str, Tuple[float, float]] = {
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     "gemini-2.0-flash": (0.10, 0.40),
+    # Claude (Anthropic), revisado el 2026-10-13. Lo que Claude ya tenia
+    # guardado de la hoja anterior se cuenta aparte (ver
+    # extraccion.RespuestaClaude): aqui va la tarifa normal.
+    "claude-opus-5-5": (4.00, 20.00),
 }
 # gemini-3.8-flash no esta en la tabla a proposito: no se inventa su tarifa.
 # Mientras no se escriba en Configuracion -> Modelos de lectura se estima con
@@ -180,6 +185,12 @@ def aviso_tope() -> str:
     """Aviso cuando el gasto del mes se acerca al tope (vacio si va sobrado)."""
     pct = porcentaje_gastado()
     if pct >= 100:
+        from .extraccion import PROVEEDOR_CLAUDE, proveedor_lectura
+        if proveedor_lectura() == PROVEEDOR_CLAUDE:
+            # El gasto junta Claude y Gemini: el límite de Google solo mira
+            # lo de Gemini, así que no se puede decir que fallarán.
+            return (f"Ha superado el tope de gasto del mes ({_eur(tope())}). "
+                    f"Lleva {_eur(gasto_del_mes())} entre Claude y Gemini.")
         return (f"Ha superado el tope de gasto del mes ({_eur(tope())}). "
                 f"Lleva {_eur(gasto_del_mes())}. Si Google tiene ese mismo "
                 f"límite, las próximas facturas fallarán.")
@@ -215,10 +226,63 @@ def tokens_de_pagina(ppp: int) -> int:
     return tokens_imagen(int(A4_PULGADAS[0] * ppp), int(A4_PULGADAS[1] * ppp))
 
 
+# Claude (Opus 5.5) cobra la imagen por cuadros de 28x28 puntos: si un lado
+# pasa de 2576 px la reduce, y nunca cuenta mas de 4784 tokens por imagen.
+# Ademas van las instrucciones (unos 3.500 tokens, casi todas releidas de la
+# hoja anterior a 0,05 veces la tarifa) y la respuesta, con lo que piensa
+# antes de contestar: ESTIMADA hasta medirla con facturas reales (el gasto
+# real sale de cada respuesta, no de aqui).
+LADO_CUADRO_CLAUDE = 28
+LADO_MAXIMO_CLAUDE = 2576
+TOKENS_MAXIMOS_IMAGEN_CLAUDE = 4784
+INSTRUCCIONES_CLAUDE = 3500 * 0.05 + 50
+SALIDA_POR_FACTURA_CLAUDE = 2000
+
+
+def tokens_imagen_claude(ancho: float, alto: float) -> int:
+    escala = min(1.0, LADO_MAXIMO_CLAUDE / max(ancho, alto, 1))
+    ancho, alto = ancho * escala, alto * escala
+
+    def cuadros(a, b):
+        return math.ceil(a / LADO_CUADRO_CLAUDE) * math.ceil(b / LADO_CUADRO_CLAUDE)
+
+    tokens = cuadros(ancho, alto)
+    if tokens > TOKENS_MAXIMOS_IMAGEN_CLAUDE:
+        factor = math.sqrt(TOKENS_MAXIMOS_IMAGEN_CLAUDE / tokens)
+        tokens = min(TOKENS_MAXIMOS_IMAGEN_CLAUDE,
+                     cuadros(ancho * factor, alto * factor))
+    return tokens
+
+
+def tokens_de_pagina_claude(ppp: int) -> int:
+    """Tokens de entrada (equivalentes) de una factura A4 mandada a Claude."""
+    imagen = tokens_imagen_claude(A4_PULGADAS[0] * ppp, A4_PULGADAS[1] * ppp)
+    return int(imagen + INSTRUCCIONES_CLAUDE)
+
+
 def coste_por_factura(ppp: int, modelo: str = "") -> float:
-    """Lo que cuesta leer UNA factura a esa calidad, con el ultimo modelo que
-    haya contestado (o el mas caro de los Flash si aun no se sabe)."""
-    modelo = modelo or ultimo_modelo()
+    """Lo que cuesta leer UNA factura a esa calidad: con ese modelo o, si no
+    se dice, con lo elegido para leer (con Claude, Claude más la lectura de
+    Gemini si la doble lectura es «siempre»; con Gemini, el ultimo modelo que
+    haya contestado o el mas caro de los Flash si aun no se sabe)."""
+    if not modelo:
+        from .extraccion import (
+            DOBLE_SIEMPRE, MODELO_CLAUDE, PROVEEDOR_CLAUDE, modelos_gemini,
+            modo_doble_lectura, proveedor_lectura,
+        )
+        if proveedor_lectura() == PROVEEDOR_CLAUDE:
+            gemini = (coste_por_factura(ppp, modelos_gemini()[0])
+                      if modo_doble_lectura() == DOBLE_SIEMPRE else 0.0)
+            return coste_por_factura(ppp, MODELO_CLAUDE) + gemini
+    if not modelo:
+        modelo = ultimo_modelo()
+        if _normaliza(modelo).startswith("claude"):
+            # Con Gemini elegido, lo último leído con Claude (de una prueba)
+            # no vale para estimar: se estima con el Gemini principal.
+            from .extraccion import modelos_gemini
+            modelo = modelos_gemini()[0]
+    if _normaliza(modelo).startswith("claude"):
+        return coste(modelo, tokens_de_pagina_claude(ppp), SALIDA_POR_FACTURA_CLAUDE)
     return coste(modelo, tokens_de_pagina(ppp), SALIDA_POR_FACTURA)
 
 

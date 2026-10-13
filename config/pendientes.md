@@ -1,7 +1,26 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 13 de octubre de 2026 (versión 1.26.2). Apunta abajo lo que
+Actualizado el 13 de octubre de 2026 (versión 1.27.0). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
+
+---
+
+### Lo nuevo de la 1.27.0: probar la lectura con Claude
+
+Lo que pediste: poder probar Claude con el crédito que tienes, sin quitar
+nada. En Configuración → Modelos de lectura y doble lectura hay un desplegable
+**«Quién lee las facturas»**: **Gemini (como hasta ahora)**, que es lo que
+viene puesto, o **Claude Opus 5.5 + Gemini (prueba)**: lee primero Claude Opus
+5.5 y después Gemini 3.8 Flash, y se comparan como siempre.
+
+**Para probarlo:** pega la API key de Claude (Configuración → API key de
+Claude…), elige Claude en el desplegable, sube el tope de gasto del mes y lee
+facturas que Gemini lea regular. **Lo que necesito saber:** si Claude acierta
+más (NIF, bases, recargo, cuentas), si tarda demasiado y cuánto cuesta cada
+hoja de verdad (abajo, en el gasto, sale lo de Claude, lo de Gemini y el
+precio por hoja de cada bloque). Si Claude no lee alguna hoja, al acabar el
+bloque sale un aviso: esas las ha leído solo Gemini. Con eso decidimos si se
+queda.
 
 ---
 
