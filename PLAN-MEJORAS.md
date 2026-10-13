@@ -7,6 +7,17 @@ El usuario pidió: «el objetivo es que el programa pueda trabajar con PDF de
 alto peso de 100-200 MB para ir sobrados» y «cuando termines sube todo como
 update».
 
+**1.26.1 (13/10/2026): estimación directa → «IRPF/IVA».** Aplifisa decide el
+tipo de operación solo por la columna Base IRPF del Excel (probado por el
+usuario: con la base rellena sale «IRPF/IVA»; vacía, o con solo % o cuota a 0,
+«Sólo IVA»; el desplegable de la importación es IVA/IGIC). El régimen de IRPF
+se pregunta una vez por cliente persona física o entidad en atribución de
+rentas (`clientes.regimen_irpf`), y para los de directa cada línea sin
+retención lleva su base en Base IRPF (`exportar.datos_para_aplifisa`).
+**Pendiente de confirmar por el usuario:** si esa base queda en el bloque
+«Retención I.R.P.F.» del apunte grabado y cambia el 111/190; y cómo queda una
+factura con retención y dos tipos de IVA (la base va solo en la primera línea).
+
 ### Qué se hizo en la 1.26
 
 - **Pruebas de estrés** en 4 frentes (volumen y mañana, tablas grandes,

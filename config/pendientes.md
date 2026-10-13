@@ -22,7 +22,9 @@ IVA» no cambia solo.
 apuntes salen «IRPF/IVA». Una duda: en una factura **con retención y dos tipos
 de IVA**, la base del IRPF va solo en la primera línea (la de toda la factura,
 como hasta ahora) para no contarla dos veces. Si en Aplifisa ves que eso deja
-mal el apunte, dímelo.
+mal el apunte, dímelo. Y en un apunte ya grabado, mira si el bloque «Retención
+I.R.P.F.» se queda con esa base: si eso cambia el 111 o el 190 del cliente,
+dímelo antes de seguir.
 
 ### Lo nuevo de la 1.26: PDF pesados sin miedo
 
