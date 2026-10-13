@@ -113,6 +113,16 @@ def test_el_regimen_de_irpf_se_recuerda_por_nif():
     assert clientes.nombre_guardado(PERSONA) == "AUTONOMO"
 
 
+def test_con_el_prefijo_es_es_el_mismo_cliente():
+    """Una factura puede traer el NIF del cliente como NIF-IVA (ES12345678Z):
+    es el mismo cliente, y lo que se contestó no se vuelve a preguntar."""
+    clientes.guardar_regimen_irpf(PERSONA, clientes.DIRECTA)
+    assert clientes.regimen_irpf("ES" + PERSONA) == clientes.DIRECTA
+    clientes.guardar_regimen_irpf("ES-" + NIE, clientes.OTRO)
+    assert clientes.regimen_irpf(NIE) == clientes.OTRO
+    assert clientes.regimen_irpf("ES" + COMUNIDAD) == ""     # no contestado
+
+
 def test_una_sociedad_nunca_esta_en_directa():
     assert clientes.regimen_irpf(SOCIEDAD) == clientes.OTRO   # no se pregunta
     clientes.guardar_regimen_irpf(SOCIEDAD, clientes.DIRECTA)

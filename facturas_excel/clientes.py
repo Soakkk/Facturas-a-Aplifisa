@@ -319,7 +319,7 @@ def regimen_irpf(nif) -> str:
     preguntarlo antes de exportar). Una sociedad es siempre OTRO, aunque se
     guardara otra cosa; la ficha de un cliente de antes de la 1.26.1 no tiene
     el dato: ""."""
-    nif = _normaliza(nif)
+    nif = _clave_irpf(nif)
     if not nif:
         return ""
     if not puede_tributar_irpf(nif):
@@ -328,8 +328,19 @@ def regimen_irpf(nif) -> str:
     return guardado if guardado in REGIMENES_IRPF else ""
 
 
-def guardar_regimen_irpf(nif, regimen: str, nombre: str = "") -> None:
+def _clave_irpf(nif) -> str:
+    """El NIF con el que se recuerda el regimen de IRPF: sin el prefijo ES
+    del NIF-IVA. Una factura puede traer el del cliente asi (ES12345678Z) y
+    es el mismo cliente: si no, se le volvia a preguntar como si fuera otro
+    (y podia quedar con dos respuestas distintas)."""
     nif = _normaliza(nif)
+    if len(nif) == 11 and nif.startswith("ES"):     # NIF-IVA
+        nif = nif[2:]
+    return nif
+
+
+def guardar_regimen_irpf(nif, regimen: str, nombre: str = "") -> None:
+    nif = _clave_irpf(nif)
     if not nif or regimen not in REGIMENES_IRPF + ("",):
         return
     if regimen == DIRECTA and not puede_tributar_irpf(nif):
