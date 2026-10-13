@@ -1652,6 +1652,25 @@ def _cuentas_por_cliente(ficha) -> dict:
     return cuentas
 
 
+def _cuentas_del_proveedor(clave, ficha, todas) -> dict:
+    """Las cuentas por cliente del proveedor: las de su ficha y, para los
+    clientes que esa no tiene, las de las otras fichas con su NIF.
+
+    Hasta la 1.26.1, ESB12345674 y B12345674 eran dos proveedores: leídos
+    con otro nombre, cada uno tenía su ficha con la cuenta que una persona le
+    puso para su cliente. Ahora son el mismo y se usa una sola de las dos
+    fichas: sin esto, la cuenta de ese cliente que estaba en la otra se
+    perdía (salía la de otro cliente, en ámbar). La de su ficha manda."""
+    cuentas = _cuentas_por_cliente(ficha)
+    for otra_clave in sorted(todas):
+        otra = todas[otra_clave]
+        if (otra_clave != clave and isinstance(otra, dict)
+                and otra.get("cuenta_manual") and otra.get("nif") == ficha.get("nif")):
+            for cliente, cuenta in _cuentas_por_cliente(otra).items():
+                cuentas.setdefault(cliente, cuenta)
+    return cuentas
+
+
 def recordar_cuenta_proveedor(nif, nombre, cuenta, gxx=None,
                               cliente_nif: str = "",
                               guardar_nombre: bool = True) -> bool:
@@ -1714,10 +1733,12 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
     son: se ponen como hasta ahora.)"""
     cliente = normaliza_nif(cliente_nif)
     puestos = 0
+    todas = None                # las fichas de todos, solo si hacen falta
     for pr in procesadas:
         if pr.tipo != "gasto" or not pr.facturas:
             continue
-        ficha = proveedores.buscar_por_nif(normaliza_nif(pr.facturas[0].nif))
+        nif = normaliza_nif(pr.facturas[0].nif)
+        clave, ficha = proveedores.buscar_clave_por_nif(nif) if nif else (None, None)
         if not ficha or not ficha.get("cuenta_manual"):
             continue
         if pr.cuenta == "200" or any(
@@ -1726,7 +1747,9 @@ def aplicar_recordado(procesadas: List[FacturaProcesada],
             # Va a la 200: no la pisa la cuenta de sus gastos (con suplido,
             # el tratamiento pasa a «Factura con suplido», pero sigue en 200).
             continue
-        por_cliente = _cuentas_por_cliente(ficha)
+        if todas is None:
+            todas = proveedores.leer_todo()
+        por_cliente = _cuentas_del_proveedor(clave, ficha, todas)
         propia = por_cliente.get(cliente) if cliente \
             else por_cliente.get(CUENTA_SIN_NIF)
         de_antes = por_cliente.get(CUENTA_DE_ANTES)

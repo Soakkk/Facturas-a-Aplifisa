@@ -260,6 +260,32 @@ def test_la_ficha_vieja_con_es_se_encuentra_y_da_su_nif_sin_el():
     assert sin_nif.facturas[0].nif == PROVEEDOR
 
 
+def test_dos_fichas_del_proveedor_con_y_sin_es_no_pierden_su_cuenta():
+    """Hasta la 1.26.1, ESB12345674 y B12345674 eran dos proveedores: leídos
+    con otro nombre, cada uno tenía su ficha y la cuenta que una persona le
+    puso para su cliente. Ahora son el mismo y se usa una de las dos fichas:
+    la cuenta de este cliente que estaba en la otra no puede perderse (salía
+    la de otro cliente, en ámbar)."""
+    col = almacen.Coleccion("proveedores", dir_datos())
+    col.guardar("AAA SUMINISTROS", {
+        "nif": "ESB12345674", "nombre": "AAA SUMINISTROS", "manual": True,
+        "cuenta": "600", "gxx": "G01", "cuenta_manual": True,
+        "cuentas_cliente": {"ESX1234567L": ["600", "G01"]}})
+    col.guardar(clave_proveedor(NOMBRE), {
+        "nif": PROVEEDOR, "nombre": NOMBRE, "manual": True, "cuenta": "622",
+        "gxx": "G13", "cuenta_manual": True,
+        "cuentas_cliente": {CLIENTE: ["622", "G13"]}})
+    for leido in (PROVEEDOR, "ESB12345674"):
+        pr = construir(_gasto(emisor_nif=leido), CLIENTE, "CLIENTE PRUEBA")
+        assert aplicar_recordado([pr], CLIENTE) == 1
+        assert (pr.cuenta, pr.gxx) == ("622", "G13"), pr.aviso
+        assert "otro cliente" not in pr.aviso
+    # Y el otro cliente sigue con la suya.
+    pr = construir(_gasto(receptor_nif="X1234567L"), "X1234567L", "OTRO CLIENTE")
+    assert aplicar_recordado([pr], "X1234567L") == 1
+    assert (pr.cuenta, pr.gxx) == ("600", "G01"), pr.aviso
+
+
 def test_al_guardar_la_ficha_vieja_queda_sin_es_y_sin_duplicar():
     _ficha_vieja()
     recordar_cuenta_proveedor(PROVEEDOR, NOMBRE, "629", "G22", CLIENTE)
