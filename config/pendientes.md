@@ -1,9 +1,19 @@
 ## Cómo va el programa y qué necesito de ti
 
-Actualizado el 13 de octubre de 2026 (versión 1.26.2). Apunta abajo lo que
+Actualizado el 15 de octubre de 2026 (versión 1.26.3). Apunta abajo lo que
 veas y lo leo en la siguiente sesión de trabajo.
 
 ---
+
+### Lo nuevo de la 1.26.3: facturas emitidas que salían como gastos
+
+Lo del paquete de facturas emitidas: cuando tus datos van en el recuadro
+pequeño sin «N.I.F.» y los del comprador en el grande con «N.I.F.», la lectura
+a veces los cambiaba y la factura se iba a gastos. Ahora se le explica quién es
+el emisor, y si aun así sale al revés pero el número es de la serie de tu
+cliente, el programa la pasa a ingreso y la deja en ámbar («INGRESO LEÍDO AL
+REVÉS»). **Para comprobar:** vuelve a cargar ese paquete y dime si alguna sigue
+saliendo como gasto.
 
 ### Lo nuevo de la 1.26.2: el NIF sin «ES» delante
 

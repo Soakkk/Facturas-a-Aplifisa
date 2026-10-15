@@ -587,6 +587,11 @@ def construir(datos: dict, cliente_nif: str, cliente_nombre: str = "",
             aviso = f"{aviso} El nombre del cliente coincide con el {rol}, " \
                     f"pero su NIF {leido} es distinto del cliente seleccionado " \
                     f"({cliente_nif}). Confirma cliente y rol antes de importar.".strip()
+    if datos.get("_roles_corregidos"):
+        aviso = (f"{aviso} INGRESO LEÍDO AL REVÉS: la lectura ponía a su cliente "
+                 f"como destinatario, pero el nº {datos.get('num_factura')} es de "
+                 f"su serie de facturas emitidas ({datos['_roles_corregidos']}): "
+                 "se ha tomado como ingreso. Compruébelo.").strip()
     aviso = f"{aviso} {aviso_saneado(datos)}".strip()
     if datos.get("_error"):
         aviso = f"{aviso} HOJA NO LEÍDA: {datos['_error']}. Vuelva a pasar " \
@@ -1110,6 +1115,85 @@ def _construir_sin_tumbar(datos, cliente_nif, cliente_nombre, origen, pagina):
                          cliente_nif, cliente_nombre, origen, pagina)
 
 
+# Gemini a veces cambia los papeles de emisor y destinatario. Pasa con las
+# facturas que hace el propio cliente con sus datos en un recuadro pequeño, sin
+# la etiqueta «N.I.F.», y los del comprador en el recuadro grande del sobre, con
+# «N.I.F.»: toma al comprador por emisor y la venta acaba en gastos (paquete de
+# facturas emitidas de un transportista, 14/10/2026). Si el número de esa
+# factura es de la serie que numera el propio cliente, es una venta leída al
+# revés. La serie se saca de sus ventas del mismo bloque y de las ya exportadas.
+MARGEN_SERIE = 20      # números de distancia a la serie que aún cuentan
+MINIMO_SERIE = 2       # números de la serie que hacen falta para fiarse
+
+
+def _serie(num) -> Optional[tuple]:
+    """(prefijo, cifras) y el número de una factura: «A-000065» -> ((«A-», 6),
+    65). None si no acaba en cifras."""
+    texto = re.sub(r"\s", "", str(num or "")).upper()
+    encaje = re.fullmatch(r"(.*?)(\d{1,12})", texto)
+    if not encaje:
+        return None
+    return (encaje.group(1), len(encaje.group(2))), int(encaje.group(2))
+
+
+def _lo_exportado(cliente_nif: str, cliente_nombre: str = "") -> tuple:
+    """(números de las ventas ya exportadas del cliente, NIF de sus
+    proveedores ya exportados)."""
+    try:
+        from . import registro_facturas
+        fichas = list(registro_facturas.exportadas_de(cliente_nif, cliente_nombre).values())
+    except Exception:
+        return (), set()
+    emitidas = [f.get("num_factura") for f in fichas if f.get("tipo") == "venta"]
+    proveedores_ = {normaliza_nif(f.get("nif")) for f in fichas if f.get("tipo") == "gasto"}
+    return emitidas, proveedores_ - {""}
+
+
+def corregir_roles_invertidos(registros: List[tuple], cliente_nif: str,
+                              emitidas=(), proveedores_conocidos=frozenset()) -> List[tuple]:
+    """Las lecturas con el cliente de destinatario y un número de SU serie de
+    facturas emitidas, con emisor y destinatario cambiados (y avisado). No
+    toca los datos de Gemini: devuelve copias."""
+    cliente = normaliza_nif(cliente_nif)
+    if not cliente:
+        return list(registros)
+    series: Dict[tuple, set] = defaultdict(set)
+
+    def apuntar(num):
+        serie = _serie(num)
+        if serie:
+            series[serie[0]].add(serie[1])
+
+    for num in emitidas:
+        apuntar(num)
+    for registro in registros:
+        datos = registro[-1]
+        if isinstance(datos, dict) \
+                and normaliza_nif(datos.get("emisor_nif")) == cliente \
+                and normaliza_nif(datos.get("receptor_nif")) != cliente:
+            apuntar(datos.get("num_factura"))
+    salida = []
+    for registro in registros:
+        datos = registro[-1]
+        otro = normaliza_nif(datos.get("emisor_nif")) if isinstance(datos, dict) else ""
+        serie = _serie(datos.get("num_factura")) if isinstance(datos, dict) else None
+        numeros = series.get(serie[0], set()) if serie else set()
+        if (otro and otro != cliente and otro not in proveedores_conocidos
+                and normaliza_nif(datos.get("receptor_nif")) == cliente
+                and len(numeros) >= MINIMO_SERIE and serie[1] not in numeros
+                and min(numeros) - MARGEN_SERIE <= serie[1] <= max(numeros) + MARGEN_SERIE):
+            datos = dict(datos)
+            for campo in ("nombre", "nif"):
+                datos[f"emisor_{campo}"], datos[f"receptor_{campo}"] = (
+                    datos.get(f"receptor_{campo}"), datos.get(f"emisor_{campo}"))
+            prefijo, cifras = serie[0]
+            datos["_roles_corregidos"] = (
+                f"{prefijo}{min(numeros):0{cifras}d}–{prefijo}{max(numeros):0{cifras}d}")
+            registro = (*registro[:-1], datos)
+        salida.append(registro)
+    return salida
+
+
 def preparar_lote(registros: List[tuple], cliente_nombre: str,
                   cliente_nif: str) -> List[tuple]:
     """De lo leido por Gemini a las facturas listas para la tabla.
@@ -1129,6 +1213,11 @@ def preparar_lote(registros: List[tuple], cliente_nombre: str,
         # Una lectura que no deja ni comparar las hojas: cada una por su lado.
         _apuntar_hoja_rara("unir las hojas del bloque")
         consolidados = list(registros)
+    try:
+        consolidados = corregir_roles_invertidos(
+            consolidados, cliente_nif, *_lo_exportado(cliente_nif, cliente_nombre))
+    except Exception:
+        _apuntar_hoja_rara("comprobar quién emite cada factura")
     procesadas = [(img, _construir_sin_tumbar(datos, cliente_nif, cliente_nombre,
                                               origen, pag))
                   for img, origen, pag, datos in consolidados]

@@ -6,6 +6,19 @@ from . import ajustes
 
 
 NOTAS = {
+    "1.26.3": """
+<h2>Novedades de la versión 1.26.3: facturas emitidas que salían como gastos</h2>
+<ul>
+  <li><b>Las facturas emitidas por su cliente ya no se van a gastos</b> cuando
+      sus datos van en un recuadro pequeño sin «N.I.F.» y los del comprador
+      en el recuadro grande, con «N.I.F.». Se le explica a la lectura quién
+      es el emisor (el que numera la factura y cobra por transferencia).</li>
+  <li><b>Y si aun así sale al revés</b>, el programa lo corrige: si el número
+      es de la serie de facturas que emite el cliente (las del mismo paquete
+      o las ya exportadas), la toma como ingreso y la deja en ámbar con
+      «INGRESO LEÍDO AL REVÉS» para que lo compruebe.</li>
+</ul>
+""",
     "1.26.2": """
 <h2>Novedades de la versión 1.26.2: el NIF sin «ES» delante</h2>
 <ul>
