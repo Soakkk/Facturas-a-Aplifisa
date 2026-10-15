@@ -207,6 +207,12 @@ _PROMPT = f"""Eres un experto en contabilidad espanola. Analiza esta factura esc
 Identifica las DOS partes de la factura, cada una con su nombre y NIF/CIF:
 - EMISOR: quien emite/cobra la factura.
 - DESTINATARIO: el cliente que recibe/paga la factura.
+Para saber quien es quien NO te fies de la posicion, del tamaño de la letra ni
+de cual de los dos lleva la etiqueta "N.I.F.": muchas facturas ponen los datos
+del emisor como membrete pequeño y los del cliente en el recuadro grande de la
+direccion (el del sobre), con su "N.I.F.". El EMISOR es quien numera la factura
+con su serie y quien cobra: la cuenta para pagarle por transferencia es suya.
+(Una cuenta de "recibo domiciliado" o "cargo en cuenta" es del DESTINATARIO.)
 
 {_CRITERIO_CUENTAS}
 

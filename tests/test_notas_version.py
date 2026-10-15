@@ -27,8 +27,13 @@ def test_la_1_26_2_cuenta_lo_del_nif_con_es():
     """Corta: el NIF español con «ES» delante se quita solo (para que
     Aplifisa reconozca al proveedor y lo deje como interior) y los de otros
     países de la UE siguen avisando."""
-    from facturas_excel import __version__
-    assert __version__ == "1.26.2"
-    texto = notas_version.contenido(__version__)
+    texto = notas_version.contenido("1.26.2")
     assert "ESB12345674" in texto and "B12345674" in texto
     assert "interior" in texto and "otros países de la UE" in texto
+
+
+def test_la_1_26_3_cuenta_lo_de_las_emitidas_al_reves():
+    from facturas_excel import __version__
+    assert __version__ == "1.26.3"
+    texto = notas_version.contenido(__version__)
+    assert "INGRESO LEÍDO AL REVÉS" in texto and "N.I.F." in texto
